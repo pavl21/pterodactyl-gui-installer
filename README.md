@@ -3,7 +3,7 @@ Installiert das Pterodactyl Panel automatisch in 2 Schritten
 
 
 # Hinweis
-Das Script ist noch nicht vollständig einsatzbereit und noch in Entwicklung. Dies ist eine inoffizielle Methode die Verwendung unterliegt auf eigene Verantwortung.
+Das Script ist noch nicht vollständig einsatzbereit und noch in Entwicklung. Dies ist eine inoffizielle Methode und die Verwendung unterliegt auf eigene Verantwortung.
 
 
 
