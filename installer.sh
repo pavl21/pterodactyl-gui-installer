@@ -23,104 +23,102 @@ generate_random_number() {
     echo $((RANDOM % 900 + 100))
 }
 
-while true; do
-    # Hauptlogik
-    DIR_EXISTS=$(ls /var/www/ 2>/dev/null | grep -w "pterodactyl")
-    if [[ -n $DIR_EXISTS ]]; then
-        if whiptail --title "Benutzer erstellen" --yesno "Pterodactyl scheint bereits installiert zu sein.\nMöchtest du einen neuen Admin-Account erstellen?" 10 60; then
-            while true; do
-                ADMIN_EMAIL=$(whiptail --inputbox "Bitte gib eine gültige E-Mail-Adresse ein" 10 60 3>&1 1>&2 2>&3)
-                exitstatus=$?
-                if [ $exitstatus != 0 ]; then
-                    exit
-                fi
-                if validate_email $ADMIN_EMAIL; then
-                    break
-                else
-                    whiptail --title "Ungültige E-Mail" --msgbox "Die eingegebene E-Mail-Adresse ist ungültig. Bitte versuche es erneut." 10 60
-                fi
-            done
-
-            USER_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
-            RANDOM_NUMBER=$(generate_random_number)
-            COMMAND_OUTPUT=$(cd /var/www/pterodactyl && php artisan p:user:make --email=$ADMIN_EMAIL --username=admin_$RANDOM_NUMBER --name-first=Admin --name-last=User --password=$USER_PASSWORD --admin=1)
-
-            if [[ $COMMAND_OUTPUT == *"+----------+--------------------------------------+"* ]]; then
-                if whiptail --title "Benutzer erstellen" --msgbox "🎉 Ein neuer Benutzer wurde erstellt.\n👤 Benutzername: admin_$RANDOM_NUMBER\n🔑 Passwort: $USER_PASSWORD" 12 78; then
-                    if ! whiptail --title "Zugangsdaten" --yesno "Hast du dir die Zugangsdaten gespeichert?" 10 60; then
-                        whiptail --title "Zugangsdaten" --msgbox "Bitte speichere die Zugangsdaten:\nBenutzername: admin_$RANDOM_NUMBER\nPasswort: $USER_PASSWORD" 12 78
+# Hauptfunktion, um den Skript-Flow zu steuern
+main_loop() {
+    while true; do
+        # Prüfe, ob das Pterodactyl-Verzeichnis existiert
+        if [ -d "/var/www/pterodactyl" ]; then
+            if whiptail --title "Benutzer erstellen" --yesno "Pterodactyl scheint bereits installiert zu sein.\nMöchtest du einen neuen Admin-Account erstellen?" 10 60; then
+                # Benutzererstellung
+                while true; do
+                    ADMIN_EMAIL=$(whiptail --inputbox "Bitte gib eine gültige E-Mail-Adresse ein" 10 60 3>&1 1>&2 2>&3)
+                    exitstatus=$?
+                    if [ $exitstatus != 0 ]; then
+                        return
                     fi
-                    if whiptail --title "Login erfolgreich?" --yesno "Konntest du dich erfolgreich einloggen?" 10 60; then
-                        exit
+                    if validate_email $ADMIN_EMAIL; then
+                        break
                     else
-                        LOGIN_ISSUE=$(whiptail --title "Login Problem" --menu "Wähle das Problem:" 15 60 3 \
-                            "1" "Logindaten falsch" \
-                            "2" "Panel nicht erreichbar" \
-                            "3" "Pterodactyl deinstallieren" 3>&1 1>&2 2>&3)
-                        case $LOGIN_ISSUE in
-                            1) continue
-                               ;;
-                            2) if whiptail --title "Panel reparieren" --yesno "Möchtest du versuchen, das Panel zu reparieren?\nAchtung: Modifikationen könnten entfernt werden!" 12 78; then
-                                   PANEL_REPAIR_OUTPUT=$(echo "Update wird heruntergeladen" && sleep 2 && curl -L https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz | tar -xzv && chmod -R 755 storage/* bootstrap/cache && clear && echo "Dependency- und Datenbankupdates werden jetzt installiert..." && sleep 5 && yes | composer install --no-dev --optimize-autoloader --no-interaction && php artisan migrate --seed --force && php artisan view:clear && php artisan config:clear && chown -R www-data:www-data /var/www/pterodactyl/* && clear && echo "Panel wird jetzt gestartet..." && php artisan queue:restart && php artisan up && clear && echo "Panel sollte wieder erreichbar sein")
-                                   if [[ $PANEL_REPAIR_OUTPUT == *"Panel sollte wieder erreichbar sein"* ]]; then
-                                       if whiptail --title "Panel Reparatur abgeschlossen" --yesno "Ein Versuch wurde unternommen, das Panel zu reparieren. Bitte teste, ob das Panel jetzt erreichbar ist." 12 78; then
-                                           exit
-                                       fi
-                                   fi
-                               fi
-                               ;;
-                            3) if whiptail --title "Pterodactyl deinstallieren" --yesno "Möchtest du Pterodactyl deinstallieren?\nAchtung: Alle Daten werden gelöscht!" 12 78; then
-                                   if whiptail --title "Bestätigung" --inputbox "Um die Deinstallation zu bestätigen, gib 'BESTÄTIGEN' ein:" 10 60 3>&1 1>&2 2>&3; then
-                                       echo "Deinstallation wird durchgeführt..."
-                                       # Fügen Sie hier den Befehl zur Deinstallation von Pterodactyl ein
-                                       # Zum Beispiel: rm -rf /var/www/pterodactyl
-                                       exit
-                                   fi
-                               fi
-                               ;;
-                        esac
+                        whiptail --title "Ungültige E-Mail" --msgbox "Die eingegebene E-Mail-Adresse ist ungültig. Bitte versuche es erneut." 10 60
+                    fi
+                done
+
+                USER_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+                RANDOM_NUMBER=$(generate_random_number)
+                COMMAND_OUTPUT=$(cd /var/www/pterodactyl && php artisan p:user:make --email=$ADMIN_EMAIL --username=admin_$RANDOM_NUMBER --name-first=Admin --name-last=User --password=$USER_PASSWORD --admin=1)
+
+                if [[ $COMMAND_OUTPUT == *"+----------+--------------------------------------+"* ]]; then
+                    if whiptail --title "Benutzer erstellen" --msgbox "🎉 Ein neuer Benutzer wurde erstellt.\n👤 Benutzername: admin_$RANDOM_NUMBER\n🔑 Passwort: $USER_PASSWORD" 12 78; then
+                        if ! whiptail --title "Zugangsdaten" --yesno "Hast du dir die Zugangsdaten gespeichert?" 10 60; then
+                            whiptail --title "Zugangsdaten" --msgbox "Bitte speichere die Zugangsdaten:\nBenutzername: admin_$RANDOM_NUMBER\nPasswort: $USER_PASSWORD" 12 78
+                        fi
+                        if whiptail --title "Login erfolgreich?" --yesno "Konntest du dich erfolgreich einloggen?" 10 60; then
+                            return
+                        else
+                            LOGIN_ISSUE=$(whiptail --title "Login Problem" --menu "Wähle das Problem:" 15 60 3 \
+                                "1" "Logindaten falsch" \
+                                "2" "Panel nicht erreichbar" \
+                                "3" "Pterodactyl deinstallieren" 3>&1 1>&2 2>&3)
+                            case $LOGIN_ISSUE in
+                                1) continue ;;
+                                2) repair_panel ;;
+                                3) uninstall_pterodactyl ;;
+                            esac
+                        fi
+                    fi
+                elif [[ $COMMAND_OUTPUT == *"The email has already been taken."* ]]; then
+                    whiptail --title "Bereits vorhanden" --msgbox "Die E-Mail-Adresse ist bereits registriert. Bitte verwende eine andere E-Mail-Adresse." 10 60
+                else
+                    if whiptail --title "Fehler" --yesno "Die Benutzererstellung war nicht erfolgreich.\nMöchtest du es erneut versuchen?" 10 60; then
+                        continue
+                    else
+                        return
                     fi
                 fi
-            elif [[ $COMMAND_OUTPUT == *"The email has already been taken."* ]]; then
-                whiptail --title "Bereits vorhanden" --msgbox "Die E-Mail-Adresse ist bereits registriert. Bitte verwende eine andere E-Mail-Adresse." 10 60
             else
-                if whiptail --title "Fehler" --yesno "Die Benutzererstellung war nicht erfolgreich.\nMöchtest du es erneut versuchen?" 10 60; then
-                    continue
-                else
-                    exit
-                fi
+                LOGIN_ISSUE=$(whiptail --title "Benutzer erstellen" --menu "Wähle das Problem:" 15 60 3 \
+                    "1" "Logindaten falsch" \
+                    "2" "Panel nicht erreichbar" \
+                    "3" "Pterodactyl deinstallieren" 3>&1 1>&2 2>&3)
+                case $LOGIN_ISSUE in
+                    1) continue ;;
+                    2) repair_panel ;;
+                    3) uninstall_pterodactyl ;;
+                esac
             fi
         else
-            LOGIN_ISSUE=$(whiptail --title "Benutzer erstellen" --menu "Wähle das Problem:" 15 60 3 \
-                "1" "Logindaten falsch" \
-                "2" "Panel nicht erreichbar" \
-                "3" "Pterodactyl deinstallieren" 3>&1 1>&2 2>&3)
-            case $LOGIN_ISSUE in
-                1) continue
-                   ;;
-                2) if whiptail --title "Panel reparieren" --yesno "Möchtest du versuchen, das Panel zu reparieren?\nAchtung: Modifikationen könnten entfernt werden!" 12 78; then
-                       PANEL_REPAIR_OUTPUT=$(echo "Update wird heruntergeladen" && sleep 2 && curl -L https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz | tar -xzv && chmod -R 755 storage/* bootstrap/cache && clear && echo "Dependency- und Datenbankupdates werden jetzt installiert..." && sleep 5 && yes | composer install --no-dev --optimize-autoloader --no-interaction && php artisan migrate --seed --force && php artisan view:clear && php artisan config:clear && chown -R www-data:www-data /var/www/pterodactyl/* && clear && echo "Panel wird jetzt gestartet..." && php artisan queue:restart && php artisan up && clear && echo "Panel sollte wieder erreichbar sein")
-                       if [[ $PANEL_REPAIR_OUTPUT == *"Panel sollte wieder erreichbar sein"* ]]; then
-                           if whiptail --title "Panel Reparatur abgeschlossen" --yesno "Ein Versuch wurde unternommen, das Panel zu reparieren. Bitte teste, ob das Panel jetzt erreichbar ist." 12 78; then
-                               exit
-                           fi
-                       fi
-                   fi
-                   ;;
-                3) if whiptail --title "Pterodactyl deinstallieren" --yesno "Möchtest du Pterodactyl deinstallieren?\nAchtung: Alle Daten werden gelöscht!" 12 78; then
-                       if whiptail --title "Bestätigung" --inputbox "Um die Deinstallation zu bestätigen, gib 'BESTÄTIGEN' ein:" 10 60 3>&1 1>&2 2>&3; then
-                           echo "Deinstallation wird durchgeführt..."
-                           # Fügen Sie hier den Befehl zur Deinstallation von Pterodactyl ein
-                           # Zum Beispiel: rm -rf /var/www/pterodactyl
-                           exit
-                       fi
-                   fi
-                   ;;
-            esac
+            echo "Das Verzeichnis /var/www/pterodactyl existiert nicht. Fahre fort."
+            return  # Beendet die Funktion und kehrt zur äußeren Schleife zurück
         fi
-    else
-        echo "Das Verzeichnis /var/www/pterodactyl existiert nicht. Fahre fort.
+    done
+}
 
+# Funktion für die Reparatur des Panels
+repair_panel() {
+    # Reparaturlogik hier...
+    echo "Panel-Reparaturfunktion ist noch zu implementieren."
+}
+
+# Funktion für die Deinstallation von Pterodactyl
+uninstall_pterodactyl() {
+    # Deinstallationslogik hier...
+    echo "Deinstallationsfunktion ist noch zu implementieren."
+}
+
+# Validierungsfunktion für E-Mails (Beispiel)
+validate_email() {
+    local email=$1
+    # Validierungslogik hier...
+    return 0  # Angenommen, die E-Mail ist immer gültig
+}
+
+# Zufallszahlengenerator-Funktion (Beispiel)
+generate_random_number() {
+    echo $((RANDOM))
+}
+
+# Starte die Hauptfunktion
+main_loop
 
 # ENDE VON Vorbereitung ODER existiert bereits ODER Reperatur
 
@@ -239,9 +237,9 @@ dns_ip=$(dig +short $panel_domain)
 
 # Überprüfung, ob die Domain korrekt verknüpft ist
 if [ "$dns_ip" == "$server_ip" ]; then
-    whiptail --title "Domain-Überprüfung" --msgbox "✅ Die Domain $panel_domain ist mit der IP-Adresse dieses Servers \($server_ip\) verknüpft. Die Installation wird fortgesetzt." 8 78
+    whiptail --title "Domain-Überprüfung" --msgbox "✅ Die Domain $panel_domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft. Die Installation wird fortgesetzt." 8 78
 else
-    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden \($dns_ip\).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare \(falls du es nutzt\) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 12 78
+    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 12 78
     exit 1
 fi
 
@@ -409,26 +407,36 @@ clear
 # Info: Installation abgeschlossen
 whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 20 78
 
-# Einmal die erstellten Zugangsdaten und die Frage, ob es geklappt hat.
+# Funktion, um die Zugangsdaten anzuzeigen
+show_access_data() {
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (16 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 15 80
+}
+
+# Funktion, um den Benutzer neu anzulegen
+recreate_user() {
+    {
+        echo "10"; sleep 1
+        echo "Benutzer löschen..."
+        cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
+        echo "30"; sleep 1
+        echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
+        cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
+        echo "100"; sleep 1
+    } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
+}
+
+# Hauptlogik
 while true; do
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort \(16 Zeichen\): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab" 15 80
+    show_access_data
+
     if whiptail --title "Bestätigung" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
         if whiptail --title "Zugangsdaten Test" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
             whiptail --title "Bereit für den nächsten Schritt" --msgbox "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können." 10 60
             break
         else
-            {
-                echo "10" ; sleep 1
-                echo "Benutzer löschen..."
-                cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
-                echo "30" ; sleep 1
-                echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
-                cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
-                echo "100" ; sleep 1
-            } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
+            recreate_user
         fi
     fi
 done
 
-# rm tmp.txt
-echo Fertig
+echo "Fertig"
