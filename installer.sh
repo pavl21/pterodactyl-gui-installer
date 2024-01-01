@@ -18,15 +18,6 @@ validate_email() {
     fi
 }
 
-# Funktion zur Überprüfung der E-Mail-Adresse
-validate_email() {
-    if [[ $1 =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$ ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
 # Funktion zur Generierung einer zufälligen dreistelligen Zahl
 generate_random_number() {
     echo $((RANDOM % 900 + 100))
@@ -34,10 +25,8 @@ generate_random_number() {
 
 while true; do
     # Hauptlogik
-    DB_EXISTS=$(mysql -u root -p -e "SHOW DATABASES LIKE 'panel'" | grep -w "panel")
-    DIR_EXISTS=$(ls /var/www/ | grep -w "pterodactyl")
-
-    if [[ -n $DB_EXISTS ]] || [[ -n $DIR_EXISTS ]]; then
+    DIR_EXISTS=$(ls /var/www/ 2>/dev/null | grep -w "pterodactyl")
+    if [[ -n $DIR_EXISTS ]]; then
         if whiptail --title "Benutzer erstellen" --yesno "Pterodactyl scheint bereits installiert zu sein.\nMöchtest du einen neuen Admin-Account erstellen?" 10 60; then
             while true; do
                 ADMIN_EMAIL=$(whiptail --inputbox "Bitte gib eine gültige E-Mail-Adresse ein" 10 60 3>&1 1>&2 2>&3)
@@ -130,12 +119,8 @@ while true; do
             esac
         fi
     else
-        # Code für die Installation von Pterodactyl, falls es nicht vorhanden ist
-        echo "Pterodactyl ist nicht installiert."
-        # Fügen Sie hier den Installationscode für Pterodactyl ein
-        exit
-    fi
-done
+        echo "Das Verzeichnis /var/www/pterodactyl existiert nicht. Fahre fort.
+
 
 # ENDE VON Vorbereitung ODER existiert bereits ODER Reperatur
 
@@ -254,9 +239,9 @@ dns_ip=$(dig +short $panel_domain)
 
 # Überprüfung, ob die Domain korrekt verknüpft ist
 if [ "$dns_ip" == "$server_ip" ]; then
-    whiptail --title "Domain-Überprüfung" --msgbox "✅ Die Domain $panel_domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft. Die Installation wird fortgesetzt." 8 78
+    whiptail --title "Domain-Überprüfung" --msgbox "✅ Die Domain $panel_domain ist mit der IP-Adresse dieses Servers \($server_ip\) verknüpft. Die Installation wird fortgesetzt." 8 78
 else
-    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 12 78
+    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden \($dns_ip\).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare \(falls du es nutzt\) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 12 78
     exit 1
 fi
 
@@ -424,12 +409,9 @@ clear
 # Info: Installation abgeschlossen
 whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 20 78
 
-
-sleep 1
 # Einmal die erstellten Zugangsdaten und die Frage, ob es geklappt hat.
 while true; do
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\n🌐 Deine Domain für's Panel: $panel_domain\n\n👤 Benutzername: admin\n📧 E-Mail-Adresse: $admin_email\n🔒 Passwort (16 Zeichen): $user_password\n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab!" 15 80
-
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort \(16 Zeichen\): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab" 15 80
     if whiptail --title "Bestätigung" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
         if whiptail --title "Zugangsdaten Test" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
             whiptail --title "Bereit für den nächsten Schritt" --msgbox "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können." 10 60
@@ -441,13 +423,12 @@ while true; do
                 cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
                 echo "30" ; sleep 1
                 echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
-                cd /var/www/pterodactyl && php artisan p:user:make --email=$admin_email --username=admin --name-first=Admin --name-last=User --password=$user_password --admin=1
+                cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
                 echo "100" ; sleep 1
             } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
         fi
     fi
 done
 
-
 # rm tmp.txt
-# Fertig.
+echo Fertig
