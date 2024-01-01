@@ -1,22 +1,15 @@
 #!/bin/bash
 
-# Überprüfen, ob Whiptail installiert ist, und falls nicht, es installieren
-if ! command -v whiptail &> /dev/null; then
-    echo "Whiptail ist nicht installiert. Installiere Whiptail..."
+# Überprüfen, ob das System apt als Paketmanager verwendet
+if ! command -v apt-get &> /dev/null; then
+    echo "Abbruch: Für dein System ist dieses Script nicht vorgesehen. Derzeit wird nur Ubuntu, Debian und ähnliche Systeme unterstützt."
+    exit 1
+fi
 
-    # Je nach Paketverwaltungssystem die Installation durchführen
-    if command -v apt-get &> /dev/null; then
-        sudo apt-get update
-        sudo apt-get upgrade -y
-        sudo apt-get install whiptail -y
-    elif command -v dnf &> /dev/null; then
-        echo "Abbruch: Für dein System ist dieses Script nicht vorgesehen. Derzeit wird nur Ubuntu und Debian unterstützt."
-    elif command -v yum &> /dev/null; then
-        echo "Abbruch: Für dein System ist dieses Script nicht vorgesehen. Derzeit wird nur Ubuntu und Debian unterstützt."
-    else
-        echo "Paketverwaltungssystem nicht erkannt. Bitte installiere Whiptail manuell."
-        exit 1
-    fi
+# Überprüfen, ob der Benutzer Root-Rechte hat
+if [ "$(id -u)" != "0" ]; then
+    echo "Abbruch: Für die Installation werden Root-Rechte benötigt, damit benötigte Pakete installiert werden können. Falls du nicht der Administrator des Servers bist, bitte ihn, dir temporär Zugriff zu erteilen."
+    exit 1
 fi
 
 # Kopfzeile für die Pterodactyl Panel Installation anzeigen
@@ -32,30 +25,92 @@ echo ""
 echo ""
 echo "STATUS - - - - - - - - - - - - - - - -"
 echo "⚙️ Konfiguration von dpkg..."
-sudo dpkg --configure -a
+dpkg --configure -a
 
 # Notwendige Pakete installieren
+clear
+echo ""
+echo ""
+echo "STATUS - - - - - - - - - - - - - - -"
+echo ""
+
+# Eine verbesserte Ladeanimation, während alles Nötige installiert wird (Vorbereitung)
+show_spinner() {
+    local pid=$1
+    local delay=0.45
+    local spinstr='|/-\\'
+    local msg="Notwendige Pakete werden installiert..."
+    while [ "$(ps a | awk '{print $1}' | grep -w $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " [%c]  $msg" "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\r"
+        for i in $(seq 1 $((${#msg} + 10))); do  # Korrigiert
+            printf " "
+        done
+        printf "\r"
+    done
+    printf "                                             \r"
+}
+
+# Starte die Installation im Hintergrund und leite die Ausgabe um
+(
+    apt-get update &&
+    apt-get upgrade -y &&
+    apt-get install -y whiptail dnsutils curl openssl bc certbot python3-certbot-nginx pv sudo
+) > /dev/null 2>&1 &
+
+PID=$!
+
+# Zeige die verbesserte Spinner-Animation, während die Installation läuft
+show_spinner $PID
+
+# Warte, bis die Installation abgeschlossen ist
+wait $PID
+exit_status=$?
+
+# Überprüfe den Exit-Status
+if [ $exit_status -ne 0 ]; then
+    echo "Ein Fehler ist während der Vorbereitung aufgetreten. Einige Pakete scheinen entweder nicht zu existieren, oder es läuft im Hintergrund bereits ein Installations- oder Updateprozess. Im zweiten Fall muss gewartet werden, bis es abgeschlossen ist."
+    exit $exit_status
+fi
+
+clear
+echo ""
+echo ""
 echo "STATUS - - - - - - - - - - - - - - - -"
-echo "⚙️ Abhängigkeiten werden installiert..."
-sudo apt-get update
-sudo apt-get install certbot python3-certbot-nginx bc dnsutils curl openssl -y
+echo ""
+echo "Vorbereitung abgeschlossen."
+sleep 2
 
 
-LOG_FILE="tmp.txt"
+
 # Überprüfen, ob die Datei existiert. Falls nicht, wird sie erstellt.
+LOG_FILE="tmp.txt"
 if [ ! -f "$LOG_FILE" ]; then
     touch "$LOG_FILE"
 fi
 
-# Befehlszeile leeren
 clear
 
-# Anzeige einer Whiptail-GUI zur Eingabe der Panel-Domain
-panel_domain=$(whiptail --inputbox "Bitte gebe die Domain/FQDN für das Panel ein:" 10 50 3>&1 1>&2 2>&3)
-if [ $? -ne 0 ]; then
-    echo "Abbruch durch Benutzer."
-    exit 1
-fi
+# Anzeige einer Whiptail-GUI zur Eingabe der Panel-Domain + Prüfung, ob es eine Domain ist.
+while true; do
+    panel_domain=$(whiptail --title "Pterodactyl Panel Installation" --inputbox "Bitte gebe die Domain/FQDN für das Panel ein, die du nutzen möchtest. Im nächsten Schritt wird geprüft, ob die Domain mit diesem Server als DNS-Eintrag verbunden ist." 12 60 3>&1 1>&2 2>&3)
+
+    # Prüfen, ob der Benutzer die Eingabe abgebrochen hat
+    if [ $? -ne 0 ]; then
+        echo "Die Installation wurde abgebrochen."
+        exit 1
+    fi
+
+    # Überprüfen, ob die eingegebene Domain einem gültigen Muster entspricht
+    if [[ $panel_domain =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        break
+    else
+        whiptail --title "Domain ist ungültig" --msgbox "Bitte gib eine gültige Domain ein und prüfe auf Schreibfehler." 10 50
+    fi
+done
 
 # IP-Adresse des Servers ermitteln
 server_ip=$(hostname -I | awk '{print $1}')
@@ -83,7 +138,8 @@ validate_email() {
 
 # Schleife, die so lange läuft, bis eine gültige E-Mail-Adresse eingegeben wird. Soll ja schließlich später beim Certbot nicht schief gehen.
 while true; do
-    admin_email=$(whiptail --inputbox "Bitte gebe die E-Mail-Adresse für das SSL-Zertifikat und den Admin-Benutzer ein. Durch Eingabe bestätigst du die Nutzungsbedingungen von Let's Encrypt." 10 50 3>&1 1>&2 2>&3)
+    admin_email=$(whiptail --title "Pterodactyl Panel Installation" --inputbox "Bitte gebe die E-Mail-Adresse für das SSL-Zertifikat und den Admin-Benutzer ein. Durch Eingabe bestätigst du die Nutzungsbedingungen von Let's Encrypt.\n\nLink zu den Nutzungsbedingungen: https://community.letsencrypt.org/tos" 12 60 3>&1 1>&2 2>&3)
+
 
     # Prüfen, ob whiptail erfolgreich war
     if [ $? -ne 0 ]; then
@@ -95,13 +151,13 @@ while true; do
     if validate_email "$admin_email"; then
         break
     else
-        whiptail --msgbox "Ungültige E-Mail-Adresse. Bitte versuche es erneut." 10 50
+        whiptail --title "E-Mail Adresse ungültig" --msgbox  "Prüfe bitte die E-Mail und versuche es erneut." 10 50
     fi
 done
 
-# Funktion zum Generieren eines 64 Zeichen langen zufälligen Passworts ohne Sonderzeichen - Benutzerpasswort
+# Funktion zum Generieren eines 16 Zeichen langen zufälligen Passworts ohne Sonderzeichen - Benutzerpasswort
 generate_userpassword() {
-    < /dev/urandom tr -dc A-Za-z0-9 | head -c64
+    < /dev/urandom tr -dc A-Za-z0-9 | head -c16
 }
 
 user_password=$(generate_userpassword)
@@ -139,60 +195,51 @@ monitor_progress() {
     {
         while read line; do
             case "$line" in
-                *"This script is not associated with the official Pterodactyl Project"*)
-                    update_progress 1 "Installation wird gestartet" ;;
-                *"(Reading database ... 100%"*)
-                    update_progress 2 "Pakete werden geholt und installiert..." ;;
-                *"redis-tools"*)
-                    update_progress 6 "Notwendige Abhängigkeiten werden vorbereitet und installiert..." ;;
-                *"Selecting previously unselected package zip"*)
-                    update_progress 9 "Installation wird fortgesetzt\nDie Abhängigkeiten dauern i.d.R länger..." ;;
-                *"Created symlink /etc/systemd/system/timers.target.wants/phpsessionclean.timer → /lib/systemd/system/phpsessionclean.timer."*)
-                    update_progress 15 "PHP-Common wird entpackt" ;;
+                *"Initial configuration completed. Continue with installation?"*)
+                    update_progress 5 "Einstellungen werden festgelegt..." ;;
+                *"Starting installation.. this might take a while!"*)
+                    update_progress 10 "Installationsprozess beginnt" ;;
+                *"Unpacking mariadb-server-10.5"*)
+                    update_progress 15 "Entpacken des MariaDB-Servers" ;;
                 *"Setting up php8.1-common"*)
-                    update_progress 20 "PHP 8.1 wird konfiguriert" ;;
-                *"Setting up mariadb-server"*)
-                    update_progress 23 "MariaDB Server wird eingerichtet" ;;
-                *"Installing composer.."*)
-                    update_progress 25 "Composer wird installiert" ;;
-                *"Downloading pterodactyl panel files .."*)
-                    update_progress 28 "Pterodactyl Panel wird heruntergeladen" ;;
-                *"resources/scripts/components/server/settings/"*)
-                    update_progress 48 "Pterodactyl Panel Ressourcen werden installiert" ;;
-                *"resources/views/vendor/pagination/"*)
-                    update_progress 51 "Pterodactyl Panel Views werden installiert" ;;
-                *"yarn.lock"*)
-                    update_progress 52 "Yarn Konfigurationen werden installiert" ;;
-                *"Installing composer dependencies.."*)
-                    update_progress 53 "Composer Abhängigkeiten werden installiert" ;;
-                *"Creating database user pterodactyl..."*)
-                    update_progress 65 "Datenbankbenutzer wird erstellt" ;;
-                *"Granting all privileges on panel to pterodactyl..."*)
-                    update_progress 70 "Datenbankrechte werden eingerichtet" ;;
-                *"Creating migration table"*)
-                    update_progress 74 "Datenbankmigration wird durchgeführt" ;;
-                *"Database\Seeders\EggSeeder"*)
-                    update_progress 78 "Datenbank Seeds werden eingerichtet" ;;
-                *"Installing cronjob.."*)
-                    update_progress 87 "Cronjob wird eingerichtet" ;;
-                *"Installed pteroq!"*)
-                    update_progress 88 "Pteroq wird installiert" ;;
-                *"Created symlink /etc/systemd/system/multi-user.target.wants/pteroq.service → /etc/systemd/system/pteroq.service."*)
-                    update_progress 89 "Nginx wird konfiguriert" ;;
-                *"SSL-Zertifikat erstellen und Nginx konfigurieren..."*)
-                    update_progress 92 "SSL-Zertifikat wird bereitgestellt" ;;
-                *"Neustarten von Nginx..."*)
-                    update_progress 93 "Nginx wird neu gestartet" ;;
-                *"GermanDactyl wird installiert..."*)
-                    update_progress 94 "GermanDactyl wird installiert..." ;;
-                *"Das Panel wird nun erneut kompiliert. Das dauert einen Moment."*)
-                    update_progress 98 "GermanDactyl wird integriert..." ;;
+                    update_progress 20 "Einrichtung von PHP 8.1 Common" ;;
+                *"Setting up mariadb-server-10.5"*)
+                    update_progress 25 "Einrichtung des MariaDB-Servers" ;;
+                *"Unpacking php8.1-fpm"*)
+                    update_progress 30 "Entpacken von PHP 8.1 FPM" ;;
+                *"Setting up php8.1-fpm"*)
+                    update_progress 35 "Einrichtung von PHP 8.1 FPM" ;;
+                *"Created symlink /etc/systemd/system/timers.target.wants/phpsessionclean.timer"*)
+                    update_progress 40 "Einrichtung der PHP Session Cleanup" ;;
+                *"Unpacking redis-server"*)
+                    update_progress 45 "Entpacken des Redis-Servers" ;;
+                *"Setting up redis-server"*)
+                    update_progress 50 "Einrichtung des Redis-Servers" ;;
+                *"Setting up nginx"*)
+                    update_progress 55 "Einrichtung von Nginx" ;;
+                *"Created symlink /etc/systemd/system/multi-user.target.wants/redis-server.service"*)
+                    update_progress 60 "Aktivierung des Redis-Servers" ;;
+                *"Unpacking git"*)
+                    update_progress 65 "Entpacken von Git" ;;
+                *"Setting up git"*)
+                    update_progress 70 "Einrichtung von Git" ;;
+                *"Unpacking zip"*)
+                    update_progress 75 "Entpacken von Zip" ;;
+                *"Setting up zip"*)
+                    update_progress 80 "Einrichtung von Zip" ;;
+                *"Unpacking unzip"*)
+                    update_progress 85 "Entpacken von Unzip" ;;
+                *"Setting up unzip"*)
+                    update_progress 90 "Einrichtung von Unzip" ;;
+                *"Downloading pterodactyl panel files"*)
+                    update_progress 95 "Download der Pterodactyl-Panel-Dateien" ;;
                 *"Der Patch wurde angewendet."*)
-                    update_progress 100 "Installation abgeschlossen" ;;
+                    update_progress 100 "Abschluss der Installation" ;;
             esac
         done < <(tail -n 0 -f tmp.txt)
     } | whiptail --gauge "Pterodactyl Panel - Installation" 10 70 0
 }
+
 
 # Starte die Überwachungsfunktion
 monitor_progress &
@@ -209,7 +256,7 @@ MONITOR_PID=$!
     Europe/Berlin
     $admin_email
     $admin_email
-    user
+    admin
     Admin
     User
     $user_password
@@ -223,17 +270,13 @@ EOF
 } >> tmp.txt 2>&1
 
 {
-    sudo apt-get update && sudo apt-get install certbot python3-certbot-nginx -y
-    sudo systemctl stop nginx
-    sudo certbot --nginx -d $panel_domain --email $admin_email --agree-tos --non-interactive
-    sudo fuser -k 80/tcp
-    sudo fuser -k 443/tcp
-    sudo systemctl restart nginx
+    apt-get update && sudo apt-get install certbot python3-certbot-nginx -y
+    systemctl stop nginx
+    certbot --nginx -d $panel_domain --email $admin_email --agree-tos --non-interactive
+    fuser -k 80/tcp
+    fuser -k 443/tcp
+    systemctl restart nginx
     curl -sSL https://install.germandactyl.de/ | sudo bash -s -- -v1.11.3
-    echo "Benutzer löschen..."
-    cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
-    echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
-    cd /var/www/pterodactyl && php artisan p:user:make --email=$admin_email --username=user --name-first=Admin --name-last=User --password=$user_password --admin=1
 } >> tmp.txt 2>&1
 
 # Am Ende des Skripts den Überwachungsprozess beenden
@@ -244,20 +287,33 @@ sleep 1
 whiptail --clear
 clear
 
+# Info: Installation abgeschlossen
+whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 20 78
 
-# Erfolgreiche Installationsnachricht in zugangsdaten.txt speichern
-echo "PTERODACTYL ZUGANGSDATEN -----------------" > zugangsdaten.txt
-echo "Installation des Panels erfolgreich." >> zugangsdaten.txt
-echo "🌐 Die verwendete Domain ist: $panel_domain" >> zugangsdaten.txt
-echo "🔑 Die generierten Zugangsdaten sind:" >> zugangsdaten.txt
-echo "👤 Benutzername: User" >> zugangsdaten.txt
-echo "🔒 Passwort (64 Zeichen): $user_password" >> zugangsdaten.txt
-echo "PTERODACTYL ZUGANGSDATEN ------------------" >> zugangsdaten.txt
+
 sleep 1
-clear
+# Einmal die erstellten Zugangsdaten und die Frage, ob es geklappt hat.
+while true; do
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\n🌐 Deine Domain für's Panel: $panel_domain\n\n👤 Benutzername: admin\n📧 E-Mail-Adresse: $admin_email\n🔒 Passwort (16 Zeichen): $user_password\n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab!" 15 80
 
-# Whiptail-Nachrichtenbox anzeigen
-whiptail --title "Installation abgeschlossen" --msgbox "Die Zugangsdaten wurden in die Datei 'zugangsdaten.txt' gespeichert, diese kannst du mit dem Befehl 'cat zugangsdaten.txt' sehen. Du kannst dich nun in $panel_domain anmelden.\n\nHINWEIS: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new." 20 70
+    if whiptail --title "Bestätigung" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
+        if whiptail --title "Zugangsdaten Test" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
+            whiptail --title "Bereit für den nächsten Schritt" --msgbox "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können." 10 60
+            break
+        else
+            {
+                echo "10" ; sleep 1
+                echo "Benutzer löschen..."
+                cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
+                echo "30" ; sleep 1
+                echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
+                cd /var/www/pterodactyl && php artisan p:user:make --email=$admin_email --username=admin --name-first=Admin --name-last=User --password=$user_password --admin=1
+                echo "100" ; sleep 1
+            } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
+        fi
+    fi
+done
 
-# rm tmp.txt - Löscht die tmp.txt, derzeit auskommentiert für Debugging.
+
+# rm tmp.txt - Für Debugging erstmal auskommentiert
 # Fertig.
