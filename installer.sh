@@ -6,11 +6,139 @@ if ! command -v apt-get &> /dev/null; then
     exit 1
 fi
 
-# Überprüfen, ob der Benutzer Root-Rechte hat
-if [ "$(id -u)" != "0" ]; then
-    echo "Abbruch: Für die Installation werden Root-Rechte benötigt, damit benötigte Pakete installiert werden können. Falls du nicht der Administrator des Servers bist, bitte ihn, dir temporär Zugriff zu erteilen."
-    exit 1
-fi
+
+# BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
+
+# Funktion zur Überprüfung der E-Mail-Adresse
+validate_email() {
+    if [[ $1 =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Funktion zur Überprüfung der E-Mail-Adresse
+validate_email() {
+    if [[ $1 =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Funktion zur Generierung einer zufälligen dreistelligen Zahl
+generate_random_number() {
+    echo $((RANDOM % 900 + 100))
+}
+
+while true; do
+    # Hauptlogik
+    DB_EXISTS=$(mysql -u root -p -e "SHOW DATABASES LIKE 'panel'" | grep -w "panel")
+    DIR_EXISTS=$(ls /var/www/ | grep -w "pterodactyl")
+
+    if [[ -n $DB_EXISTS ]] || [[ -n $DIR_EXISTS ]]; then
+        if whiptail --title "Benutzer erstellen" --yesno "Pterodactyl scheint bereits installiert zu sein.\nMöchtest du einen neuen Admin-Account erstellen?" 10 60; then
+            while true; do
+                ADMIN_EMAIL=$(whiptail --inputbox "Bitte gib eine gültige E-Mail-Adresse ein" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                if [ $exitstatus != 0 ]; then
+                    exit
+                fi
+                if validate_email $ADMIN_EMAIL; then
+                    break
+                else
+                    whiptail --title "Ungültige E-Mail" --msgbox "Die eingegebene E-Mail-Adresse ist ungültig. Bitte versuche es erneut." 10 60
+                fi
+            done
+
+            USER_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+            RANDOM_NUMBER=$(generate_random_number)
+            COMMAND_OUTPUT=$(cd /var/www/pterodactyl && php artisan p:user:make --email=$ADMIN_EMAIL --username=admin_$RANDOM_NUMBER --name-first=Admin --name-last=User --password=$USER_PASSWORD --admin=1)
+
+            if [[ $COMMAND_OUTPUT == *"+----------+--------------------------------------+"* ]]; then
+                if whiptail --title "Benutzer erstellen" --msgbox "🎉 Ein neuer Benutzer wurde erstellt.\n👤 Benutzername: admin_$RANDOM_NUMBER\n🔑 Passwort: $USER_PASSWORD" 12 78; then
+                    if ! whiptail --title "Zugangsdaten" --yesno "Hast du dir die Zugangsdaten gespeichert?" 10 60; then
+                        whiptail --title "Zugangsdaten" --msgbox "Bitte speichere die Zugangsdaten:\nBenutzername: admin_$RANDOM_NUMBER\nPasswort: $USER_PASSWORD" 12 78
+                    fi
+                    if whiptail --title "Login erfolgreich?" --yesno "Konntest du dich erfolgreich einloggen?" 10 60; then
+                        exit
+                    else
+                        LOGIN_ISSUE=$(whiptail --title "Login Problem" --menu "Wähle das Problem:" 15 60 3 \
+                            "1" "Logindaten falsch" \
+                            "2" "Panel nicht erreichbar" \
+                            "3" "Pterodactyl deinstallieren" 3>&1 1>&2 2>&3)
+                        case $LOGIN_ISSUE in
+                            1) continue
+                               ;;
+                            2) if whiptail --title "Panel reparieren" --yesno "Möchtest du versuchen, das Panel zu reparieren?\nAchtung: Modifikationen könnten entfernt werden!" 12 78; then
+                                   PANEL_REPAIR_OUTPUT=$(echo "Update wird heruntergeladen" && sleep 2 && curl -L https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz | tar -xzv && chmod -R 755 storage/* bootstrap/cache && clear && echo "Dependency- und Datenbankupdates werden jetzt installiert..." && sleep 5 && yes | composer install --no-dev --optimize-autoloader --no-interaction && php artisan migrate --seed --force && php artisan view:clear && php artisan config:clear && chown -R www-data:www-data /var/www/pterodactyl/* && clear && echo "Panel wird jetzt gestartet..." && php artisan queue:restart && php artisan up && clear && echo "Panel sollte wieder erreichbar sein")
+                                   if [[ $PANEL_REPAIR_OUTPUT == *"Panel sollte wieder erreichbar sein"* ]]; then
+                                       if whiptail --title "Panel Reparatur abgeschlossen" --yesno "Ein Versuch wurde unternommen, das Panel zu reparieren. Bitte teste, ob das Panel jetzt erreichbar ist." 12 78; then
+                                           exit
+                                       fi
+                                   fi
+                               fi
+                               ;;
+                            3) if whiptail --title "Pterodactyl deinstallieren" --yesno "Möchtest du Pterodactyl deinstallieren?\nAchtung: Alle Daten werden gelöscht!" 12 78; then
+                                   if whiptail --title "Bestätigung" --inputbox "Um die Deinstallation zu bestätigen, gib 'BESTÄTIGEN' ein:" 10 60 3>&1 1>&2 2>&3; then
+                                       echo "Deinstallation wird durchgeführt..."
+                                       # Fügen Sie hier den Befehl zur Deinstallation von Pterodactyl ein
+                                       # Zum Beispiel: rm -rf /var/www/pterodactyl
+                                       exit
+                                   fi
+                               fi
+                               ;;
+                        esac
+                    fi
+                fi
+            elif [[ $COMMAND_OUTPUT == *"The email has already been taken."* ]]; then
+                whiptail --title "Bereits vorhanden" --msgbox "Die E-Mail-Adresse ist bereits registriert. Bitte verwende eine andere E-Mail-Adresse." 10 60
+            else
+                if whiptail --title "Fehler" --yesno "Die Benutzererstellung war nicht erfolgreich.\nMöchtest du es erneut versuchen?" 10 60; then
+                    continue
+                else
+                    exit
+                fi
+            fi
+        else
+            LOGIN_ISSUE=$(whiptail --title "Benutzer erstellen" --menu "Wähle das Problem:" 15 60 3 \
+                "1" "Logindaten falsch" \
+                "2" "Panel nicht erreichbar" \
+                "3" "Pterodactyl deinstallieren" 3>&1 1>&2 2>&3)
+            case $LOGIN_ISSUE in
+                1) continue
+                   ;;
+                2) if whiptail --title "Panel reparieren" --yesno "Möchtest du versuchen, das Panel zu reparieren?\nAchtung: Modifikationen könnten entfernt werden!" 12 78; then
+                       PANEL_REPAIR_OUTPUT=$(echo "Update wird heruntergeladen" && sleep 2 && curl -L https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz | tar -xzv && chmod -R 755 storage/* bootstrap/cache && clear && echo "Dependency- und Datenbankupdates werden jetzt installiert..." && sleep 5 && yes | composer install --no-dev --optimize-autoloader --no-interaction && php artisan migrate --seed --force && php artisan view:clear && php artisan config:clear && chown -R www-data:www-data /var/www/pterodactyl/* && clear && echo "Panel wird jetzt gestartet..." && php artisan queue:restart && php artisan up && clear && echo "Panel sollte wieder erreichbar sein")
+                       if [[ $PANEL_REPAIR_OUTPUT == *"Panel sollte wieder erreichbar sein"* ]]; then
+                           if whiptail --title "Panel Reparatur abgeschlossen" --yesno "Ein Versuch wurde unternommen, das Panel zu reparieren. Bitte teste, ob das Panel jetzt erreichbar ist." 12 78; then
+                               exit
+                           fi
+                       fi
+                   fi
+                   ;;
+                3) if whiptail --title "Pterodactyl deinstallieren" --yesno "Möchtest du Pterodactyl deinstallieren?\nAchtung: Alle Daten werden gelöscht!" 12 78; then
+                       if whiptail --title "Bestätigung" --inputbox "Um die Deinstallation zu bestätigen, gib 'BESTÄTIGEN' ein:" 10 60 3>&1 1>&2 2>&3; then
+                           echo "Deinstallation wird durchgeführt..."
+                           # Fügen Sie hier den Befehl zur Deinstallation von Pterodactyl ein
+                           # Zum Beispiel: rm -rf /var/www/pterodactyl
+                           exit
+                       fi
+                   fi
+                   ;;
+            esac
+        fi
+    else
+        # Code für die Installation von Pterodactyl, falls es nicht vorhanden ist
+        echo "Pterodactyl ist nicht installiert."
+        # Fügen Sie hier den Installationscode für Pterodactyl ein
+        exit
+    fi
+done
+
+# ENDE VON Vorbereitung ODER existiert bereits ODER Reperatur
+
 
 # Kopfzeile für die Pterodactyl Panel Installation anzeigen
 clear
@@ -19,6 +147,12 @@ echo "Pterodactyl Panel Installation"
 echo "Vereinfacht von Pavl21, Script von https://pterodactyl-installer.se/ wird verwendet. "
 echo "----------------------------------"
 sleep 3  # 3 Sekunden warten, bevor das Skript fortgesetzt wird
+
+# Überprüfen, ob der Benutzer Root-Rechte hat
+if [ "$(id -u)" != "0" ]; then
+    echo "Abbruch: Für die Installation werden Root-Rechte benötigt, damit benötigte Pakete installiert werden können. Falls du nicht der Administrator des Servers bist, bitte ihn, dir temporär Zugriff zu erteilen."
+    exit 1
+fi
 
 # Konfiguration von dpkg
 echo ""
@@ -315,5 +449,5 @@ while true; do
 done
 
 
-# rm tmp.txt - Für Debugging erstmal auskommentiert
+# rm tmp.txt
 # Fertig.
