@@ -8,6 +8,7 @@ fi
 
 
 # BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
+# TODO: Reperatur Modus etc. wieder einbinden mit Frage ob man das wirkluch will und benutzer erstellen. Derzeit nur Roh, nonfunktional.
 
 # Funktion zur Überprüfung der E-Mail-Adresse
 validate_email() {
