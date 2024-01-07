@@ -162,7 +162,7 @@ check_nginx_config() {
     fi
 
     # Überprüfen, ob das Panel erreichbar ist
-    if whiptail --yesno "Kannst du derzeit das Panel nutzen?" 10 60; then
+    if whiptail --yesno "Prüfe bitte nochmal, ob du das Panel über andere Browser/Computer erreichen kannst. Ist es dort erreichbar?" 10 60; then
         return  # Kehrt zum Hauptmenü zurück, wenn das Panel erreichbar ist
     fi
 
