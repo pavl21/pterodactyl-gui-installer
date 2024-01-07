@@ -1,6 +1,8 @@
 # pterodactyl-gui-installer
 Installiert das Pterodactyl Panel automatisch in 2 Schritten
-DAS SCRIPT IST NOCH NICH EINSATZBEREIT!
+
+DAS SCRIPT IST NOCH NICHT EINSATZBEREIT!
+Es können noch Fehler auftreten.
 
 
 # Hinweis
