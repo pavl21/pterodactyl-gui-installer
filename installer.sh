@@ -31,7 +31,7 @@ main_loop() {
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
                 "4" "Pterodactyl deinstallieren (Offen)" \
-                "5" "PhpMyAdmin installieren" 3>&1 1>&2 2>&3)
+                "5" "PhpMyAdmin installieren (Offen)" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
             # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
