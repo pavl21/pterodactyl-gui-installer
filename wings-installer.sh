@@ -35,6 +35,12 @@ validate_email() {
     fi
 }
 
+# Wenn die Installation fertig ist, weitere Anweisungen.
+on_installation_complete() {
+    # Hier kannst du deinen eigenen Code einfügen, der nach Abschluss der Installation ausgeführt wird
+    echo "Installation abgeschlossen. Deine benutzerdefinierte Aktion hier."
+}
+
 # Funktion zur Überprüfung, ob die IPv4-Adresse zur angegebenen Domain passt
 isMatchingIPv4() {
     local domain=$1
@@ -53,7 +59,7 @@ isMatchingIPv4() {
 
 # Funktion zur Installation von Wings mit dem externen Script
 install_wings_with_script() {
-    touch "$LOG_FILE"  # Stelle sicher, dass LOG_FILE definiert und korrekt gesetzt ist.
+    # Führe das externe Skript im Hintergrund aus und leite die Ausgabe in LOG_FILE um
     bash <(curl -s https://pterodactyl-installer.se) <<EOF > "$LOG_FILE" 2>&1 &
 1
 N
@@ -64,7 +70,11 @@ y
 $admin_email
 y
 EOF
-    wait $!  # Warte auf den Abschluss des im Hintergrund laufenden Prozesses
+    # Starte das Monitoring im Vordergrund
+    monitor_progress
+    # Warte auf den Abschluss des im Hintergrund laufenden Prozesses
+    wait $!
+    # Wings aktivieren und stoppen (möglicherweise für Konfigurationszwecke)
     systemctl enable wings
     systemctl stop wings
 }
@@ -91,15 +101,23 @@ monitor_progress() {
             for key in "${!progress_messages[@]}"; do
                 if [[ "$line" == *"$key"* ]]; then
                     current_progress="${progress_messages[$key]}"
-                    # Update nur, wenn der aktuelle Fortschritt höher als der höchste bisherige Fortschritt ist
                     if [ "$current_progress" -gt "$highest_progress" ]; then
                         highest_progress=$current_progress
-                        echo "$highest_progress" # Aktualisiere den Whiptail-Fortschrittsbalken
+                        if [ "$highest_progress" -eq 100 ]; then
+                            whiptail --title "Installation abgeschlossen" --msgbox "Wings wurde erfolgreich installiert!" 10 60
+                            sleep 2
+                            whiptail --clear
+                            sleep 1
+                            on_installation_complete
+                        else
+                            # Aktualisiere den Fortschritt im Whiptail-Popup
+                            echo "$highest_progress"
+                        fi
                     fi
                 fi
             done
             sleep 0.5 # Verzögere die Schleife, um CPU-Zeit zu sparen
-        done < <(tail -n 0 -f wlog.txt)
+        done < <(tail -n 0 -f "$LOG_FILE") # Überwache LOG_FILE statt wlog.txt
     } | whiptail --gauge "Wings wird installiert..." 10 70 0
 }
 
@@ -125,8 +143,6 @@ ask_for_admin_email() {
 }
 
 # Beginn von Wings-Installation, weiter zu...
-
-
 # ...der tatsächlichen Installation
 while true; do
     DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest" 10 60 3>&1 1>&2 2>&3)
@@ -163,4 +179,3 @@ while true; do
         continue
     fi
 done
-
