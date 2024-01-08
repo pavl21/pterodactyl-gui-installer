@@ -91,8 +91,7 @@ monitor_progress() {
         ["Saving debug log to /var/log/letsencrypt/letsencrypt.log"]=70
         ["Requesting a certificate"]=85
         ["Waiting for verification..."]=90
-        ["The process of obtaining a Let's Encrypt certificate succeeded!"]=95
-        ["Wings installation completed"]=100
+        ["The process of obtaining a Let's Encrypt certificate succeeded!"]=100
     )
 
     highest_progress=0
@@ -179,3 +178,4 @@ while true; do
         continue
     fi
 done
+
