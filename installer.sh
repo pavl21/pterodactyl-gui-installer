@@ -84,6 +84,15 @@ main_loop() {
     done
 }
 
+# Wings installieren
+install_wings() {
+    echo "Script wird noch bereitgestellt..."
+    sleep 5
+    wget GITHUBLINK
+    chmod 777 wings
+    ./wings
+}
+
 # Admin Account Passwort vergessen
 create_admin_account() {
     if ! whiptail --yesno "Wenn du dein Passwort für dein Admin Account vergessen hast, können wir nur einen neuen Account anlegen, womit du wieder in dein Admin Panel kommst. Dort kannst du dann dein Passwort deines bestehenden Accounts ändern und den temporären löschen. Bist du damit einverstanden?" 12 78; then
@@ -632,125 +641,6 @@ clear
 # Info: Installation abgeschlossen
 whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 20 78
 
-# Funktion, um die Zugangsdaten anzuzeigen
-show_access_data() {
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (16 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 15 80
-}
-
-# Funktion, um den Benutzer neu anzulegen
-recreate_user() {
-    {
-        echo "10"; sleep 1
-        echo "Benutzer löschen..."
-        cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
-        echo "30"; sleep 1
-        echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
-        cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
-        echo "100"; sleep 1
-    } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
-}
-
-# Installation von Panel, nun die Frage ob man mit der Wings Installation fortfahren möchte. Wenn ja, wird es auch installiert.
-
-# Funktion zur Überprüfung einer gültigen Domain
-isValidDomain() {
-    DOMAIN_REGEX="^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if [[ $1 =~ $DOMAIN_REGEX ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-
-
-
-# Funktion zur Installation von Wings
-install_wings() {
-    while true; do
-        DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest" 10 60 3>&1 1>&2 2>&3)
-        if ! isValidDomain "$DOMAIN"; then
-            whiptail --title "Das ist keine Domain" --msgbox "Die angegebene Domain ist keine Domain, bitte probiere es erneut." 10 60
-        elif isMatchingIP "$DOMAIN"; then
-            whiptail --title "DNS-Eintrag gefunden" --msgbox "Es wurde ein Eintrag gefunden, der mit diesem Server und der Domain verknüpft ist. Die Installation wird fortgesetzt." 10 60
-
-            # Hier rufe die Funktion install_wings_with_script auf
-            install_wings_with_script
-
-            break
-        else
-            if ! whiptail --title "Kein DNS-Eintrag gefunden" --yesno "Die DNS-Einstellungen der Domain sind nicht korrekt oder die Domain ist nicht mit der IP dieses Servers verknüpft. Wenn du die IP mit $DOMAIN verbunden hast und trotzdem ein Fehler auftritt, dann prüfe (wenn du Cloudflare nutzt), ob die Proxy aktiv ist und deaktiviere sie gegebenfalls. Möchtest du es erneut versuchen? Der Test wird dann erneut gestartet." 10 60; then
-                break
-            fi
-        fi
-    done
-}
-
-# Funktion zur Installation von Wings mit dem externen Script
-install_wings_with_script() {
-    touch "$LOG_FILE"  # Stelle sicher, dass LOG_FILE definiert und korrekt gesetzt ist.
-    bash <(curl -s https://pterodactyl-installer.se) <<EOF > "$LOG_FILE" 2>&1 &
-1
-N
-N
-y
-$DOMAIN
-y
-$admin_email
-y
-EOF
-    wait $!  # Warte auf den Abschluss des im Hintergrund laufenden Prozesses
-    systemctl enable wings
-    systemctl stop wings
-    check_panel_reachability
-}
-
-# Überwachungsfunktion für wlog.txt
-monitor_progress() {
-    declare -A progress_messages=(
-        ["Installing virt-what"]="1: Installation wird gestartet..."
-        ["this script will not start Wings automatically"]="5: Angaben werden angewendet..."
-        ["Installing pterodactyl wings"]="10: Angaben angewendet! Fahre fort..."
-        ["ca-certificates is already the newest version"]="25: Abhängigkeiten werden installiert..."
-        ["Executing: /lib/systemd/systemd-sysv-install enable docker"]="40: Wings wird heruntergeladen..."
-        ["Pterodactyl Wings downloaded successfully"]="50: Wings wird als Dienst festgelegt..."
-        ["Installed systemd service!"]="65: Bereitstellung des SSL-Zertifikates wird gestartet..."
-        ["Saving debug log to /var/log/letsencrypt/letsencrypt.log"]="70: Debugmeldungen werden protokolliert..."
-        ["Requesting a certificate"]="85: SSL-Zertifikat wird angefragt..."
-        ["Waiting for verification..."]="90: Warte auf Antwort des Ausstellers Lets Encrypt..."
-        ["The process of obtaining a Let's Encrypt certificate succeeded!"]="95: SSL-Zertifikat erfolgreich erhalten. Installation wird abgeschlossen..."
-        ["Wings installation completed"]="100: Installation abgeschlossen!"
-    )
-
-    tail -f "$LOG_FILE" | while read line; do
-        for key in "${!progress_messages[@]}"; do
-            if [[ "$line" == *"$key"* ]]; then
-                progress="${progress_messages[$key]%%:*}"
-                progress_text="${progress_messages[$key]#*:}"
-                echo "$progress" | whiptail --gauge "$progress_text" 10 70 0
-            fi
-        done
-    done &
-}
-
-# Funktion, um die Zugangsdaten anzuzeigen
-show_access_data() {
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (16 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 15 80
-}
-
-# Funktion, um den Benutzer neu anzulegen
-recreate_user() {
-    {
-        echo "10"; sleep 1
-        echo "Benutzer löschen..."
-        cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
-        echo "30"; sleep 1
-        echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
-        cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
-        echo "100"; sleep 1
-    } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
-}
-
 # Hauptlogik für die Zugangsdaten und die Entscheidung zur Installation von Wings
 while true; do
     show_access_data
@@ -758,11 +648,11 @@ while true; do
     if whiptail --title "Bestätigung" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
         if whiptail --title "Zugangsdaten Test" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
             if whiptail --title "Bereit für den nächsten Schritt" --yesno "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können. Möchtest du Wings jetzt installieren?" 10 60; then
-                install_wings_with_script &
-                monitor_progress &
-                wait $!  # Warten, bis der Installationsprozess abgeschlossen ist
-                check_panel_reachability  # Überprüfung der Panel-Erreichbarkeit
-                break
+                clear
+                echo "Weiterleitung zu Wings..."
+                wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh -O wings
+                chmod +x wings
+                ./wings
             else
                 whiptail --title "Installation abgebrochen" --msgbox "Wings-Installation wurde abgebrochen. Du kannst das Skript später erneut ausführen, um Wings zu installieren." 10 60
                 exit 0
@@ -776,8 +666,34 @@ while true; do
     fi
 done
 
+# Funktion, um die Zugangsdaten anzuzeigen
+show_access_data() {
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (16 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 15 80
+}
+
+# Funktion, um den Benutzer neu anzulegen
+recreate_user() {
+    {
+        echo "10"; sleep 1
+        echo "Benutzer löschen..."
+        cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
+        echo "30"; sleep 1
+        echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
+        cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
+        echo "100"; sleep 1
+    } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
+}
+
+# Funktion zur Überprüfung einer gültigen Domain
+isValidDomain() {
+    DOMAIN_REGEX="^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if [[ $1 =~ $DOMAIN_REGEX ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
-
-
