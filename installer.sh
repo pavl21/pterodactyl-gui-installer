@@ -18,6 +18,21 @@ validate_email() {
     fi
 }
 
+# Überprüfung der Panel-Erreichbarkeit
+check_panel_reachability() {
+    if curl --output /dev/null --silent --head --fail "https://$panel_domain"; then
+        echo "Das Panel ist erreichbar."
+    else
+        echo "Das Panel ist nicht erreichbar. Bitte überprüfe die Installation und die Netzwerkeinstellungen."
+        exit 1
+    fi
+}
+
+# Globale Konfigurationsvariablen
+DOMAIN_REGEX="^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
+LOG_FILE="wlog.txt"
+INSTALLER_URL="https://pterodactyl-installer.se"
+
 # Funktion zur Generierung einer zufälligen dreistelligen Zahl
 generate_random_number() {
     echo $((RANDOM % 900 + 100))
@@ -26,12 +41,14 @@ generate_random_number() {
 main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
-            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 5 \
+            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 7 \
                 "1" "Admin Passwort vergessen" \
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
                 "4" "Pterodactyl deinstallieren (Offen)" \
-                "5" "PhpMyAdmin installieren (Offen)" 3>&1 1>&2 2>&3)
+                "5" "PhpMyAdmin installieren (Offen)" \
+                "6" "Wings nachinstallieren" \
+                "7" "Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
             # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
@@ -39,17 +56,26 @@ main_loop() {
                 clear
                 echo ""
                 echo "HINWEIS - - - - - - - - - - -"
-                echo "Die Problembehandlung wurde beendet. Zur zur Info: Das Installationsscript wurde nicht gestartet, weil Pterodactyl bereits installiert ist."
+                echo "Die Problembehandlung wurde beendet. Nur zur Info: Das Installationsscript wurde nicht gestartet, weil Pterodactyl bereits installiert ist."
                 echo ""
                 exit
             fi
 
+            clear
             case $MAIN_MENU in
                 1) create_admin_account ;;
                 2) repair_panel ;;
                 3) check_nginx_config ;;
                 4) uninstall_pterodactyl ;;
                 5) install_phpmyadmin ;;
+                6) install_wings ;;
+                7)
+                   clear
+                   echo ""
+                   echo "INFO - - - - - - - - - -"
+                   echo "Die Verwaltung/Wartung vom Panel wurde beendet. Starte das Script erneut, wenn du zurückkehren möchtest."
+                   exit 0
+                   ;;
             esac
         else
             echo "Das Verzeichnis /var/www/pterodactyl existiert nicht. Fahre fort."
@@ -57,7 +83,6 @@ main_loop() {
         fi
     done
 }
-
 
 # Admin Account Passwort vergessen
 create_admin_account() {
@@ -136,7 +161,7 @@ repair_panel() {
 # Webserver-Reperatur Teil, um die Config einzustellen für allgemeine Erreichbarkeit des Panels.
 check_nginx_config() {
     # Domain-Abfrage
-    DOMAIN_CHECK=$(whiptail --inputbox "Unter welcher Domain soll das Panel erreichbar sein?" 10 60 3>&1 1>&2 2>&3)
+    DOMAIN_CHECK=$(whiptail --inputbox "Unter welcher Domain soll das Panel erreichbar sein? Gebe bitte nur die Domain ein, die du vorher bereits für dieses Panel verwendet hast. Nicht für Wings!" 10 60 3>&1 1>&2 2>&3)
     exitstatus=$?
     if [ $exitstatus != 0 ]; then
         return  # Kehrt zum Hauptmenü zurück, wenn abgebrochen wird
@@ -273,14 +298,15 @@ validate_domain() {
 }
 
 
-# Deinstallationsscript von Pterodactyl
+# Deinstallationsscript von Pterodactyl - OFFEN
 uninstall_pterodactyl() {
     # Deinstallationslogik hier...
     echo "Deinstallationsfunktion ist noch zu implementieren."
+    sleep 5
 }
 
 
-# Platzhalter-Funktion für Phpmyadmin-Installation
+# Platzhalter-Funktion für Phpmyadmin-Installation - OFFEN
 install_phpmyadmin() {
     # Hier kommt dein Skript zur Installation von Phpmyadmin
     echo "Phpmyadmin-Installationsskript ist noch zu implementieren."
@@ -371,6 +397,28 @@ echo "STATUS - - - - - - - - - - - - - - - -"
 echo ""
 echo "Vorbereitung abgeschlossen."
 sleep 2
+
+
+if whiptail --title "Willkommen" --yesno "Dieses Script hilft dir dabei, das Pterodactyl Panel zu installieren. Beachte hierbei, dass du eine Domain benötigst (bzw. 2 Subdomains von einer bestehenden Domain).
+
+Das Script zur Installation basiert auf dem Github-Projekt 'pterodactyl-installer.se' von Vilhelm Prytz. Durch Bestätigung stimmst du zu, dass:
+- Abhängigkeiten, die benötigt werden, installiert werden dürfen
+- Du den TOS von Let's Encrypt zustimmst
+- Mit der Installation von GermanDactyl einverstanden bist
+- Du der Besitzer der Domain bist bzw. die Berechtigung vorliegt
+- Die angegebene E-Mail-Adresse deine eigene ist
+
+Möchtest du fortfahren?" 22 70; then
+    # Hier kommt der bestehende Code, der ausgeführt wird, wenn "Yes" ausgewählt wurde
+    echo "Du hast 'Yes' ausgewählt. Fortfahren..."
+else
+    # Hier kommt der Code, der ausgeführt wird, wenn "No" ausgewählt wurde
+    echo "Du hast 'No' ausgewählt. Skript abgebrochen."
+    exit 1
+fi
+
+
+
 
 
 
@@ -480,15 +528,17 @@ update_progress() {
 
 # Überwachungsfunktion für tmp.txt - Fortschritte müssen noch angepasst werden, Wert des Fortschritts springt dauernd hin und her.
 monitor_progress() {
+    highest_progress=0
     {
         while read line; do
+            current_progress=0
             case "$line" in
-                *"Initial configuration completed. Continue with installation?"*)
+                *"* Configure Let's Encrypt? false"*)
                     update_progress 5 "Einstellungen werden festgelegt..." ;;
-                *"Starting installation.. this might take a while!"*)
+                *"* Installing dependencies for"*)
                     update_progress 10 "Installationsprozess beginnt" ;;
-                *"Unpacking mariadb-server-10.5"*)
-                    update_progress 15 "Entpacken des MariaDB-Servers" ;;
+                *"Preparing to unpack .../mariadb-server-core"*)
+                    update_progress 15 "MariaDB wird installiert..." ;;
                 *"Setting up php8.1-common"*)
                     update_progress 20 "Einrichtung von PHP 8.1 Common" ;;
                 *"Setting up mariadb-server-10.5"*)
@@ -524,6 +574,10 @@ monitor_progress() {
                 *"Der Patch wurde angewendet."*)
                     update_progress 100 "Abschluss der Installation" ;;
             esac
+            if [ "$current_progress" -gt "$highest_progress" ]; then
+                highest_progress=$current_progress
+                update_progress $highest_progress "Aktueller Status..."
+            fi
         done < <(tail -n 0 -f tmp.txt)
     } | whiptail --gauge "Pterodactyl Panel - Installation" 10 70 0
 }
@@ -596,20 +650,134 @@ recreate_user() {
     } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
 }
 
-# Hauptlogik
+# Installation von Panel, nun die Frage ob man mit der Wings Installation fortfahren möchte. Wenn ja, wird es auch installiert.
+
+# Funktion zur Überprüfung einer gültigen Domain
+isValidDomain() {
+    DOMAIN_REGEX="^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if [[ $1 =~ $DOMAIN_REGEX ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+
+
+
+# Funktion zur Installation von Wings
+install_wings() {
+    while true; do
+        DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest" 10 60 3>&1 1>&2 2>&3)
+        if ! isValidDomain "$DOMAIN"; then
+            whiptail --title "Das ist keine Domain" --msgbox "Die angegebene Domain ist keine Domain, bitte probiere es erneut." 10 60
+        elif isMatchingIP "$DOMAIN"; then
+            whiptail --title "DNS-Eintrag gefunden" --msgbox "Es wurde ein Eintrag gefunden, der mit diesem Server und der Domain verknüpft ist. Die Installation wird fortgesetzt." 10 60
+
+            # Hier rufe die Funktion install_wings_with_script auf
+            install_wings_with_script
+
+            break
+        else
+            if ! whiptail --title "Kein DNS-Eintrag gefunden" --yesno "Die DNS-Einstellungen der Domain sind nicht korrekt oder die Domain ist nicht mit der IP dieses Servers verknüpft. Wenn du die IP mit $DOMAIN verbunden hast und trotzdem ein Fehler auftritt, dann prüfe (wenn du Cloudflare nutzt), ob die Proxy aktiv ist und deaktiviere sie gegebenfalls. Möchtest du es erneut versuchen? Der Test wird dann erneut gestartet." 10 60; then
+                break
+            fi
+        fi
+    done
+}
+
+# Funktion zur Installation von Wings mit dem externen Script
+install_wings_with_script() {
+    touch "$LOG_FILE"  # Stelle sicher, dass LOG_FILE definiert und korrekt gesetzt ist.
+    bash <(curl -s https://pterodactyl-installer.se) <<EOF > "$LOG_FILE" 2>&1 &
+1
+N
+N
+y
+$DOMAIN
+y
+$admin_email
+y
+EOF
+    wait $!  # Warte auf den Abschluss des im Hintergrund laufenden Prozesses
+    systemctl enable wings
+    systemctl stop wings
+    check_panel_reachability
+}
+
+# Überwachungsfunktion für wlog.txt
+monitor_progress() {
+    declare -A progress_messages=(
+        ["Installing virt-what"]="1: Installation wird gestartet..."
+        ["this script will not start Wings automatically"]="5: Angaben werden angewendet..."
+        ["Installing pterodactyl wings"]="10: Angaben angewendet! Fahre fort..."
+        ["ca-certificates is already the newest version"]="25: Abhängigkeiten werden installiert..."
+        ["Executing: /lib/systemd/systemd-sysv-install enable docker"]="40: Wings wird heruntergeladen..."
+        ["Pterodactyl Wings downloaded successfully"]="50: Wings wird als Dienst festgelegt..."
+        ["Installed systemd service!"]="65: Bereitstellung des SSL-Zertifikates wird gestartet..."
+        ["Saving debug log to /var/log/letsencrypt/letsencrypt.log"]="70: Debugmeldungen werden protokolliert..."
+        ["Requesting a certificate"]="85: SSL-Zertifikat wird angefragt..."
+        ["Waiting for verification..."]="90: Warte auf Antwort des Ausstellers Lets Encrypt..."
+        ["The process of obtaining a Let's Encrypt certificate succeeded!"]="95: SSL-Zertifikat erfolgreich erhalten. Installation wird abgeschlossen..."
+        ["Wings installation completed"]="100: Installation abgeschlossen!"
+    )
+
+    tail -f "$LOG_FILE" | while read line; do
+        for key in "${!progress_messages[@]}"; do
+            if [[ "$line" == *"$key"* ]]; then
+                progress="${progress_messages[$key]%%:*}"
+                progress_text="${progress_messages[$key]#*:}"
+                echo "$progress" | whiptail --gauge "$progress_text" 10 70 0
+            fi
+        done
+    done &
+}
+
+# Funktion, um die Zugangsdaten anzuzeigen
+show_access_data() {
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (16 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 15 80
+}
+
+# Funktion, um den Benutzer neu anzulegen
+recreate_user() {
+    {
+        echo "10"; sleep 1
+        echo "Benutzer löschen..."
+        cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
+        echo "30"; sleep 1
+        echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
+        cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
+        echo "100"; sleep 1
+    } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
+}
+
+# Hauptlogik für die Zugangsdaten und die Entscheidung zur Installation von Wings
 while true; do
     show_access_data
 
     if whiptail --title "Bestätigung" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
         if whiptail --title "Zugangsdaten Test" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
-            whiptail --title "Bereit für den nächsten Schritt" --msgbox "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können." 10 60
-            break
+            if whiptail --title "Bereit für den nächsten Schritt" --yesno "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können. Möchtest du Wings jetzt installieren?" 10 60; then
+                install_wings_with_script &
+                monitor_progress &
+                wait $!  # Warten, bis der Installationsprozess abgeschlossen ist
+                check_panel_reachability  # Überprüfung der Panel-Erreichbarkeit
+                break
+            else
+                whiptail --title "Installation abgebrochen" --msgbox "Wings-Installation wurde abgebrochen. Du kannst das Skript später erneut ausführen, um Wings zu installieren." 10 60
+                exit 0
+            fi
         else
             recreate_user
         fi
+    else
+        # Verlasse die Schleife, wenn "Nein" gewählt wird
+        break
     fi
 done
 
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
+
+
