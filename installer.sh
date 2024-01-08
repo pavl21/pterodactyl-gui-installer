@@ -86,10 +86,10 @@ main_loop() {
 
 # Wings installieren
 install_wings() {
-    echo "Script wird noch bereitgestellt..."
-    sleep 5
-    wget GITHUBLINK
-    chmod 777 wings
+    clear
+    echo "Weiterleitung zu Wings..."
+    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh -O wings
+    chmod +x wings
     ./wings
 }
 
@@ -695,5 +695,8 @@ isValidDomain() {
 }
 
 echo "Fertig"
+rm script
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
+
+
