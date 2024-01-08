@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# Pfad, wo Wings installiert sein sollte. Wenn ja, Abbruch!
+WINGS_PATH="/usr/local/bin/wings"
+
+# Prüfen, ob Wings bereits installiert ist
+if [ -f "$WINGS_PATH" ]; then
+    whiptail --title "Wings bereits installiert" --msgbox "Wings ist bereits auf diesem System installiert. Die Installation wird abgebrochen." 10 60
+    exit 0  # Beendet das Skript, da Wings bereits installiert ist
+fi
+
 # Pfad zur Log-Datei definieren
 LOG_FILE="wlog.txt"
 
@@ -89,9 +98,9 @@ monitor_progress() {
                     fi
                 fi
             done
-            sleep 1 # Verzögere die Schleife, um CPU-Zeit zu sparen
+            sleep 0.5 # Verzögere die Schleife, um CPU-Zeit zu sparen
         done < <(tail -n 0 -f wlog.txt)
-    } | whiptail --gauge "Installation im Gange..." 10 70 0
+    } | whiptail --gauge "Wings wird installiert..." 10 70 0
 }
 
 
@@ -116,6 +125,9 @@ ask_for_admin_email() {
 }
 
 # Beginn von Wings-Installation, weiter zu...
+
+
+# ...der tatsächlichen Installation
 while true; do
     DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest" 10 60 3>&1 1>&2 2>&3)
 
@@ -151,5 +163,4 @@ while true; do
         continue
     fi
 done
-
 
