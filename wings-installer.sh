@@ -96,30 +96,27 @@ monitor_progress() {
 
     highest_progress=0
     {
-        while read line; do
-            for key in "${!progress_messages[@]}"; do
-                if [[ "$line" == *"$key"* ]]; then
-                    current_progress="${progress_messages[$key]}"
-                    if [ "$current_progress" -gt "$highest_progress" ]; then
-                        highest_progress=$current_progress
-                        if [ "$highest_progress" -eq 100 ]; then
-                            whiptail --title "Installation abgeschlossen" --msgbox "Wings wurde erfolgreich installiert!" 10 60
-                            sleep 2
-                            whiptail --clear
-                            sleep 1
-                            on_installation_complete
-                        else
-                            # Aktualisiere den Fortschritt im Whiptail-Popup
-                            echo "$highest_progress"
-                        fi
+    while read line; do
+        for key in "${!progress_messages[@]}"; do
+            if [[ "$line" == *"$key"* ]]; then
+                current_progress="${progress_messages[$key]}"
+                if [ "$current_progress" -gt "$highest_progress" ]; then
+                    highest_progress=$current_progress
+                    if [ "$highest_progress" -eq 100 ]; then
+                        whiptail --title "Installation abgeschlossen" --msgbox "Wings wurde erfolgreich installiert!" 10 60
+                        sleep 2
+                        whiptail --clear
+                        sleep 1
+                        on_installation_complete
+                    else
+                        # Aktualisiere den Fortschritt im Whiptail-Popup
+                        echo "$highest_progress"
                     fi
                 fi
-            done
-            sleep 0.5 # Verzögere die Schleife, um CPU-Zeit zu sparen
-        done < <(tail -n 0 -f "$LOG_FILE") # Überwache LOG_FILE statt wlog.txt
-    } | whiptail --gauge "Wings wird installiert..." 10 70 0
-}
-
+            fi
+        done
+    done < <(tail -n 0 -f "$LOG_FILE") # Überwache LOG_FILE statt wlog.txt
+} | whiptail --gauge "Wings wird installiert..." 10 70 0
 
 # Funktion zur Abfrage und Validierung der E-Mail-Adresse des SSL Zertifikats Let's Encrypt
 ask_for_admin_email() {
