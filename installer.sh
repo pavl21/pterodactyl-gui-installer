@@ -41,14 +41,17 @@ generate_random_number() {
 main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
-            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 7 \
+            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 8 \
                 "1" "Admin Passwort vergessen" \
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
                 "4" "Pterodactyl deinstallieren" \
                 "5" "PhpMyAdmin installieren (Offen)" \
                 "6" "Wings nachinstallieren" \
-                "7" "Skript beenden" 3>&1 1>&2 2>&3)
+                "7" "Server-Backups einrichten" \
+                "8" "Database-Host einrichten" \
+                "9" "Theme installieren" \
+                "10" "Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
             # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
@@ -69,7 +72,10 @@ main_loop() {
                 4) uninstall_pterodactyl ;;
                 5) install_phpmyadmin ;;
                 6) install_wings ;;
-                7)
+                7) setup_server_backups ;;
+                8) setup_database_host ;;
+                9) install_theme ;;
+                10)
                    clear
                    echo ""
                    echo "INFO - - - - - - - - - -"
@@ -83,6 +89,7 @@ main_loop() {
         fi
     done
 }
+
 
 # Wings installieren
 install_wings() {
@@ -402,6 +409,34 @@ install_phpmyadmin() {
     sleep 5
 }
 
+
+# Funktion zum Installieren von einer Auswahl an Themes
+install_theme() {
+    # Füge hier den Code für die Theme-Installation ein
+    # Zum Beispiel: echo "Theme wurde erfolgreich installiert."
+    echo "Diese Funktion ist noch in Arbeit."
+    sleep 5
+}
+
+
+# Funktion zum Einrichten von Server-Backups
+setup_server_backups() {
+    # Füge hier den Code für die Einrichtung von Server-Backups ein
+    # Zum Beispiel: echo "Server-Backups wurden erfolgreich eingerichtet."
+    echo "Diese Funktion ist noch in Arbeit."
+    sleep 5
+}
+
+# Funktion zum Einrichten des Database-Hosts
+setup_database_host() {
+    # Füge hier den Code für die Einrichtung des Database-Hosts ein
+    # Zum Beispiel: echo "Database-Host wurde erfolgreich eingerichtet."
+    echo "Diese Funktion ist noch in Arbeit."
+    sleep 5
+}
+
+
+
 # Starte die Hauptfunktion
 main_loop
 
@@ -523,10 +558,12 @@ Das Script zur Installation basiert auf dem Github-Projekt 'pterodactyl-installe
 
 Möchtest du fortfahren?" 22 70; then
     # Hier kommt der bestehende Code, der ausgeführt wird, wenn "Yes" ausgewählt wurde
-    echo "Du hast 'Yes' ausgewählt. Fortfahren..."
+    echo "Nice, weiter gehts, naja siehste sowieso nicht."
 else
     # Hier kommt der Code, der ausgeführt wird, wenn "No" ausgewählt wurde
-    echo "Du hast 'No' ausgewählt. Skript abgebrochen."
+    echo "STATUS - - - - - - - - - - - - - - - -"
+    echo ""
+    echo "Die Installation wurde abgebrochen."
     exit 1
 fi
 
@@ -777,5 +814,3 @@ done
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
-
-
