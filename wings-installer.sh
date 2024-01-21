@@ -24,6 +24,7 @@ if [ -f "$WINGS_PATH" ]; then
             fi
         else
             whiptail --title "🚀 Wings bereits installiert" --msgbox "Wings ist bereits auf diesem System installiert und läuft." 10 60
+            exit 0
         fi
     else
         whiptail --title "🚫 Wings Installation abgebrochen" --msgbox "Die Installation von Wings wurde abgebrochen." 10 60
@@ -185,6 +186,3 @@ while true; do
 done
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
-
-
-
