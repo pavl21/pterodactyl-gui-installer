@@ -1,4 +1,4 @@
-# Pterodactyl GUI Installer (inoffiziell)
+# Pterodactyl GUI Installer (inoffiziell) für GermanDactyl
 Installiert das Pterodactyl Panel automatisch in 2 Schritten, die Basis des Installationscriptes stammt von [dem Entwickler namens Vilhelm Prytz](https://github.com/vilhelmprytz).
 
 DAS SCRIPT IST NOCH NICHT EINSATZBEREIT!
