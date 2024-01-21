@@ -3,63 +3,116 @@
 # Pfad, wo Wings installiert sein sollte. Wenn ja, Abbruch!
 WINGS_PATH="/usr/local/bin/wings"
 
-# Prüfen, ob Wings bereits installiert ist
+# Überprüfen, ob Wings bereits auf dem System installiert ist und gegebenenfalls abbrechen. Sonst helfen, das es gestartet wird.
 if [ -f "$WINGS_PATH" ]; then
-    whiptail --title "Wings bereits installiert" --msgbox "Wings ist bereits auf diesem System installiert. Die Installation wird abgebrochen." 10 60
-    exit 0  # Beendet das Skript, da Wings bereits installiert ist
+    if whiptail --title "🚀 Wings bereits installiert" --yesno "Auf diesem System ist bereits Wings installiert. Wenn du versuchst, Wings zu starten, falls es nicht reagiert, können wir das hier versuchen. Soll der Status ermittelt werden?" 10 60; then
+        status_output=$(systemctl status wings)
+        if [[ $status_output == *"Failed to start Pterodactyl Wings Daemon."* ]]; then
+            whiptail --title "🔴 Wings Fehler" --msgbox "Es gab einen Fehler beim Starten von Wings. Versuche, Wings neu zu starten." 10 60
+            sudo systemctl restart wings
+            status_output=$(systemctl status wings)
+            if [[ $status_output == *"Failed to start Pterodactyl Wings Daemon."* ]]; then
+                whiptail --title "🔴 Wings Fehler" --msgbox "Wings konnte nicht gestartet werden, trotz Neustart. Überprüfe die Port-Konflikte und versuche es erneut." 10 60
+            else
+                whiptail --title "🟢 Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein." 10 60
+            fi
+        elif [[ $status_output == *"inactive (dead)"* ]]; then
+            sudo systemctl start wings
+            status_output=$(systemctl status wings)
+            if [[ $status_output == *"Active: active (running)"* ]]; then
+                whiptail --title "🟢 Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein." 10 60
+            fi
+        else
+            whiptail --title "🚀 Wings bereits installiert" --msgbox "Wings ist bereits auf diesem System installiert und läuft." 10 60
+        fi
+    else
+        whiptail --title "🚫 Wings Installation abgebrochen" --msgbox "Die Installation von Wings wurde abgebrochen." 10 60
+    fi
+else
+    whiptail --title "❌ Wings nicht gefunden" --msgbox "Wings wurde auf diesem System nicht gefunden." 10 60
 fi
 
-# Pfad zur Log-Datei definieren
-LOG_FILE="wlog.txt"
-
-# Log-Datei zu Beginn des Skripts erstellen oder leeren
+# Pfad zur Log-Datei definieren und Log-Datei zu Beginn leeren
+LOG_FILE="wings-install.log"
 > "$LOG_FILE"
 
-# Funktion zur Überprüfung, ob die Domain-Struktur gültig ist
+# Integrationshilfe für Wings
+integrate_wings() {
+    local DOMAIN="$1"
+
+    # Starte die Integration
+    systemctl enable wings
+    systemctl stop wings
+
+    # Zeige Infotext und frage, ob der Node erstellt wurde
+    while true; do
+        if whiptail --yesno "Erstelle jetzt im Panel mit der Domain $DOMAIN als Node. Hast du den Node erstellt?" 10 60; then
+            # Infotext zur Wings-Integration
+            whiptail --msgbox "So bindest du Wings ein: Öffne eine neue SSH-Verbindung und bearbeite die config.yml in /etc/pterodactyl/" 10 60
+
+            # Prüfe, ob die Integration abgeschlossen ist
+            if whiptail --yesno "Hast du die Wings-Integration abgeschlossen?" 10 60; then
+                if [ -f /etc/pterodactyl/config.yml ]; then
+                    systemctl start wings
+                    if whiptail --yesno "Prüfe im Panel, ob das Herz bei der Node grün schlägt. Ist die Installation erfolgreich?" 10 60; then
+                        whiptail --msgbox "Installation erfolgreich abgeschlossen!" 10 60
+                        break
+                    else
+                        # Node erstellen, falls nötig
+                        cd /var/www/pterodactyl
+                        php artisan p:location:make --short=DE --long="Hauptnetz"
+                        break
+                    fi
+                else
+                    whiptail --msgbox "Die Datei /etc/pterodactyl/config.yml existiert nicht. Bitte überprüfe die Integration." 10 60
+                fi
+            else
+                continue
+            fi
+        else
+            whiptail --msgbox "Bitte erstelle den Node im Panel und versuche es erneut." 10 60
+        fi
+    done
+}
+
+# Funktionen zur Validierung
 validate_domain() {
     local domain=$1
     if [[ $domain =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        return 0  # Erfolg
+        local server_ip=$(hostname -I | awk '{print $1}')
+        local dns_ip=$(dig +short $domain)
+        if [[ "$dns_ip" == "$server_ip" ]]; then
+            title="✅ Erfolg - Domain Überprüfung"
+            message="Die IP-Adresse der Domain $domain stimmt mit der IP-Adresse des Servers überein. Die Installation wird fortgesetzt."
+            whiptail --title "$title" --msgbox "$message" 10 60
+            return 0
+        else
+            title="❌ Fehler - Domain Überprüfung"
+            message="Die IP-Adresse der Domain $domain stimmt nicht mit der IP-Adresse des Servers überein.\n\nDomain -> $domain"
+            whiptail --title "$title" --msgbox "$message" 10 60
+            return 1
+        fi
     else
-        return 1  # Fehler
+        title="❌ Fehler - Domain Überprüfung"
+        message="Die eingegebene Domain $domain ist keine gültige Domain-Struktur."
+        whiptail --title "$title" --msgbox "$message" 10 60
+        return 1
     fi
 }
 
-# Funktion zur Überprüfung der E-Mail-Adresse
 validate_email() {
     local email=$1
-    if [[ $email =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$ ]]; then
-        return 0  # Erfolg
+    if [[ $email =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        return 0
     else
-        return 1  # Fehler
+        whiptail --title "E-Mail Überprüfung" --msgbox "Die eingegebene E-Mail-Adresse ist kein gültiges E-Mail-Format." 10 60
+        return 1
     fi
 }
 
-# Wenn die Installation fertig ist, weitere Anweisungen.
-on_installation_complete() {
-    # Hier kannst du deinen eigenen Code einfügen, der nach Abschluss der Installation ausgeführt wird
-    echo "Installation abgeschlossen. Deine benutzerdefinierte Aktion hier."
-}
-
-# Funktion zur Überprüfung, ob die IPv4-Adresse zur angegebenen Domain passt
-isMatchingIPv4() {
-    local domain=$1
-    local server_ip=$(hostname -I | awk '{print $1}')
-    local dns_ip=$(dig +short $domain)
-    echo "Server IP: $server_ip"
-    echo "DNS IP: $dns_ip"
-    if [[ "$dns_ip" == "$server_ip" ]]; then
-        echo "Die IP-Adressen stimmen überein."
-        return 0  # Erfolg
-    else
-        echo "Die IP-Adressen stimmen nicht überein."
-        return 1  # Fehler
-    fi
-}
-
-# Funktion zur Installation von Wings mit dem externen Script
+# Funktion zur Installation von Wings
 install_wings_with_script() {
-    # Führe das externe Skript im Hintergrund aus und leite die Ausgabe in LOG_FILE um
+    # Führe das externe Skript aus und leite die Ausgabe in die Log-Datei um
     bash <(curl -s https://pterodactyl-installer.se) <<EOF > "$LOG_FILE" 2>&1 &
 1
 N
@@ -74,105 +127,64 @@ EOF
     monitor_progress
     # Warte auf den Abschluss des im Hintergrund laufenden Prozesses
     wait $!
-    # Wings aktivieren und stoppen (möglicherweise für Konfigurationszwecke)
-    systemctl enable wings
-    systemctl stop wings
+
+    whiptail --title "Installation abgeschlossen" --msgbox "Wings wurde erfolgreich installiert und aktiviert. Jetzt muss Wings nur noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 60
+    integrate_wings
 }
 
 monitor_progress() {
     declare -A progress_messages=(
-        ["Installing virt-what"]=1
-        ["this script will not start Wings automatically"]=5
-        ["Installing pterodactyl wings"]=10
-        ["ca-certificates is already the newest version"]=25
-        ["Executing: /lib/systemd/systemd-sysv-install enable docker"]=40
-        ["Pterodactyl Wings downloaded successfully"]=50
-        ["Installed systemd service!"]=65
-        ["Saving debug log to /var/log/letsencrypt/letsencrypt.log"]=70
-        ["Requesting a certificate"]=85
-        ["Waiting for verification..."]=90
-        ["The process of obtaining a Let's Encrypt certificate succeeded!"]=100
+        ["* Installing virt-what..."]=10
+        ["* SUCCESS: System is compatible with docker"]=20
+        ["* DNS verified!"]=30
+        ["Selecting previously unselected package docker-ce-cli."]=40
+        ["* SUCCESS: Dependencies installed!"]=50
+        ["* SUCCESS: Pterodactyl Wings downloaded successfully"]=60
+        ["* SUCCESS: Installed systemd service!"]=70
+        ["Plugins selected: Authenticator standalone, Installer None"]=80
+        ["IMPORTANT NOTES:"]=90
+        ["* SUCCESS: The process of obtaining a Let's Encrypt certificate succeeded!"]=95
+        ["* Wings installation completed"]=100
     )
 
-    highest_progress=0
+    # Fortschrittsbalken initialisieren
     {
-    while read line; do
-        for key in "${!progress_messages[@]}"; do
-            if [[ "$line" == *"$key"* ]]; then
-                current_progress="${progress_messages[$key]}"
-                if [ "$current_progress" -gt "$highest_progress" ]; then
-                    highest_progress=$current_progress
-                    if [ "$highest_progress" -eq 100 ]; then
-                        whiptail --title "Installation abgeschlossen" --msgbox "Wings wurde erfolgreich installiert!" 10 60
-                        sleep 2
-                        whiptail --clear
-                        sleep 1
-                        on_installation_complete
-                    else
-                        # Aktualisiere den Fortschritt im Whiptail-Popup
-                        echo "$highest_progress"
-                    fi
+        for ((i=0; i<=100; i++)); do
+            sleep 1
+            # Lies die neueste Zeile aus der Log-Datei
+            line=$(tail -n 1 "$LOG_FILE")
+            for key in "${!progress_messages[@]}"; do
+                if [[ "$line" == *"$key"* ]]; then
+                    echo "${progress_messages[$key]}"
+                    break
                 fi
-            fi
+            done
         done
-    done < <(tail -n 0 -f "$LOG_FILE") # Überwache LOG_FILE statt wlog.txt
-} | whiptail --gauge "Wings wird installiert..." 10 70 0
-
-# Funktion zur Abfrage und Validierung der E-Mail-Adresse des SSL Zertifikats Let's Encrypt
-ask_for_admin_email() {
-    while true; do
-        admin_email=$(whiptail --title "E-Mail-Adresse für den Admin" --inputbox "Bitte gib die E-Mail-Adresse für den Administrator ein:" 10 60 3>&1 1>&2 2>&3)
-
-        if [ -z "$admin_email" ]; then
-            if whiptail --title "Abbrechen" --yesno "Möchtest du die Eingabe wirklich abbrechen?" 10 60; then
-                exit 0
-            fi
-        elif ! validate_email "$admin_email"; then
-            whiptail --title "Ungültige E-Mail-Adresse" --msgbox "Die angegebene E-Mail-Adresse ist ungültig. Bitte gib eine gültige E-Mail-Adresse ein." 10 60
-            continue
-        else
-            echo "$admin_email"  # Gibt die gültige E-Mail-Adresse zurück
-            install_wings_with_script
-            return
-        fi
-    done
+    } | whiptail --title "Wings wird installiert" --gauge "Bitte warten, dies kann je nach Leistung deines Systems einen Moment dauern..." 8 78 0
 }
 
-# Beginn von Wings-Installation, weiter zu...
-# ...der tatsächlichen Installation
+# Hauptinstallationsschleife
 while true; do
-    DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest" 10 60 3>&1 1>&2 2>&3)
+    DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest:" 10 60 3>&1 1>&2 2>&3)
 
     if [ -z "$DOMAIN" ]; then
-        if whiptail --title "Abbrechen" --yesno "Möchtest du die Eingabe wirklich abbrechen?" 10 60; then
-            exit 0  # Das Skript wird bei Abbruch beendet
-        else
-            continue  # Zurück zur Domain-Eingabe
-        fi
-    fi
-
-    if validate_domain "$DOMAIN"; then
-        if isMatchingIPv4 "$DOMAIN"; then
-            whiptail --title "DNS-Eintrag gefunden" --msgbox "Es wurde ein Eintrag gefunden, der mit diesem Server und der Domain verknüpft ist. Die Installation wird fortgesetzt." 10 60
-            ask_for_admin_email
-            break
-        else
-            dns_ipv4=$(dig +short A "$DOMAIN")
-            server_ipv4=$(curl -4s ifconfig.me)
-
-            if whiptail --title "Kein DNS-Eintrag gefunden" --yesno "Die DNS-Einstellungen der Domain sind nicht korrekt oder die Domain ist nicht mit der IPv4-Adresse dieses Servers verknüpft.\n\n$DOMAIN -> $dns_ipv4\nServer IPv4: $server_ipv4\n\nMöchtest du es erneut versuchen?" 16 78; then
-                continue
-            else
-                if whiptail --title "Abbrechen" --yesno "Möchtest du die Installation abbrechen?" 10 60; then
-                    exit 0
-                else
-                    continue
-                fi
-            fi
-        fi
-    else
-        whiptail --title "Ungültige Domain" --msgbox "Die angegebene Domain ist ungültig. Bitte gib eine gültige Domain ein." 10 60
+        whiptail --title "Installation abgebrochen" --msgbox "Keine Domain eingegeben. Installation wird abgebrochen." 10 60
+        exit 0
+    elif ! validate_domain "$DOMAIN"; then
         continue
     fi
+
+    admin_email=$(whiptail --title "Admin-E-Mail-Eingabe" --inputbox "Bitte gib eine Admin-E-Mail-Adresse ein:" 10 60 3>&1 1>&2 2>&3)
+
+    if [ -z "$admin_email" ]; then
+        whiptail --title "Installation abgebrochen" --msgbox "Keine E-Mail-Adresse eingegeben. Installation wird abgebrochen." 10 60
+        exit 0
+    elif ! validate_email "$admin_email"; then
+        continue
+    fi
+
+    install_wings_with_script
+    break
 done
+
 
