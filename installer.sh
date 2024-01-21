@@ -311,6 +311,7 @@ validate_domain() {
 uninstall_pterodactyl() {
     # Deinstallationslogik hier...
     echo "Deinstallationsfunktion ist noch zu implementieren."
+    echo "Das wäre aber gut zu integrieren, easy: https://pterodox.com/guides/uninstall-pterodactyl.html#uninstall-panel"
     sleep 5
 }
 
@@ -328,6 +329,30 @@ main_loop
 
 # ENDE VON Vorbereitung ODER existiert bereits ODER Reperatur
 # BEGINN DER TATSÄCHLICHEN INSTALLATION
+
+# Funktion, um den Benutzer neu anzulegen
+recreate_user() {
+    {
+        echo "10"; sleep 1
+        echo "Benutzer löschen..."
+        cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
+        echo "30"; sleep 1
+        echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
+        cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
+        echo "100"; sleep 1
+    } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
+}
+
+# Funktion zur Überprüfung einer gültigen Domain
+isValidDomain() {
+    DOMAIN_REGEX="^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if [[ $1 =~ $DOMAIN_REGEX ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 
 # Kopfzeile für die Pterodactyl Panel Installation anzeigen
 clear
@@ -381,7 +406,7 @@ show_spinner() {
 (
     apt-get update &&
     apt-get upgrade -y &&
-    apt-get install -y whiptail dnsutils curl openssl bc certbot python3-certbot-nginx pv sudo
+    apt-get install -y whiptail dnsutils curl openssl bc certbot python3-certbot-nginx pv sudo wget
 ) > /dev/null 2>&1 &
 
 PID=$!
@@ -408,7 +433,7 @@ echo "Vorbereitung abgeschlossen."
 sleep 2
 
 
-if whiptail --title "Willkommen" --yesno "Dieses Script hilft dir dabei, das Pterodactyl Panel zu installieren. Beachte hierbei, dass du eine Domain benötigst (bzw. 2 Subdomains von einer bestehenden Domain).
+if whiptail --title "Willkommen!" --yesno "Dieses Script hilft dir dabei, das Pterodactyl Panel zu installieren. Beachte hierbei, dass du eine Domain benötigst (bzw. 2 Subdomains von einer bestehenden Domain).
 
 Das Script zur Installation basiert auf dem Github-Projekt 'pterodactyl-installer.se' von Vilhelm Prytz. Durch Bestätigung stimmst du zu, dass:
 - Abhängigkeiten, die benötigt werden, installiert werden dürfen
@@ -425,11 +450,6 @@ else
     echo "Du hast 'No' ausgewählt. Skript abgebrochen."
     exit 1
 fi
-
-
-
-
-
 
 # Überprüfen, ob die Datei existiert. Falls nicht, wird sie erstellt.
 LOG_FILE="tmp.txt"
@@ -542,44 +562,44 @@ monitor_progress() {
         while read line; do
             current_progress=0
             case "$line" in
-                *"* Configure Let's Encrypt? false"*)
+                *"* Assume SSL? false"*)
                     update_progress 5 "Einstellungen werden festgelegt..." ;;
-                *"* Installing dependencies for"*)
+                *"Selecting previously unselected package apt-transport-https."*)
                     update_progress 10 "Installationsprozess beginnt" ;;
-                *"Preparing to unpack .../mariadb-server-core"*)
+                *"Selecting previously unselected package mysql-common."*)
                     update_progress 15 "MariaDB wird installiert..." ;;
-                *"Setting up php8.1-common"*)
+                *"Unpacking php8.1-zip"*)
                     update_progress 20 "Einrichtung von PHP 8.1 Common" ;;
-                *"Setting up mariadb-server-10.5"*)
+                *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service → /lib/systemd/system/mariadb.service."*)
                     update_progress 25 "Einrichtung des MariaDB-Servers" ;;
-                *"Unpacking php8.1-fpm"*)
+                *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service → /lib/systemd/system/php8.1-fpm.service."*)
                     update_progress 30 "Entpacken von PHP 8.1 FPM" ;;
-                *"Setting up php8.1-fpm"*)
-                    update_progress 35 "Einrichtung von PHP 8.1 FPM" ;;
-                *"Created symlink /etc/systemd/system/timers.target.wants/phpsessionclean.timer"*)
-                    update_progress 40 "Einrichtung der PHP Session Cleanup" ;;
-                *"Unpacking redis-server"*)
-                    update_progress 45 "Entpacken des Redis-Servers" ;;
-                *"Setting up redis-server"*)
-                    update_progress 50 "Einrichtung des Redis-Servers" ;;
-                *"Setting up nginx"*)
-                    update_progress 55 "Einrichtung von Nginx" ;;
-                *"Created symlink /etc/systemd/system/multi-user.target.wants/redis-server.service"*)
-                    update_progress 60 "Aktivierung des Redis-Servers" ;;
-                *"Unpacking git"*)
-                    update_progress 65 "Entpacken von Git" ;;
-                *"Setting up git"*)
-                    update_progress 70 "Einrichtung von Git" ;;
-                *"Unpacking zip"*)
-                    update_progress 75 "Entpacken von Zip" ;;
-                *"Setting up zip"*)
-                    update_progress 80 "Einrichtung von Zip" ;;
-                *"Unpacking unzip"*)
-                    update_progress 85 "Entpacken von Unzip" ;;
-                *"Setting up unzip"*)
-                    update_progress 90 "Einrichtung von Unzip" ;;
-                *"Downloading pterodactyl panel files"*)
-                    update_progress 95 "Download der Pterodactyl-Panel-Dateien" ;;
+                *"Executing: /lib/systemd/systemd-sysv-install enable mariadb"*)
+                    update_progress 35 "MariaDB wird aktiviert..." ;;
+                ** Installing composer.."*)
+                    update_progress 40 "Composer wird installiert..." ;;
+                *"* Downloading pterodactyl panel files .. "*)
+                    update_progress 45 "Pterodactyl Panel Code wird heruntergeladen..." ;;
+                *"database/.gitignore"*)
+                    update_progress 50 "Datenbank-Migrations werden integriert..." ;;
+                *"database/Seeders/eggs/"*)
+                    update_progress 55 "Eggs werden vorbereitet..." ;;
+                *"* Installing composer dependencies.."*)
+                    update_progress 60 "Composer-Abhängigkeiten werden installiert..." ;;
+                *"* Creating database user pterodactyl..."*)
+                    update_progress 65 "Datenbank für Panel wird bereigestellt..." ;;
+                *"INFO  Running migrations."*)
+                    update_progress 70 "Migrations werden gestartet..." ;;
+                *"* Installing cronjob.. "*)
+                    update_progress 75 "Cronjob wird bereitgestellt..." ;;
+                *"* Installing pteroq service.."*)
+                    update_progress 80 "Hintergrunddienste werden integriert..." ;;
+                *"Saving debug log to /var/log/letsencrypt/letsencrypt.log"*)
+                    update_progress 85 "SSL-Zertifikat wird bereigestellt..." ;;
+                *"Congratulations! You have successfully enabled"*)
+                    update_progress 90 "Zertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
+                *"Es wurde kein Instanzort angegeben. Deine Pterodactyl-Instanz wird im default-Ordner gesucht."*)
+                    update_progress 95 "GermanDactyl wird integriert..." ;;
                 *"Der Patch wurde angewendet."*)
                     update_progress 100 "Abschluss der Installation" ;;
             esac
@@ -672,27 +692,6 @@ while true; do
     fi
 done
 
-# Funktion, um den Benutzer neu anzulegen
-recreate_user() {
-    {
-        echo "10"; sleep 1
-        echo "Benutzer löschen..."
-        cd /var/www/pterodactyl && echo -e "1\n1\nyes" | php artisan p:user:delete
-        echo "30"; sleep 1
-        echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
-        cd /var/www/pterodactyl && php artisan p:user:make --email="$admin_email" --username=admin --name-first=Admin --name-last=User --password="$user_password" --admin=1
-        echo "100"; sleep 1
-    } | whiptail --gauge "Benutzer wird neu angelegt" 8 50 0
-}
-
-# Funktion zur Überprüfung einer gültigen Domain
-isValidDomain() {
-    DOMAIN_REGEX="^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if [[ $1 =~ $DOMAIN_REGEX ]]; then
-        return 0
-    else
-        return 1
-    fi
 }
 
 echo "Fertig"
