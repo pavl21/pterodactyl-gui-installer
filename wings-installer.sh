@@ -131,17 +131,17 @@ EOF
 
 monitor_progress() {
     declare -A progress_messages=(
-        ["* Installing virt-what..."]=10
-        ["* The installer will install Docker, required dependencies for Wings"]=20
+        ["* Retrieving release information..."]=10
+        ["* SUCCESS: System is compatible with docker"]=20
         ["* DNS verified!"]=30
-        ["Selecting previously unselected package docker-ce-cli."]=40
+        ["gnupg set to manually installed."]=40
         ["* SUCCESS: Dependencies installed!"]=50
         ["* SUCCESS: Pterodactyl Wings downloaded successfully"]=60
         ["* SUCCESS: Installed systemd service!"]=70
         ["Plugins selected: Authenticator standalone, Installer None"]=80
-        ["IMPORTANT NOTES:"]=90
+        ["Cleaning up challenges"]=90
         ["* SUCCESS: The process of obtaining a Let's Encrypt certificate succeeded!"]=95
-        ["* Wings installation completed"]=100
+        ["* Note: It is recommended to enable swap (for Docker, read more about it in official documentation)."]=100
     )
 
     # Fortschrittsbalken initialisieren
