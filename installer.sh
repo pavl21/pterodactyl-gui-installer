@@ -563,45 +563,45 @@ monitor_progress() {
             current_progress=0
             case "$line" in
                 *"* Assume SSL? false"*)
-                    update_progress 5 "Die Einstellungen werden festgelegt..." ;;
+                    update_progress 5 "\n\nDie Einstellungen werden festgelegt..." ;;
                 *"Selecting previously unselected package apt-transport-https."*)
-                    update_progress 10 "Der Installationsprozess beginnt in Kürze..." ;;
+                    update_progress 10 "\n\nDer Installationsprozess beginnt in Kürze..." ;;
                 *"Selecting previously unselected package mysql-common."*)
-                    update_progress 15 "MariaDB wird jetzt installiert..." ;;
+                    update_progress 15 "\n\nMariaDB wird jetzt installiert..." ;;
                 *"Unpacking php8.1-zip"*)
-                    update_progress 20 "Das Paket PHP 8.1 Common wird eingereichtet..." ;;
+                    update_progress 20 "\n\nDas Paket PHP 8.1 Common wird eingereichtet..." ;;
                 *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service → /lib/systemd/system/mariadb.service."*)
-                    update_progress 25 "MariaDB wird eingereichtet..." ;;
+                    update_progress 25 "\n\nMariaDB wird eingereichtet..." ;;
                 *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service → /lib/systemd/system/php8.1-fpm.service."*)
-                    update_progress 30 "Das Paket PHP 8.1 FPM wird aktiviert..." ;;
+                    update_progress 30 "\n\nDas Paket PHP 8.1 FPM wird aktiviert..." ;;
                 *"Executing: /lib/systemd/systemd-sysv-install enable mariadb"*)
-                    update_progress 35 "MariaDB wird aktiviert..." ;;
+                    update_progress 35 "\n\nMariaDB wird aktiviert..." ;;
                 *"* Installing composer.."*)
-                    update_progress 40 "Composer wird installiert..." ;;
+                    update_progress 40 "\n\nComposer wird installiert..." ;;
                 *"* Downloading pterodactyl panel files .. "*)
-                    update_progress 45 "Pterodactyl Panel Code wird heruntergeladen..." ;;
+                    update_progress 45 "\n\nPterodactyl Panel Code wird heruntergeladen..." ;;
                 *"database/.gitignore"*)
-                    update_progress 50 "Datenbank-Migrations werden integriert..." ;;
+                    update_progress 50 "\n\nDatenbank-Migrations werden integriert..." ;;
                 *"database/Seeders/eggs/"*)
-                    update_progress 55 "Eggs werden vorbereitet..." ;;
+                    update_progress 55 "\n\nEggs werden vorbereitet..." ;;
                 *"* Installing composer dependencies.."*)
-                    update_progress 60 "Composer-Abhängigkeiten werden installiert..." ;;
+                    update_progress 60 "\n\nComposer-Abhängigkeiten werden installiert..." ;;
                 *"* Creating database user pterodactyl..."*)
-                    update_progress 65 "Datenbank für Panel wird bereigestellt..." ;;
+                    update_progress 65 "\n\nDatenbank für Panel wird bereitgestellt..." ;;
                 *"INFO  Running migrations."*)
-                    update_progress 70 "Migrations werden gestartet..." ;;
+                    update_progress 70 "\n\nMigrations werden gestartet..." ;;
                 *"* Installing cronjob.. "*)
-                    update_progress 75 "Cronjob wird bereitgestellt..." ;;
+                    update_progress 75 "\n\nCronjob wird bereitgestellt..." ;;
                 *"* Installing pteroq service.."*)
-                    update_progress 80 "Hintergrunddienste werden integriert..." ;;
+                    update_progress 80 "\n\nHintergrunddienste werden integriert..." ;;
                 *"Saving debug log to /var/log/letsencrypt/letsencrypt.log"*)
-                    update_progress 85 "SSL-Zertifikat wird bereigestellt..." ;;
+                    update_progress 85 "\n\nSSL-Zertifikat wird bereigestellt..." ;;
                 *"Congratulations! You have successfully enabled"*)
-                    update_progress 90 "Zertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
+                    update_progress 90 "\n\nZertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
                 *"Es wurde kein Instanzort angegeben. Deine Pterodactyl-Instanz wird im default-Ordner gesucht."*)
-                    update_progress 95 "GermanDactyl wird integriert..." ;;
+                    update_progress 95 "\n\nDie deutsche Übersetzung wird integriert..." ;;
                 *"Der Patch wurde angewendet."*)
-                    update_progress 100 "Prozesse werden beendet..." ;;
+                    update_progress 100 "\n\nProzesse werden beendet..." ;;
             esac
             if [ "$current_progress" -gt "$highest_progress" ]; then
                 highest_progress=$current_progress
