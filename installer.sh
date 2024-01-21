@@ -563,20 +563,20 @@ monitor_progress() {
             current_progress=0
             case "$line" in
                 *"* Assume SSL? false"*)
-                    update_progress 5 "Einstellungen werden festgelegt..." ;;
+                    update_progress 5 "Die Einstellungen werden festgelegt..." ;;
                 *"Selecting previously unselected package apt-transport-https."*)
-                    update_progress 10 "Installationsprozess beginnt" ;;
+                    update_progress 10 "Der Installationsprozess beginnt in Kürze..." ;;
                 *"Selecting previously unselected package mysql-common."*)
-                    update_progress 15 "MariaDB wird installiert..." ;;
+                    update_progress 15 "MariaDB wird jetzt installiert..." ;;
                 *"Unpacking php8.1-zip"*)
-                    update_progress 20 "Einrichtung von PHP 8.1 Common" ;;
+                    update_progress 20 "Das Paket PHP 8.1 Common wird eingereichtet..." ;;
                 *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service → /lib/systemd/system/mariadb.service."*)
-                    update_progress 25 "Einrichtung des MariaDB-Servers" ;;
+                    update_progress 25 "MariaDB wird eingereichtet..." ;;
                 *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service → /lib/systemd/system/php8.1-fpm.service."*)
-                    update_progress 30 "Entpacken von PHP 8.1 FPM" ;;
+                    update_progress 30 "Das Paket PHP 8.1 FPM wird aktiviert..." ;;
                 *"Executing: /lib/systemd/systemd-sysv-install enable mariadb"*)
                     update_progress 35 "MariaDB wird aktiviert..." ;;
-                ** Installing composer.."*)
+                *"* Installing composer.."*)
                     update_progress 40 "Composer wird installiert..." ;;
                 *"* Downloading pterodactyl panel files .. "*)
                     update_progress 45 "Pterodactyl Panel Code wird heruntergeladen..." ;;
@@ -601,14 +601,14 @@ monitor_progress() {
                 *"Es wurde kein Instanzort angegeben. Deine Pterodactyl-Instanz wird im default-Ordner gesucht."*)
                     update_progress 95 "GermanDactyl wird integriert..." ;;
                 *"Der Patch wurde angewendet."*)
-                    update_progress 100 "Abschluss der Installation" ;;
+                    update_progress 100 "Prozesse werden beendet..." ;;
             esac
             if [ "$current_progress" -gt "$highest_progress" ]; then
                 highest_progress=$current_progress
                 update_progress $highest_progress "Aktueller Status..."
             fi
         done < <(tail -n 0 -f tmp.txt)
-    } | whiptail --gauge "Pterodactyl Panel - Installation" 10 70 0
+    } | whiptail --title "Pterodactyl Panel wird installiert" --gauge "Pterodactyl Panel - Installation" 10 70 0
 }
 
 
@@ -697,5 +697,3 @@ done
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
-
-
