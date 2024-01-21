@@ -306,26 +306,30 @@ validate_domain() {
     fi
 }
 
+
+# Deinstallationsscript von Pterodactyl
 uninstall_pterodactyl() {
     log_file="uninstall_pterodactyl.txt"
     : > "$log_file" # Leere die Log-Datei zu Beginn
 
     # Funktion zur Fortschrittsanzeige
     update_progress() {
-        echo "$1" | whiptail --gauge "Pterodactyl wird deinstalliert..." 6 50 0
+        current_command=$((current_command + 1))
+        percent=$((current_command * 100 / total_commands))
+        echo "$percent"
     }
 
     # Warnung vor der Deinstallation
-    if ! whiptail --title "WARNUNG - WARNUNG" --yesno "In diesem Vorgang bist du dabei, das Panel und die dazugehörigen Server zu löschen..." 20 78; then
+    if ! whiptail --title "WARNUNG" --yesno "Du bist dabei, das Panel und die dazugehörigen Server zu löschen. Fortfahren?" 10 50; then
         main_loop
         return
     fi
 
     # Entscheidung, ob Server behalten werden sollen
-    if whiptail --title "Server behalten?" --yesno "Möchtest du die angelegten Server, die auf diesem Server/Node laufen behalten? ..." 20 78; then
+    if whiptail --title "Server behalten?" --yesno "Möchtest du die angelegten Server behalten?" 10 50; then
         total_size=$(du -sb /var/lib/pterodactyl/volumes/ | cut -f1)
         (cd /var/lib/pterodactyl/volumes/ && tar -cf - . | pv -n -s "$total_size" | gzip > /Backup_von_allen_Pterodactyl-Servern.tar.gz) 2>&1 | whiptail --gauge "Backup wird erstellt..." 6 50 0
-        if ! whiptail --title "Backup Überprüfung" --yesno "Backup wurde erstellt. Möchtest du jetzt fortfahren?" 20 78; then
+        if ! whiptail --title "Backup Überprüfung" --yesno "Backup erstellt. Fortfahren?" 10 50; then
             main_loop
             return
         fi
@@ -333,74 +337,62 @@ uninstall_pterodactyl() {
 
     # Bestätigung zur kompletten Löschung
     while true; do
-        CONFIRMATION=$(whiptail --title "Bestätige die Löschung" --inputbox "Gebe 'Ich bestätige die komplette Löschung von Pterodactyl' im Textfeld ein, um die Löschung einzuleiten." 20 78 3>&1 1>&2 2>&3)
+        CONFIRMATION=$(whiptail --title "Bestätige Löschung" --inputbox "Gib 'Ich bestätige die komplette Löschung von Pterodactyl' ein." 10 50 3>&1 1>&2 2>&3)
         if [ "$CONFIRMATION" = "Ich bestätige die komplette Löschung von Pterodactyl" ]; then
             break
         else
-            whiptail --title "Falsche Eingabe" --msgbox "Falsche Bestätigungseingabe, bitte versuche es erneut." 20 78
+            whiptail --title "Falsche Eingabe" --msgbox "Falsche Bestätigung, versuche es erneut." 10 50
         fi
     done
 
     # Beginn des Löschvorgangs
-    start_time=$(date +%s)
+    total_commands=9 # 9 Befehle entsprechen 100% Fortschritt
+    current_command=0
 
-    update_progress "10"
-    systemctl stop nginx | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 6 ? 6 - (current_time - start_time) : 0 ))
+    # Anpassung für das drehende Symbol in einem Whiptail-Fenster
+    spinning_wheel() {
+        local i=0
+        local sp='/-\|'
+        while [ "$i" -lt 100 ]; do
+            echo "XXX"
+            echo "$i"
+            echo "Bitte warten, die Daten werden gelöscht... ${sp:i++%${#sp}:1}"
+            echo "XXX"
+            ((i=i+1))
+            sleep 0.2
+        done
+    }
 
-    update_progress "20"
-    sudo rm -rf /var/www/pterodactyl | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 12 ? 12 - (current_time - start_time) : 0 ))
+    # Starte das Spinning Wheel in einem Hintergrundprozess und speichere die Prozess-ID
+    spinning_wheel | whiptail --title "Löschvorgang" --gauge "Bitte warten..." 6 50 0 &
+    SPIN_PID=$!
 
-    update_progress "30"
-    sudo rm /etc/systemd/system/pteroq.service | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 18 ? 18 - (current_time - start_time) : 0 ))
+    # Führe die Löschbefehle aus
+    {
+        for cmd in \
+            "systemctl stop nginx" \
+            "sudo rm -rf /var/www/pterodactyl" \
+            "sudo rm /etc/systemd/system/pteroq.service" \
+            "sudo unlink /etc/nginx/sites-enabled/pterodactyl.conf" \
+            "sudo systemctl stop wings" \
+            "sudo rm -rf /var/lib/pterodactyl" \
+            "sudo rm -rf /etc/pterodactyl" \
+            "sudo rm /usr/local/bin/wings" \
+            "sudo rm /etc/systemd/system/wings.service"; do
+            eval $cmd | tee -a "$log_file"
+            sleep 1 # Warte 1 Sekunde nach jedem Befehl
+        done
+    }
 
-    update_progress "40"
-    sudo unlink /etc/nginx/sites-enabled/pterodactyl.conf | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 24 ? 24 - (current_time - start_time) : 0 ))
+    # Beende das Spinning Wheel, nachdem die Löschbefehle abgeschlossen sind
+    kill $SPIN_PID
 
-    update_progress "50"
-    sudo systemctl stop wings | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 30 ? 30 - (current_time - start_time) : 0 ))
-
-    update_progress "60"
-    sudo rm -rf /var/lib/pterodactyl | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 36 ? 36 - (current_time - start_time) : 0 ))
-
-    update_progress "70"
-    sudo rm -rf /etc/pterodactyl | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 42 ? 42 - (current_time - start_time) : 0 ))
-
-    update_progress "80"
-    sudo rm /usr/local/bin/wings | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 48 ? 48 - (current_time - start_time) : 0 ))
-
-    update_progress "90"
-    sudo rm /etc/systemd/system/wings.service | tee -a "$log_file"
-    current_time=$(date +%s)
-    sleep $(( (current_time - start_time) < 54 ? 54 - (current_time - start_time) : 0 ))
-
-    current_time=$(date +%s)
-    if [ $((current_time - start_time)) -lt 60 ]; then
-        sleep $((60 - (current_time - start_time)))
-    fi
-
-    update_progress "100"
-
-    # Abschlussmeldung mit 2 Sekunden Verzögerung
-    sleep 2
-    whiptail --title "Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde vollständig entfernt. Der Webserver nginx ist noch vorhanden." 20 78
+    # Abschlussmeldung
+    whiptail --title "Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde erfolgreich entferent. Der Webserver nginx bleibt aktiv, damit andere Dienste weiterhin online bleiben können." 10 50
     exit
+    clear
 }
+
 
 
 # Platzhalter-Funktion für Phpmyadmin-Installation - OFFEN
