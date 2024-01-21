@@ -1,20 +1,20 @@
 #!/bin/bash
 
-# Pfad, wo Wings installiert sein sollte. Wenn ja, Abbruch!
+# Pfad, wo Wings installiert sein sollte. Wenn ja, Abbruch und fragen, ob man sonst noch helfen kann. Falls Wings nicht funktioniert!
 WINGS_PATH="/usr/local/bin/wings"
 
 # Überprüfen, ob Wings bereits auf dem System installiert ist und gegebenenfalls abbrechen. Sonst helfen, das es gestartet wird.
 if [ -f "$WINGS_PATH" ]; then
-    if whiptail --title "🚀 Wings bereits installiert" --yesno "Auf diesem System ist bereits Wings installiert. Wenn du versuchst, Wings zu starten, falls es nicht reagiert, können wir das hier versuchen. Soll der Status ermittelt werden?" 10 60; then
+    if whiptail --title "🚀 Wings bereits installiert" --yesno "Auf diesem System ist bereits Wings installiert. Wenn du versuchst Wings zu starten, falls es nicht reagiert, können wir das hier versuchen. Soll der Status ermittelt werden?" 10 60; then
         status_output=$(systemctl status wings)
         if [[ $status_output == *"Failed to start Pterodactyl Wings Daemon."* ]]; then
-            whiptail --title "🔴 Wings Fehler" --msgbox "Es gab einen Fehler beim Starten von Wings. Versuche, Wings neu zu starten." 10 60
+            whiptail --title "🔴 Wings Fehler" --msgbox "Es gab einen Fehler beim Starten von Wings. Versuche, Wings neu zu starten. Bestätige, wenn der Neustart erfolgen soll." 10 60
             sudo systemctl restart wings
             status_output=$(systemctl status wings)
             if [[ $status_output == *"Failed to start Pterodactyl Wings Daemon."* ]]; then
-                whiptail --title "🔴 Wings Fehler" --msgbox "Wings konnte nicht gestartet werden, trotz Neustart. Überprüfe die Port-Konflikte und versuche es erneut." 10 60
+                whiptail --title "🔴 Wings Fehler" --msgbox "Wings konnte nicht gestartet werden, trotz Neustart. Überprüfe, ob eventuell Port-Konflikte vorhanden sind und versuche es erneut, dies kannst du mit dem Befehl 'sudo wings' nachprüfen." 10 80
             else
-                whiptail --title "🟢 Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein." 10 60
+                whiptail --title "🟢 Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein. Das Script wird nun beendet." 10 60
             fi
         elif [[ $status_output == *"inactive (dead)"* ]]; then
             sudo systemctl start wings
@@ -28,8 +28,6 @@ if [ -f "$WINGS_PATH" ]; then
     else
         whiptail --title "🚫 Wings Installation abgebrochen" --msgbox "Die Installation von Wings wurde abgebrochen." 10 60
     fi
-else
-    whiptail --title "❌ Wings nicht gefunden" --msgbox "Wings wurde auf diesem System nicht gefunden." 10 60
 fi
 
 # Pfad zur Log-Datei definieren und Log-Datei zu Beginn leeren
@@ -43,24 +41,23 @@ integrate_wings() {
     # Starte die Integration
     systemctl enable wings
     systemctl stop wings
+    cd /var/www/pterodactyl
+    php artisan p:location:make --short=DE --long="Hauptnetz"
 
     # Zeige Infotext und frage, ob der Node erstellt wurde
     while true; do
-        if whiptail --yesno "Erstelle jetzt im Panel mit der Domain $DOMAIN als Node. Hast du den Node erstellt?" 10 60; then
+        if whiptail --yesno "Erstelle jetzt im Panel mit der Domain $DOMAIN eine Node mit den Vorgaben des Servers. Bist du soweit? Dann fahren wir fort." 10 60; then
             # Infotext zur Wings-Integration
-            whiptail --msgbox "So bindest du Wings ein: Öffne eine neue SSH-Verbindung und bearbeite die config.yml in /etc/pterodactyl/" 10 60
+            whiptail --msgbox "So bindest du Wings ein: Öffne eine neue SSH-Verbindung und bearbeite die config.yml in /etc/pterodactyl/. Im Panel unter der erstellten Node findest du den Punkt 'Wings-Integration'. Dort findest du eine config.yml, die dort in dem genannten Pfad eingebunden werden muss. Wenn du das getan hast, bestätige das. Es wird dann überprüft, ob du alles richtig gemacht hast." 10 80
 
             # Prüfe, ob die Integration abgeschlossen ist
             if whiptail --yesno "Hast du die Wings-Integration abgeschlossen?" 10 60; then
                 if [ -f /etc/pterodactyl/config.yml ]; then
                     systemctl start wings
-                    if whiptail --yesno "Prüfe im Panel, ob das Herz bei der Node grün schlägt. Ist die Installation erfolgreich?" 10 60; then
-                        whiptail --msgbox "Installation erfolgreich abgeschlossen!" 10 60
+                    if whiptail --yesno "Wings wurde nun gestartet. Überprüfe jetzt bitte, ob die Node aktiv ist. Das sieht du an einem grünen Herz, das schlägt." 10 60; then
+                        whiptail --title "🟢 Pterodactyl ist nun eingerichtet" --msgbox "Die Installation ist nun abgeschlossen, du kannst nun Server für dich (und andere) anlegen. Bevor du das aber tust, musst du noch einige Ports freigeben. Das kannst du unter der Node im Panel unter dem Reiter 'Freigegebene Ports' machen. Dort trägst du dann rechts oben die IP Adresse des Servers ein, in der Mitte einen Alias (zum Beispiel die Domain, unter der dein Server auch erreichbar ist. Das ist kein Pflichtfeld, kannst du auch frei lassen) und darunter die Ports, die du nutzen möchtest. Mit einem Komma kannst du mehrere eingeben. Viel Spaß mit deinem Panel und empfehle GermanDactyl gerne weiter, wenn wir dir weiterhelfen konnten :)." 10 80
                         break
                     else
-                        # Node erstellen, falls nötig
-                        cd /var/www/pterodactyl
-                        php artisan p:location:make --short=DE --long="Hauptnetz"
                         break
                     fi
                 else
@@ -128,7 +125,7 @@ EOF
     # Warte auf den Abschluss des im Hintergrund laufenden Prozesses
     wait $!
 
-    whiptail --title "Installation abgeschlossen" --msgbox "Wings wurde erfolgreich installiert und aktiviert. Jetzt muss Wings nur noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 60
+    whiptail --title "Wings Integration" --msgbox "Wings wurde erfolgreich installiert und aktiviert. Jetzt muss Wings nur noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 60
     integrate_wings
 }
 
@@ -163,21 +160,21 @@ monitor_progress() {
     } | whiptail --title "Wings wird installiert" --gauge "Bitte warten, dies kann je nach Leistung deines Systems einen Moment dauern..." 8 78 0
 }
 
-# Hauptinstallationsschleife
+# Hauptinstallationsschleife zu Beginn ... ->
 while true; do
-    DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest:" 10 60 3>&1 1>&2 2>&3)
+    DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest. Diese muss als DNS-Eintrag bei deiner Domain verfügbar sein." 10 70 3>&1 1>&2 2>&3)
 
     if [ -z "$DOMAIN" ]; then
-        whiptail --title "Installation abgebrochen" --msgbox "Keine Domain eingegeben. Installation wird abgebrochen." 10 60
+        whiptail --title "Installation abgebrochen" --msgbox "Du hast keine Domain angegeben. Du musst eine Domain für Wings verwenden, streng genommen nicht zwingend aber dann unsicher. Das Script wird nun gestoppt, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 10 60
         exit 0
     elif ! validate_domain "$DOMAIN"; then
         continue
     fi
 
-    admin_email=$(whiptail --title "Admin-E-Mail-Eingabe" --inputbox "Bitte gib eine Admin-E-Mail-Adresse ein:" 10 60 3>&1 1>&2 2>&3)
+    admin_email=$(whiptail --title "E-Mail für Let's Encrypt" --inputbox "Gib die E-Mail Adresse erneut ein, die informiert werden soll, wenn das SSL Zertifikat ausläuft. Diese Zertifikate halten 90 Tage, kurz vor ABlauf wird man informiert. Wenn man es nicht verlängert (Mit dem Befehl 'certbot renew' über SSH), wird Wings nicht mehr erreichbar sein und alle Server können nicht mehr kontrolliert werden, die über diese Node laufen" 10 80 3>&1 1>&2 2>&3)
 
     if [ -z "$admin_email" ]; then
-        whiptail --title "Installation abgebrochen" --msgbox "Keine E-Mail-Adresse eingegeben. Installation wird abgebrochen." 10 60
+        whiptail --title "Installation abgebrochen" --msgbox "Du hast keine E-Mail angegeben, die Installation wird abgebrochen, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 10 70
         exit 0
     elif ! validate_email "$admin_email"; then
         continue
@@ -186,5 +183,8 @@ while true; do
     install_wings_with_script
     break
 done
+
+# Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
+
 
 
