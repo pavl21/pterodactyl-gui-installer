@@ -46,7 +46,7 @@ integrate_wings() {
 
     # Zeige Infotext und frage, ob der Node erstellt wurde
     while true; do
-        if whiptail --yesno "Erstelle jetzt im Panel mit der Domain $DOMAIN eine Node mit den Vorgaben des Servers. Bist du soweit? Dann fahren wir fort." 10 60; then
+        if whiptail --yesno "Erstelle jetzt im Panel mit der angegebenen Domain für WingsS eine Node mit den Vorgaben des Servers. Bist du soweit? Dann fahren wir fort." 10 60; then
             # Infotext zur Wings-Integration
             whiptail --msgbox "So bindest du Wings ein: Öffne eine neue SSH-Verbindung und bearbeite die config.yml in /etc/pterodactyl/. Im Panel unter der erstellten Node findest du den Punkt 'Wings-Integration'. Dort findest du eine config.yml, die dort in dem genannten Pfad eingebunden werden muss. Wenn du das getan hast, bestätige das. Es wird dann überprüft, ob du alles richtig gemacht hast." 10 80
 
@@ -67,7 +67,7 @@ integrate_wings() {
                 continue
             fi
         else
-            whiptail --msgbox "Bitte erstelle den Node im Panel und versuche es erneut." 10 60
+            whiptail --msgbox "Erstelle bitte erst eine neue Node im Pterodactyl Panel. Gebe dort die Daten an, die benötigt werden. Bei den Ressourcen kannst du die Gigabyte-Zahl mit 1024 multiplizieren (16*1024). Wenn du soweit bist, dann können wir weitermachen." 10 70
         fi
     done
 }
