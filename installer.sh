@@ -2,6 +2,7 @@
 
 # Überprüfen, ob das System apt als Paketmanager verwendet
 if ! command -v apt-get &> /dev/null; then
+    echo "INFO - - - - - - - - - -"
     echo "Abbruch: Für dein System ist dieses Script nicht vorgesehen. Derzeit wird nur Ubuntu, Debian und ähnliche Systeme unterstützt."
     exit 1
 fi
@@ -48,9 +49,9 @@ main_loop() {
                 "4" "Pterodactyl deinstallieren" \
                 "5" "PhpMyAdmin installieren (Offen)" \
                 "6" "Wings nachinstallieren" \
-                "7" "Server-Backups einrichten" \
-                "8" "Database-Host einrichten" \
-                "9" "Theme installieren" \
+                "7" "Server-Backups einrichten (Offen)" \
+                "8" "Database-Host einrichten (Offen)" \
+                "9" "Theme installieren (Offen)" \
                 "10" "Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
