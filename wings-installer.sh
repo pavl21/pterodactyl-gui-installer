@@ -132,7 +132,7 @@ EOF
 monitor_progress() {
     declare -A progress_messages=(
         ["* Installing virt-what..."]=10
-        ["* SUCCESS: System is compatible with docker"]=20
+        ["* The installer will install Docker, required dependencies for Wings"]=20
         ["* DNS verified!"]=30
         ["Selecting previously unselected package docker-ce-cli."]=40
         ["* SUCCESS: Dependencies installed!"]=50
@@ -185,6 +185,3 @@ while true; do
 done
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
-
-
-
