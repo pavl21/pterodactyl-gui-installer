@@ -41,7 +41,7 @@ generate_random_number() {
 main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
-            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 8 \
+            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 20 70 8 \
                 "1" "Admin Passwort vergessen" \
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
