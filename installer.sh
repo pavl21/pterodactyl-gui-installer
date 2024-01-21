@@ -45,7 +45,7 @@ main_loop() {
                 "1" "Admin Passwort vergessen" \
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
-                "4" "Pterodactyl deinstallieren (Offen)" \
+                "4" "Pterodactyl deinstallieren" \
                 "5" "PhpMyAdmin installieren (Offen)" \
                 "6" "Wings nachinstallieren" \
                 "7" "Skript beenden" 3>&1 1>&2 2>&3)
@@ -306,13 +306,100 @@ validate_domain() {
     fi
 }
 
-
-# Deinstallationsscript von Pterodactyl - OFFEN
 uninstall_pterodactyl() {
-    # Deinstallationslogik hier...
-    echo "Deinstallationsfunktion ist noch zu implementieren."
-    echo "Das wäre aber gut zu integrieren, easy: https://pterodox.com/guides/uninstall-pterodactyl.html#uninstall-panel"
-    sleep 5
+    log_file="uninstall_pterodactyl.txt"
+    : > "$log_file" # Leere die Log-Datei zu Beginn
+
+    # Funktion zur Fortschrittsanzeige
+    update_progress() {
+        echo "$1" | whiptail --gauge "Pterodactyl wird deinstalliert..." 6 50 0
+    }
+
+    # Warnung vor der Deinstallation
+    if ! whiptail --title "WARNUNG - WARNUNG" --yesno "In diesem Vorgang bist du dabei, das Panel und die dazugehörigen Server zu löschen..." 20 78; then
+        main_loop
+        return
+    fi
+
+    # Entscheidung, ob Server behalten werden sollen
+    if whiptail --title "Server behalten?" --yesno "Möchtest du die angelegten Server, die auf diesem Server/Node laufen behalten? ..." 20 78; then
+        total_size=$(du -sb /var/lib/pterodactyl/volumes/ | cut -f1)
+        (cd /var/lib/pterodactyl/volumes/ && tar -cf - . | pv -n -s "$total_size" | gzip > /Backup_von_allen_Pterodactyl-Servern.tar.gz) 2>&1 | whiptail --gauge "Backup wird erstellt..." 6 50 0
+        if ! whiptail --title "Backup Überprüfung" --yesno "Backup wurde erstellt. Möchtest du jetzt fortfahren?" 20 78; then
+            main_loop
+            return
+        fi
+    fi
+
+    # Bestätigung zur kompletten Löschung
+    while true; do
+        CONFIRMATION=$(whiptail --title "Bestätige die Löschung" --inputbox "Gebe 'Ich bestätige die komplette Löschung von Pterodactyl' im Textfeld ein, um die Löschung einzuleiten." 20 78 3>&1 1>&2 2>&3)
+        if [ "$CONFIRMATION" = "Ich bestätige die komplette Löschung von Pterodactyl" ]; then
+            break
+        else
+            whiptail --title "Falsche Eingabe" --msgbox "Falsche Bestätigungseingabe, bitte versuche es erneut." 20 78
+        fi
+    done
+
+    # Beginn des Löschvorgangs
+    start_time=$(date +%s)
+
+    update_progress "10"
+    systemctl stop nginx | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 6 ? 6 - (current_time - start_time) : 0 ))
+
+    update_progress "20"
+    sudo rm -rf /var/www/pterodactyl | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 12 ? 12 - (current_time - start_time) : 0 ))
+
+    update_progress "30"
+    sudo rm /etc/systemd/system/pteroq.service | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 18 ? 18 - (current_time - start_time) : 0 ))
+
+    update_progress "40"
+    sudo unlink /etc/nginx/sites-enabled/pterodactyl.conf | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 24 ? 24 - (current_time - start_time) : 0 ))
+
+    update_progress "50"
+    sudo systemctl stop wings | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 30 ? 30 - (current_time - start_time) : 0 ))
+
+    update_progress "60"
+    sudo rm -rf /var/lib/pterodactyl | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 36 ? 36 - (current_time - start_time) : 0 ))
+
+    update_progress "70"
+    sudo rm -rf /etc/pterodactyl | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 42 ? 42 - (current_time - start_time) : 0 ))
+
+    update_progress "80"
+    sudo rm /usr/local/bin/wings | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 48 ? 48 - (current_time - start_time) : 0 ))
+
+    update_progress "90"
+    sudo rm /etc/systemd/system/wings.service | tee -a "$log_file"
+    current_time=$(date +%s)
+    sleep $(( (current_time - start_time) < 54 ? 54 - (current_time - start_time) : 0 ))
+
+    current_time=$(date +%s)
+    if [ $((current_time - start_time)) -lt 60 ]; then
+        sleep $((60 - (current_time - start_time)))
+    fi
+
+    update_progress "100"
+
+    # Abschlussmeldung mit 2 Sekunden Verzögerung
+    sleep 2
+    whiptail --title "Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde vollständig entfernt. Der Webserver nginx ist noch vorhanden." 20 78
+    exit
 }
 
 
@@ -563,45 +650,45 @@ monitor_progress() {
             current_progress=0
             case "$line" in
                 *"* Assume SSL? false"*)
-                    update_progress 5 "\n\nDie Einstellungen werden festgelegt..." ;;
+                    update_progress 5 "Die Einstellungen werden festgelegt..." ;;
                 *"Selecting previously unselected package apt-transport-https."*)
-                    update_progress 10 "\n\nDer Installationsprozess beginnt in Kürze..." ;;
+                    update_progress 10 "Der Installationsprozess beginnt in Kürze..." ;;
                 *"Selecting previously unselected package mysql-common."*)
-                    update_progress 15 "\n\nMariaDB wird jetzt installiert..." ;;
+                    update_progress 15 "MariaDB wird jetzt installiert..." ;;
                 *"Unpacking php8.1-zip"*)
-                    update_progress 20 "\n\nDas Paket PHP 8.1 Common wird eingereichtet..." ;;
+                    update_progress 20 "Das Paket PHP 8.1 Common wird eingereichtet..." ;;
                 *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service → /lib/systemd/system/mariadb.service."*)
-                    update_progress 25 "\n\nMariaDB wird eingereichtet..." ;;
+                    update_progress 25 "MariaDB wird eingereichtet..." ;;
                 *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service → /lib/systemd/system/php8.1-fpm.service."*)
-                    update_progress 30 "\n\nDas Paket PHP 8.1 FPM wird aktiviert..." ;;
+                    update_progress 30 "Das Paket PHP 8.1 FPM wird aktiviert..." ;;
                 *"Executing: /lib/systemd/systemd-sysv-install enable mariadb"*)
-                    update_progress 35 "\n\nMariaDB wird aktiviert..." ;;
+                    update_progress 35 "MariaDB wird aktiviert..." ;;
                 *"* Installing composer.."*)
-                    update_progress 40 "\n\nComposer wird installiert..." ;;
+                    update_progress 40 "Composer wird installiert..." ;;
                 *"* Downloading pterodactyl panel files .. "*)
-                    update_progress 45 "\n\nPterodactyl Panel Code wird heruntergeladen..." ;;
+                    update_progress 45 "Pterodactyl Panel Code wird heruntergeladen..." ;;
                 *"database/.gitignore"*)
-                    update_progress 50 "\n\nDatenbank-Migrations werden integriert..." ;;
+                    update_progress 50 "Datenbank-Migrations werden integriert..." ;;
                 *"database/Seeders/eggs/"*)
-                    update_progress 55 "\n\nEggs werden vorbereitet..." ;;
+                    update_progress 55 "Eggs werden vorbereitet..." ;;
                 *"* Installing composer dependencies.."*)
-                    update_progress 60 "\n\nComposer-Abhängigkeiten werden installiert..." ;;
+                    update_progress 60 "Composer-Abhängigkeiten werden installiert..." ;;
                 *"* Creating database user pterodactyl..."*)
-                    update_progress 65 "\n\nDatenbank für Panel wird bereitgestellt..." ;;
+                    update_progress 65 "Datenbank für Panel wird bereitgestellt..." ;;
                 *"INFO  Running migrations."*)
-                    update_progress 70 "\n\nMigrations werden gestartet..." ;;
+                    update_progress 70 "Migrations werden gestartet..." ;;
                 *"* Installing cronjob.. "*)
-                    update_progress 75 "\n\nCronjob wird bereitgestellt..." ;;
+                    update_progress 75 "Cronjob wird bereitgestellt..." ;;
                 *"* Installing pteroq service.."*)
-                    update_progress 80 "\n\nHintergrunddienste werden integriert..." ;;
+                    update_progress 80 "Hintergrunddienste werden integriert..." ;;
                 *"Saving debug log to /var/log/letsencrypt/letsencrypt.log"*)
-                    update_progress 85 "\n\nSSL-Zertifikat wird bereigestellt..." ;;
+                    update_progress 85 "SSL-Zertifikat wird bereigestellt..." ;;
                 *"Congratulations! You have successfully enabled"*)
-                    update_progress 90 "\n\nZertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
+                    update_progress 90 "Zertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
                 *"Es wurde kein Instanzort angegeben. Deine Pterodactyl-Instanz wird im default-Ordner gesucht."*)
-                    update_progress 95 "\n\nDie deutsche Übersetzung wird integriert..." ;;
+                    update_progress 95 "Die deutsche Übersetzung wird integriert..." ;;
                 *"Der Patch wurde angewendet."*)
-                    update_progress 100 "\n\nProzesse werden beendet..." ;;
+                    update_progress 100 "Prozesse werden beendet..." ;;
             esac
             if [ "$current_progress" -gt "$highest_progress" ]; then
                 highest_progress=$current_progress
@@ -671,14 +758,15 @@ whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel soll
 while true; do
     show_access_data
 
-    if whiptail --title "Bestätigung" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
-        if whiptail --title "Zugangsdaten Test" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
+    if whiptail --title "Noch ne Frage" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
+        if whiptail --title "Zugang geht?" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
             if whiptail --title "Bereit für den nächsten Schritt" --yesno "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können. Möchtest du Wings jetzt installieren?" 10 60; then
                 clear
                 echo "Weiterleitung zu Wings..."
                 wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh -O wings
                 chmod +x wings
                 ./wings
+                exit 0
             else
                 whiptail --title "Installation abgebrochen" --msgbox "Wings-Installation wurde abgebrochen. Du kannst das Skript später erneut ausführen, um Wings zu installieren." 10 60
                 exit 0
@@ -697,3 +785,5 @@ done
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
+
+
