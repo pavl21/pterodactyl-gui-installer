@@ -419,7 +419,7 @@ install_theme() {
 }
 
 
-# Funktion zum Einrichten von Server-Backups - OFFEN
+# Funktion zum Einrichten von Server-Backups
 setup_server_backups() {
     clear
     echo "Weiterleitung zu Backup-Script..."
@@ -815,5 +815,3 @@ done
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
-
-
