@@ -423,7 +423,7 @@ install_theme() {
 setup_server_backups() {
     clear
     echo "Weiterleitung zu Backup-Script..."
-    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh -O wings
+    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh -O backup-script
     chmod +x backup-script
     ./backup-script
 }
@@ -815,3 +815,5 @@ done
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
+
+
