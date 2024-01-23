@@ -48,7 +48,7 @@ main_loop() {
                 "4" "Pterodactyl deinstallieren" \
                 "5" "PhpMyAdmin installieren (Offen)" \
                 "6" "Wings nachinstallieren" \
-                "7" "Backup-Verwaltung öffnen" \
+                "7" "Backup-Verwaltung öffnen (Alpha)" \
                 "8" "Database-Host einrichten (Offen)" \
                 "9" "Theme installieren (Offen)" \
                 "10" "Skript beenden" 3>&1 1>&2 2>&3)
