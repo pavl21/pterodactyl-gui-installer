@@ -2,7 +2,6 @@
 
 # Überprüfen, ob das System apt als Paketmanager verwendet
 if ! command -v apt-get &> /dev/null; then
-    echo "INFO - - - - - - - - - -"
     echo "Abbruch: Für dein System ist dieses Script nicht vorgesehen. Derzeit wird nur Ubuntu, Debian und ähnliche Systeme unterstützt."
     exit 1
 fi
@@ -42,14 +41,14 @@ generate_random_number() {
 main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
-            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 20 70 10 \
+            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 8 \
                 "1" "Admin Passwort vergessen" \
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
                 "4" "Pterodactyl deinstallieren" \
                 "5" "PhpMyAdmin installieren (Offen)" \
                 "6" "Wings nachinstallieren" \
-                "7" "Server-Backups einrichten (Offen)" \
+                "7" "Backup-Verwaltung öffnen" \
                 "8" "Database-Host einrichten (Offen)" \
                 "9" "Theme installieren (Offen)" \
                 "10" "Skript beenden" 3>&1 1>&2 2>&3)
@@ -60,7 +59,7 @@ main_loop() {
                 clear
                 echo ""
                 echo "HINWEIS - - - - - - - - - - -"
-                echo "Die Problembehandlung wurde beendet. Nur zur Info: Das Installationsscript wurde nicht gestartet, weil Pterodactyl bereits installiert ist."
+                echo "Die Verwaltung wurde beendet. Nur zur Info: Das Installationsscript wurde nicht gestartet, weil Pterodactyl bereits installiert ist."
                 echo ""
                 exit
             fi
@@ -403,7 +402,7 @@ uninstall_pterodactyl() {
 
 
 
-# Platzhalter-Funktion für Phpmyadmin-Installation - OFFEN
+# Funktion für Phpmyadmin-Installation - OFFEN
 install_phpmyadmin() {
     # Hier kommt dein Skript zur Installation von Phpmyadmin
     echo "Phpmyadmin-Installationsskript ist noch zu implementieren."
@@ -411,7 +410,7 @@ install_phpmyadmin() {
 }
 
 
-# Funktion zum Installieren von einer Auswahl an Themes
+# Funktion zum Installieren von einer Auswahl an Themes - OFFEN
 install_theme() {
     # Füge hier den Code für die Theme-Installation ein
     # Zum Beispiel: echo "Theme wurde erfolgreich installiert."
@@ -420,15 +419,16 @@ install_theme() {
 }
 
 
-# Funktion zum Einrichten von Server-Backups
+# Funktion zum Einrichten von Server-Backups - OFFEN
 setup_server_backups() {
-    # Füge hier den Code für die Einrichtung von Server-Backups ein
-    # Zum Beispiel: echo "Server-Backups wurden erfolgreich eingerichtet."
-    echo "Diese Funktion ist noch in Arbeit."
-    sleep 5
+    clear
+    echo "Weiterleitung zu Backup-Script..."
+    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh -O wings
+    chmod +x backup-script
+    ./backup-script
 }
 
-# Funktion zum Einrichten des Database-Hosts
+# Funktion zum Einrichten des Database-Hosts - OFFEN
 setup_database_host() {
     # Füge hier den Code für die Einrichtung des Database-Hosts ein
     # Zum Beispiel: echo "Database-Host wurde erfolgreich eingerichtet."
