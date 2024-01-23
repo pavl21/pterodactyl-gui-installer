@@ -257,6 +257,8 @@ limit_backup() {
 
 # Standort des Backups wählen - Optional
 set_backup_location() {
+    # Funktion läuft nicht einwandfrei
+    whiptail --msgbox "Dieser Teil ist noch sehr anfällig auf Fehler und sollte nicht verändert werden. Dadurch wird zwar das Erstellen des Backups nicht verhindert, aber das Script weiß dann nicht mehr, wo sie abgelegt werden." 14 70 --title "WARNUNG"
     local type=$1
     local current_storage
     if [ "$type" == "panel" ]; then
