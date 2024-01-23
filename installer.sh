@@ -419,13 +419,15 @@ install_theme() {
 }
 
 
-# Funktion zum Einrichten von Server-Backups
+# Funktion zum Einrichten von Server-Backups - OFFEN
 setup_server_backups() {
     clear
-    echo "Weiterleitung zu Backup-Script..."
-    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh -O backup-script
-    chmod +x backup-script
-    ./backup-script
+#    echo "Weiterleitung zu Backup-Script..."
+#    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh -O backup-script
+#    chmod +x backup-script
+#    ./backup-script
+    echo "Backup-Script ist noch in Arbeit..."
+    sleep 5
 }
 
 # Funktion zum Einrichten des Database-Hosts - OFFEN
@@ -815,3 +817,5 @@ done
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
+
+
