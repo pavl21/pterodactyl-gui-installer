@@ -41,7 +41,7 @@ generate_random_number() {
 main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
-            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 8 \
+            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 9 \
                 "1" "Admin Passwort vergessen" \
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
@@ -50,7 +50,7 @@ main_loop() {
                 "6" "Wings nachinstallieren" \
                 "7" "Backup-Verwaltung öffnen (Offen)" \
                 "8" "Database-Host einrichten (Offen)" \
-                "9" "Theme installieren (Offen)" \
+                "9" "SWAP-Speicher verwalten" \
                 "10" "Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
@@ -74,7 +74,7 @@ main_loop() {
                 6) install_wings ;;
                 7) setup_server_backups ;;
                 8) setup_database_host ;;
-                9) install_theme ;;
+                9) manage_swap_storage ;;
                 10)
                    clear
                    echo ""
@@ -100,9 +100,18 @@ install_wings() {
     ./wings
 }
 
+# SWAP-Speicher zuweisen
+manage_swap_storage() {
+    clear
+    echo "Weiterleitung zu swap-config..."
+    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/swap-verwaltung.sh -O swap
+    chmod +x swap
+    ./swap
+}
+
 # Admin Account Passwort vergessen
 create_admin_account() {
-    if ! whiptail --yesno "Wenn du dein Passwort für dein Admin Account vergessen hast, können wir nur einen neuen Account anlegen, womit du wieder in dein Admin Panel kommst. Dort kannst du dann dein Passwort deines bestehenden Accounts ändern und den temporären löschen. Bist du damit einverstanden?" 12 78; then
+    if ! whiptail --title "Passwort vergessen" --yesno "Wenn du dein Passwort für dein Admin Account vergessen hast, können wir nur einen neuen Account anlegen, womit du wieder in dein Admin Panel kommst. Dort kannst du dann dein Passwort deines bestehenden Accounts ändern und den temporären löschen. Bist du damit einverstanden?" 12 78; then
         return  # Kehrt zum Hauptmenü zurück, wenn "Nein" ausgewählt wird
     fi
 
@@ -177,7 +186,7 @@ repair_panel() {
 # Webserver-Reperatur Teil, um die Config einzustellen für allgemeine Erreichbarkeit des Panels.
 check_nginx_config() {
     # Domain-Abfrage
-    DOMAIN_CHECK=$(whiptail --inputbox "Unter welcher Domain soll das Panel erreichbar sein? Gebe bitte nur die Domain ein, die du vorher bereits für dieses Panel verwendet hast. Nicht für Wings!" 10 60 3>&1 1>&2 2>&3)
+    DOMAIN_CHECK=$(whiptail --title "Reperatur" --inputbox "Unter welcher Domain soll das Panel erreichbar sein? Gebe bitte nur die Domain ein, die du vorher bereits für dieses Panel verwendet hast. Nicht für Wings!" 10 60 3>&1 1>&2 2>&3)
     exitstatus=$?
     if [ $exitstatus != 0 ]; then
         return  # Kehrt zum Hauptmenü zurück, wenn abgebrochen wird
@@ -189,7 +198,7 @@ check_nginx_config() {
 
     # Überprüfen, ob SSL-Zertifikate existieren
     if [ ! -d "/etc/letsencrypt/live/$DOMAIN_CHECK" ]; then
-        if whiptail --yesno "Keine SSL-Zertifikate gefunden. Möchtest du diese jetzt erstellen?" 10 60; then
+        if whiptail --title "Kein SSL-Zertifikat" --yesno "Keine SSL-Zertifikate gefunden. Möchtest du diese jetzt erstellen?" 10 60; then
             repair_email=$(whiptail --inputbox "Bitte gib eine gültige E-Mail-Adresse für das SSL-Zertifikat ein" 10 60 3>&1 1>&2 2>&3)
             apt-get update && sudo apt-get install certbot python3-certbot-nginx -y
             systemctl stop nginx
