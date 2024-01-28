@@ -57,7 +57,7 @@ integrate_wings() {
                     systemctl start wings
                     if whiptail --title "Wings Status prüfen" --yesno "Wings wurde nun gestartet. Überprüfe jetzt bitte, ob die Node aktiv ist. Das sieht du an einem grünen Herz, das schlägt." 10 60; then
                         whiptail --title "🟢 Pterodactyl ist nun eingerichtet" --msgbox "Die Installation ist nun abgeschlossen, du kannst nun Server für dich (und andere) anlegen. Bevor du das aber tust, musst du noch einige Ports freigeben. Das kannst du unter der Node im Panel unter dem Reiter 'Freigegebene Ports' machen. Dort trägst du dann rechts oben die IP Adresse des Servers ein, in der Mitte einen Alias (zum Beispiel die Domain, unter der dein Server auch erreichbar ist. Das ist kein Pflichtfeld, kannst du auch frei lassen) und darunter die Ports, die du nutzen möchtest. Mit einem Komma kannst du mehrere eingeben. Viel Spaß mit deinem Panel und empfehle GermanDactyl gerne weiter, wenn wir dir weiterhelfen konnten :)." 15 100
-                        exit 0
+                        swap_question
                     else
                         break
                     fi
@@ -159,6 +159,28 @@ monitor_progress() {
             done
         done
     } | whiptail --title "Wings wird installiert" --gauge "Bitte warte einen Moment, das kann je nach Leistung deines Servers einen Moment dauern..." 8 78 0
+}
+
+# SWAP-Speicher zuweisen
+swap_question() {
+    whiptail --title "Swap-Speicher für Wings" --yesno "Möchtest du SWAP-Speicher für Wings einbinden?" 10 60
+    response=$?
+    if [ $response -eq 0 ]; then
+        size=$(whiptail --title "Swap-Speicher erstellen" --inputbox "Gebe die gewünschte Swap-Größe in MB ein:" 10 60 3>&1 1>&2 2>&3)
+        response=$?
+        if [ $response -eq 0 ]; then
+            if [[ $size =~ ^[0-9]+$ ]]; then
+                sudo fallocate -l ${size}M /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+                whiptail --title "Swap-Speicher erstellt" --msgbox "Swap-Speicher wurde erfolgreich erstellt und aktiviert." 10 60
+            else
+                whiptail --title "Das ist keine Zahl" --msgbox "Ungültige Eingabe. Bitte gebe eine Zahl ein." 10 60
+            fi
+        else
+            whiptail --title "Wings installiert" --msgbox "Wings wurde nun ohne SWAP-Speicher installiert. Du kannst es im Nachhinein über die Verwaltung nachinstallieren." 10 60
+        fi
+    else
+        exit 0
+    fi
 }
 
 # Hauptinstallationsschleife zu Beginn ... ->
