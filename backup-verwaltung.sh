@@ -15,7 +15,7 @@ default_backup_source_server="/var/lib/pterodactyl/volumes/"
 default_backup_storage_server="/opt/pterodactyl/backups/server"
 
 # Haftungsausschluss
-whiptail --msgbox "Dies ist die Backup-Verwaltung von GermanDactyl Setup. Dieses Script könnte noch an einigen Stellen fehlerhaft sein, zumindest läuft es unter einer normalen Pterodactyl Installation und einem Debian 11 System einwandfrei. Die Backups werden in '/opt/pterodactyl/' abgelegt, wobei man den Speicherpfad auch anpassen kann, zum Beispiel auf eine eingehängte HDD. Die Verwendung unterliegt deiner Verantwortung und GermanDactyl haftet nicht bei Datenverlust!" 14 70 --title "Backup-Verwaltung"
+whiptail --msgbox "Dies ist die Backup-Verwaltung von GermanDactyl Setup. Dieses Script könnte noch an einigen Stellen fehlerhaft sein, zumindest läuft es unter einer normalen Pterodactyl Installation und einem Debian 11 System einwandfrei. Die Backups werden in '/opt/pterodactyl/' abgelegt, den Pfad kann man aktuell leider noch nicht anpassen. Die Verwendung unterliegt deiner Verantwortung und GermanDactyl haftet nicht bei Datenverlust!" 14 70 --title "Backup-Verwaltung"
 
 
 
