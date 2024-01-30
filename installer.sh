@@ -48,7 +48,7 @@ main_loop() {
                 "4" "Pterodactyl deinstallieren" \
                 "5" "PhpMyAdmin installieren (Offen)" \
                 "6" "Wings nachinstallieren" \
-                "7" "Backup-Verwaltung öffnen (Offen)" \
+                "7" "Backup-Verwaltung öffnen" \
                 "8" "Database-Host einrichten (Offen)" \
                 "9" "SWAP-Speicher verwalten" \
                 "10" "Skript beenden" 3>&1 1>&2 2>&3)
@@ -428,15 +428,13 @@ install_theme() {
 }
 
 
-# Funktion zum Einrichten von Server-Backups - OFFEN
+# Funktion zum Einrichten von Server-Backups
 setup_server_backups() {
     clear
-#    echo "Weiterleitung zu Backup-Script..."
-#    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh -O backup-script
-#    chmod +x backup-script
-#    ./backup-script
-    echo "Backup-Script ist noch in Arbeit..."
-    sleep 5
+    echo "Weiterleitung zu Backup-Script..."
+    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh -O backup-script
+    chmod +x backup-script
+    ./backup-script
 }
 
 # Funktion zum Einrichten des Database-Hosts - OFFEN
@@ -615,7 +613,7 @@ dns_ip=$(dig +short $panel_domain)
 if [ "$dns_ip" == "$server_ip" ]; then
     whiptail --title "Domain-Überprüfung" --msgbox "✅ Die Domain $panel_domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft. Die Installation wird fortgesetzt." 8 78
 else
-    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 12 78
+    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 15 80
     exit 1
 fi
 
@@ -789,11 +787,11 @@ clear
 
 # Funktion, um die Zugangsdaten anzuzeigen
 show_access_data() {
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (16 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 15 80
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (16 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
 }
 
 # Info: Installation abgeschlossen
-whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 20 78
+whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 22 80
 
 # Hauptlogik für die Zugangsdaten und die Entscheidung zur Installation von Wings
 while true; do
@@ -826,5 +824,3 @@ done
 echo "Fertig"
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
-
-
