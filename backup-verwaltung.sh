@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Hinweis für dieses Script:
+# Hier wurden die Funktionen Backup-Ort anpassen, Zeitplan erstellen und Backuplimit aus dem Menü entfernt,
+# da sie nicht einwandfrei mit dem gesamten Script funktionieren. Die Funktionen bleiben vorerst im Code,
+# weil ich das gerne noch beheben möchte, irgendwann...
+
 # Hauptkonfigurationsdatei
 settings_file="/opt/pterodactyl/.settings"
 
@@ -81,21 +86,15 @@ question_menu() {
 
 main_menu_panel() {
     while true; do
-        choice=$(whiptail --title "Panel Backup-Menü" --menu "Wähle eine Option:" 15 60 6 \
+        choice=$(whiptail --title "Panel Backup-Menü" --menu "Wähle eine Option:" 15 60 3 \
         "1" "Backup erstellen" \
         "2" "Backup wiederherstellen" \
-        "3" "Backup-Ort festlegen" \
-        "4" "Backup-Zeitplan einrichten" \
-        "5" "Backups löschen" \
-        "6" "Backuplimit" 3>&1 1>&2 2>&3)
+        "5" "Backups löschen" 3>&1 1>&2 2>&3)
 
         case $choice in
             1) create_backup "$default_backup_source_panel" "$backup_storage_panel" "$max_backups_panel";;
             2) restore_backup_panel;;
-            3) set_backup_location 'panel';;
-            4) set_backup_schedule 'panel';;
             5) remove_backup 'panel';;
-            6) limit_backup 'panel';;
             *) break;;
         esac
     done
@@ -103,25 +102,20 @@ main_menu_panel() {
 
 main_menu_server() {
     while true; do
-        choice=$(whiptail --title "Server Backup-Menü" --menu "Wähle eine Option:" 15 60 6 \
+        choice=$(whiptail --title "Server Backup-Menü" --menu "Wähle eine Option:" 15 60 3 \
         "1" "Backup erstellen" \
         "2" "Backup wiederherstellen" \
-        "3" "Backup-Ort festlegen" \
-        "4" "Backup-Zeitplan einrichten" \
-        "5" "Backups löschen" \
-        "6" "Backuplimit" 3>&1 1>&2 2>&3)
+        "5" "Backups löschen" 3>&1 1>&2 2>&3)
 
         case $choice in
             1) create_backup "$default_backup_source_server" "$backup_storage_server" "$max_backups_server";;
             2) restore_backup_server;;
-            3) set_backup_location 'server';;
-            4) set_backup_schedule 'server';;
             5) remove_backup 'server';;
-            6) limit_backup 'server';;
             *) break;;
         esac
     done
 }
+
 
 # Erstellen eines Backups
 create_backup() {
@@ -233,7 +227,7 @@ remove_backup() {
     question_menu
 }
 
-# Limits für Anzahl an Backups
+# Limits für Anzahl an Backups - WURDE ERSTMAL AUSSORTIERT, FUNKTIONIERT NICHT.
 limit_backup() {
     local type=$1
     local current_limit=$([ "$type" == "panel" ] && echo "$max_backups_panel" || echo "$max_backups_server")
@@ -255,10 +249,8 @@ limit_backup() {
 
 
 
-# Standort des Backups wählen - Optional
+# Standort des Backups wählen - WURDE ERSTMAL AUSSORTIERT, FUNKTIONIERT NICHT.
 set_backup_location() {
-    # Funktion läuft nicht einwandfrei
-    whiptail --msgbox "Dieser Teil ist noch sehr anfällig auf Fehler und sollte nicht verändert werden. Dadurch wird zwar das Erstellen des Backups nicht verhindert, aber das Script weiß dann nicht mehr, wo sie abgelegt werden." 14 70 --title "WARNUNG"
     local type=$1
     local current_storage
     if [ "$type" == "panel" ]; then
@@ -285,7 +277,7 @@ set_backup_location() {
 }
 
 
-
+# Backup-Zeitpläne - WURDE ERSTMAL AUSSORTIERT, FUNKTIONIERT NICHT.
 manage_backup_rotation() {
     local storage=$1
     local max_backups=$2
