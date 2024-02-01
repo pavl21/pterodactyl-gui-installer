@@ -420,7 +420,7 @@ install_phpmyadmin() {
 }
 
 
-# Funktion zum Installieren von einer Auswahl an Themes - OFFEN
+# Funktion zur Theme-Verwaltung
 install_theme() {
     clear
     echo "Weiterleitung zu Theme-Verwaltung..."
