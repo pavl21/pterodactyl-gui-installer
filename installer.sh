@@ -50,7 +50,7 @@ main_loop() {
                 "6" "Wings nachinstallieren" \
                 "7" "Backup-Verwaltung öffnen" \
                 "8" "Database-Host einrichten (Offen)" \
-                "9" "SWAP-Speicher verwalten" \
+                "9" "SWAP-Verwaltung öffnen" \
                 "10" "Theme-Verwaltung öffnen" \
                 "11" "Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
@@ -426,7 +426,6 @@ install_theme() {
     echo "Weiterleitung zu Theme-Verwaltung..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
 }
-
 
 
 # Funktion zum Einrichten von Server-Backups + Panel-Backups
