@@ -41,7 +41,7 @@ generate_random_number() {
 main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
-            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 9 \
+            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 10 \
                 "1" "Admin Passwort vergessen" \
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
@@ -51,7 +51,8 @@ main_loop() {
                 "7" "Backup-Verwaltung öffnen" \
                 "8" "Database-Host einrichten (Offen)" \
                 "9" "SWAP-Speicher verwalten" \
-                "10" "Skript beenden" 3>&1 1>&2 2>&3)
+                "10" "Theme-Verwaltung öffnen" \
+                "11" "Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
             # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
@@ -75,7 +76,8 @@ main_loop() {
                 7) setup_server_backups ;;
                 8) setup_database_host ;;
                 9) manage_swap_storage ;;
-                10)
+                10) install_theme ;;
+                11)
                    clear
                    echo ""
                    echo "INFO - - - - - - - - - -"
@@ -91,23 +93,22 @@ main_loop() {
 }
 
 
+
 # Wings installieren
 install_wings() {
     clear
     echo "Weiterleitung zu Wings..."
-    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh -O wings
-    chmod +x wings
-    ./wings
+    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh | bash
 }
+
 
 # SWAP-Speicher zuweisen
 manage_swap_storage() {
     clear
     echo "Weiterleitung zu swap-config..."
-    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/swap-verwaltung.sh -O swap
-    chmod +x swap
-    ./swap
+    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/swap-verwaltung.sh | bash
 }
+
 
 # Admin Account Passwort vergessen
 create_admin_account() {
@@ -420,22 +421,21 @@ install_phpmyadmin() {
 
 
 # Funktion zum Installieren von einer Auswahl an Themes - OFFEN
-install_theme() {
-    # Füge hier den Code für die Theme-Installation ein
-    # Zum Beispiel: echo "Theme wurde erfolgreich installiert."
-    echo "Diese Funktion ist noch in Arbeit."
-    sleep 5
+install_theme) {
+    clear
+    echo "Weiterleitung zu Theme-Verwaltung..."
+    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
 }
 
 
-# Funktion zum Einrichten von Server-Backups
+
+# Funktion zum Einrichten von Server-Backups + Panel-Backups
 setup_server_backups() {
     clear
     echo "Weiterleitung zu Backup-Script..."
-    wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh -O backup-script
-    chmod +x backup-script
-    ./backup-script
+    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
 }
+
 
 # Funktion zum Einrichten des Database-Hosts - OFFEN
 setup_database_host() {
@@ -482,7 +482,7 @@ isValidDomain() {
 clear
 echo "----------------------------------"
 echo "Pterodactyl Panel Installation"
-echo "Vereinfacht von Pavl21, Script von https://pterodactyl-installer.se/ wird verwendet. "
+echo "Vereinfacht von Pavl21, Script von https://pterodactyl-installer.se/ wird zur Installation vom Panel und Wings verwendet. "
 echo "----------------------------------"
 sleep 3  # 3 Sekunden warten, bevor das Skript fortgesetzt wird
 
