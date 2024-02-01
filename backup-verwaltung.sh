@@ -143,6 +143,8 @@ create_backup() {
         return
     fi
 
+    clear
+    echo "Größe des Backups wird berechnet..."
     current_time=$(date +"%d.%m.%Y-%H:%M")
     backup_file_name="Backup_${current_time}_Uhr.tar.gz"
     total_size=$(du -sb "$source" | awk '{print $1}')
