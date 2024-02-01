@@ -117,7 +117,7 @@ n" &> /dev/null
 
 # Platzhalter für Themes-Installation
 install_themes() {
-    whiptail --msgbox "Platzhalter für Themes" 8 45
+    whiptail --msgbox "Noch sind keine anderen Themes drin" 8 45
     manage_themes
 }
 
