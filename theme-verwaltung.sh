@@ -38,14 +38,16 @@ manage_themes() {
             restore_backup
             ;;
         *)
-            echo "Ungültige Auswahl"
+            echo "Führe den Befehl 'curl -sSL https://setup.germandactyl.de/ | sudo bash -s --' aus"
+            curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
             ;;
     esac
 }
 
+
 # Funktion für die Farbauswahl
 color_selection() {
-    local color_choice=$(whiptail --title "Farbauswahl" --menu "Wähle eine Farbe aus:" 15 60 5 \
+    local color_choice=$(whiptail --title "Farbauswahl" --menu "Wähle eine Farbe aus, alle Themes sind von Sigma-Production." 15 60 5 \
         "1" "Dunkelrot" \
         "2" "Dunkelblau" \
         "3" "Dunkelgelb" \
@@ -117,7 +119,7 @@ n" &> /dev/null
 
 # Platzhalter für Themes-Installation
 install_themes() {
-    whiptail --msgbox "Noch sind keine anderen Themes drin" 8 45
+    whiptail --msgbox "Platzhalter für Themes" 8 45
     manage_themes
 }
 
@@ -138,11 +140,6 @@ restore_backup() {
     # Skript ausführen
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
 }
-
-
-
-
-
 
 # Hauptfunktion des Skripts
 main() {
