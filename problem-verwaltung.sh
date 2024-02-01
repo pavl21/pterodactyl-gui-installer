@@ -10,6 +10,8 @@ trouble_menu() {
 
         # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
         if [ $exitstatus != 0 ]; then
+            echo "Du hast die Problembehandlung abgebrochen. Um das Setup-Script erneut auszuführen, verwende:"
+            echo "curl -sSL https://setup.germandactyl.de/ | sudo bash -s --"
             return
         fi
 
@@ -21,6 +23,7 @@ trouble_menu() {
         esac
     done
 }
+
 
 # Admin Account Passwort vergessen
 create_admin_account() {
@@ -224,26 +227,8 @@ EOL
 
 # Funktion für die globale Analyse
 global_test() {
-    # Hier kannst du den Code für die globale Analyse hinzufügen
-    echo "Starte die globale Analyse..."
-    # Füge hier den Code für die Analyse ein, die du durchführen möchtest
-
-    # Beispiel: Überprüfen der Systeminformationen
-    echo "Systeminformationen:"
-    uname -a
-
-    # Beispiel: Überprüfen der verfügbaren Speicherkapazität
-    echo "Verfügbare Speicherkapazität:"
-    df -h
-
-    # Beispiel: Überprüfen der CPU-Auslastung
-    echo "CPU-Auslastung:"
-    top -n 1
-
-    # Weitere Überprüfungen und Tests können hier hinzugefügt werden
-
-    echo "Die globale Analyse ist abgeschlossen."
-    read -p "Drücke Enter, um zur Problembehandlung zurückzukehren."
+    echo "Weiterleitung zur Analyse..."
+    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/analyse.sh | bash
 }
 
 # Funktion zur Generierung einer zufälligen dreistelligen Zahl
@@ -252,4 +237,3 @@ generate_random_number() {
 }
 
 trouble_menu
-
