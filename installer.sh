@@ -421,7 +421,7 @@ install_phpmyadmin() {
 
 
 # Funktion zum Installieren von einer Auswahl an Themes - OFFEN
-install_theme) {
+install_theme() {
     clear
     echo "Weiterleitung zu Theme-Verwaltung..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
