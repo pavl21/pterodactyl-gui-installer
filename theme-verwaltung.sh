@@ -9,7 +9,7 @@ create_backup() {
         mkdir -p "$storage"
         whiptail --title "Backup erforderlich" --msgbox "Damit du keine unschönen Erfahrungen machen musst, empfehlen wir dir ein Backup vom aktuellen Panel zu machen. Die Themes sind von anderen Entwicklern auf Github, die du auf unserer Website nachlesen kannst. Es ist nie ausgeschlossen, dass Fehler passieren. Man sagt ja immer: 'Kein Backup, kein Mitleid'.
 
-Wir leiten dich nun weiter zu unserer Backup-Verwaltung. Erstelle dort bitte ein Backup für dein Panel. Wenn du das gemacht hast, kannst du zur Theme-Auswahl zurückkehren." 10 80
+Wir leiten dich nun weiter zu unserer Backup-Verwaltung. Erstelle dort bitte ein Backup für dein Panel. Wenn du das gemacht hast, kannst du zur Theme-Auswahl zurückkehren." 20 80
 
         # Skript ausführen
         curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
