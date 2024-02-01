@@ -41,7 +41,7 @@ generate_random_number() {
 main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
-            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 15 60 10 \
+            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 20 80 10 \
                 "1" "Admin Passwort vergessen" \
                 "2" "Panel meldet einen Fehler" \
                 "3" "Panel nicht erreichbar" \
@@ -112,7 +112,7 @@ manage_swap_storage() {
 
 # Admin Account Passwort vergessen
 create_admin_account() {
-    if ! whiptail --title "Passwort vergessen" --yesno "Wenn du dein Passwort für dein Admin Account vergessen hast, können wir nur einen neuen Account anlegen, womit du wieder in dein Admin Panel kommst. Dort kannst du dann dein Passwort deines bestehenden Accounts ändern und den temporären löschen. Bist du damit einverstanden?" 12 78; then
+    if ! whiptail --title "Passwort vergessen" --yesno "Wenn du dein Passwort für dein Admin Account vergessen hast, können wir nur einen neuen Account anlegen, womit du wieder in dein Admin Panel kommst. Dort kannst du dann dein Passwort deines bestehenden Accounts ändern und den temporären löschen. Bist du damit einverstanden?" 12 80; then
         return  # Kehrt zum Hauptmenü zurück, wenn "Nein" ausgewählt wird
     fi
 
@@ -426,6 +426,7 @@ install_theme() {
     echo "Weiterleitung zu Theme-Verwaltung..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
 }
+
 
 
 # Funktion zum Einrichten von Server-Backups + Panel-Backups
