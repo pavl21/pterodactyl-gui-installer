@@ -10,6 +10,7 @@ trouble_menu() {
 
         # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
         if [ $exitstatus != 0 ]; then
+            exit 0
             exec curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
         fi
 
