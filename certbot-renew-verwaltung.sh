@@ -16,6 +16,7 @@ whiptail --title "Info zum Panel" --msgbox "Hier werden die SSL-Zertifikate erne
     renew_output=$(certbot renew -q 2>&1)
     echo 70; sleep 1
     systemctl is-active --quiet apache2 && systemctl restart apache2 && echo "Apache neu gestartet."
+    sudo fuser -k 80/tcp
     systemctl restart nginx && echo "Nginx neu gestartet."
     echo 90; sleep 1
     echo 100; sleep 1
