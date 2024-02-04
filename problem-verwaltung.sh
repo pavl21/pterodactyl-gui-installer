@@ -1,11 +1,11 @@
-# Funktion für das eigenständige Menü "Problembehandlung"
 trouble_menu() {
     while true; do
         TROUBLE_MENU=$(whiptail --title "Problembehandlung" --menu "Wobei können wir dir weiterhelfen?" 20 60 10 \
             "1" "🔒 Ich habe mich ausgesperrt" \
             "2" "🔧 Das Panel ist fehlerhaft" \
             "3" "🚫 Das Panel kann nicht erreicht werden" \
-            "4" "🔍 Allgemeine Analyse starten" 3>&1 1>&2 2>&3)
+            "4" "🔓 SSL-Zertifikate sind abgelaufen" \
+            "5" "🔍 Allgemeine Analyse starten" 3>&1 1>&2 2>&3)
         exitstatus=$?
 
         # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
@@ -17,10 +17,17 @@ trouble_menu() {
             1) create_admin_account ;;
             2) repair_panel ;;
             3) check_nginx_config ;;
-            4) global_test ;;
+            4) run_certbot_renew ;;
+            5) global_test ;;
         esac
     done
 }
+
+# Funktion zum Ausführen der Zertifikatserneuerung in Bash
+run_certbot_renew() {
+    curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/certbot-renew-verwaltung.sh | sudo bash -
+}
+
 
 
 
