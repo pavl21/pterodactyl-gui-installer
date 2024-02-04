@@ -10,9 +10,7 @@ trouble_menu() {
 
         # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
         if [ $exitstatus != 0 ]; then
-            echo "Du hast die Problembehandlung abgebrochen. Um das Setup-Script erneut auszuführen, verwende:"
-            echo "curl -sSL https://setup.germandactyl.de/ | sudo bash -s --"
-            return
+            exec curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
         fi
 
         case $TROUBLE_MENU in
@@ -23,6 +21,7 @@ trouble_menu() {
         esac
     done
 }
+
 
 
 # Admin Account Passwort vergessen
