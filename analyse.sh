@@ -77,6 +77,29 @@ else
     permissions_status="⚠ Verzeichnisrechte - Die Berechtigungen sind nicht korrekt"
 fi
 
+# Funktion zur Überprüfung der Gültigkeit von Certbot-Zertifikaten und Speicherung der Ergebnisse in einer Variable
+check_cert_expiry() {
+    local expiry_info=$(sudo certbot certificates | grep -Eo 'Domains: .+ Expiry Date: .+ \(VALID: [0-9]+ days\)' | awk -F'VALID: ' '{print $2}' | tr -d '()')
+    local IFS=$'\n'
+    local cert_warnings=""
+    local all_valid=true
+    for line in $expiry_info; do
+        local domain=$(echo $line | awk '{print $1}')
+        local days_left=$(echo $line | grep -Eo '[0-9]+ days' | grep -Eo '[0-9]+')
+        if [ "$days_left" -lt 14 ]; then
+            cert_warnings+="- ⚠ Zertifikat für $domain noch $days_left Tage gültig!\n"
+            all_valid=false
+        fi
+    done
+    if [ "$all_valid" = true ]; then
+        cert_warnings="- ✔ Alle SSL-Zertifikate sind mehr als 14 Tage gültig."
+    fi
+    echo -e "$cert_warnings"
+}
+
+# Zertifikatsexpiration überprüfen und Ergebnis in einer Variable speichern
+cert_expiry_status=$(check_cert_expiry)
+
 clear
 
 # Whiptail-Fenster anzeigen mit breiteren Abmessungen
@@ -88,9 +111,7 @@ whiptail --title "Ergebnis der Analyse" --msgbox "
 - $dns_status
 - $panel_update_status
 - $permissions_status
-
-Diese Informationen wurden mit Scripts von Pavl21 geholt, die Ergebnisse könnten fehlerhaft sein." 20 80
-
+$cert_expiry_status" 20 80
 
 # Zur Problembehandlung zurück
 curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
