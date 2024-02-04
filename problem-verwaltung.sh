@@ -10,8 +10,8 @@ trouble_menu() {
 
         # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
         if [ $exitstatus != 0 ]; then
-            exit 0
             exec curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
+            exit 0
         fi
 
         case $TROUBLE_MENU in
@@ -27,6 +27,7 @@ trouble_menu() {
 # Funktion zum Ausführen der Zertifikatserneuerung in Bash
 run_certbot_renew() {
     curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/certbot-renew-verwaltung.sh | sudo bash -
+    exit 0
 }
 
 
@@ -236,6 +237,7 @@ EOL
 global_test() {
     echo "Weiterleitung zur Analyse..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/analyse.sh | bash
+    exit 0
 }
 
 # Funktion zur Generierung einer zufälligen dreistelligen Zahl
