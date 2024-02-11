@@ -240,6 +240,18 @@ global_test() {
     exit 0
 }
 
+# Domain auf Gültigkeit prüfen
+validate_domain() {
+    local domain=$1
+
+    # Einfache Überprüfung, ob die Domain-Struktur gültig ist
+    if [[ $domain =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        return 0  # 0 bedeutet 'erfolgreich' oder 'wahr' in Bash
+    else
+        return 1  # 1 bedeutet 'Fehler' oder 'falsch'
+    fi
+}
+
 # Funktion zur Generierung einer zufälligen dreistelligen Zahl
 generate_random_number() {
     echo $((RANDOM % 900 + 100))
