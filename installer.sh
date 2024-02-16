@@ -290,16 +290,9 @@ sleep 3  # 3 Sekunden warten, bevor das Skript fortgesetzt wird
 
 # Überprüfen, ob der Benutzer Root-Rechte hat
 if [ "$(id -u)" != "0" ]; then
-    echo "Abbruch: Für die Installation werden Root-Rechte benötigt, damit benötigte Pakete installiert werden können. Falls du nicht der Administrator des Servers bist, bitte ihn, dir temporär Zugriff zu erteilen."
+    echo "Abgebrochen: Für die Installation werden Root-Rechte benötigt, damit benötigte Pakete installiert werden können. Falls du nicht der Administrator des Servers bist, bitte ihn, dir temporär Zugriff zu erteilen."
     exit 1
 fi
-
-# Konfiguration von dpkg
-echo ""
-echo ""
-echo "STATUS - - - - - - - - - - - - - - - -"
-echo "⚙️ Konfiguration von dpkg..."
-dpkg --configure -a
 
 # Notwendige Pakete installieren
 clear
@@ -330,6 +323,7 @@ show_spinner() {
 
 # Starte die Installation im Hintergrund und leite die Ausgabe um
 (
+    dpkg --configure -a
     apt-get update &&
     apt-get upgrade -y &&
     apt-get install -y whiptail dnsutils curl openssl bc certbot python3-certbot-nginx pv sudo wget
@@ -346,7 +340,7 @@ exit_status=$?
 
 # Überprüfe den Exit-Status
 if [ $exit_status -ne 0 ]; then
-    echo "Ein Fehler ist während der Vorbereitung aufgetreten. Einige Pakete scheinen entweder nicht zu existieren, oder es läuft im Hintergrund bereits ein Installations- oder Updateprozess. Im zweiten Fall muss gewartet werden, bis es abgeschlossen ist."
+    echo "Ein Fehler ist während der Vorbereitung aufgetreten. Einige Pakete scheinen entweder nicht zu existieren, die Aktualisierung der Pakete ist wegen fehlerhafter Quellen in apt nicht möglich, oder es läuft im Hintergrund bereits ein Installations- oder Updateprozess. Im zweiten Fall muss gewartet werden, bis es abgeschlossen ist. Die Vorbereitung und Installation wurde abgebrochen."
     exit $exit_status
 fi
 
@@ -358,7 +352,7 @@ echo ""
 echo "Vorbereitung abgeschlossen."
 sleep 2
 
-
+# Begrüßung im Script, ganz am Anfang wenn Pterodactyl noch nicht installiert ist.
 if whiptail --title "Willkommen!" --yesno "Dieses Script hilft dir dabei, das Pterodactyl Panel zu installieren. Beachte hierbei, dass du eine Domain benötigst (bzw. 2 Subdomains von einer bestehenden Domain).
 
 Das Script zur Installation basiert auf dem Github-Projekt 'pterodactyl-installer.se' von Vilhelm Prytz. Durch Bestätigung stimmst du zu, dass:
@@ -378,6 +372,31 @@ else
     echo "Die Installation wurde abgebrochen."
     exit 1
 fi
+
+
+# Panel + Wings, oder nur Wings? Das ist hier die Frage!
+CHOICE=$(whiptail --title "Dienste installieren" --menu "Möchtest du das Panel + Wings oder nur Wings installieren? Bei der ersten Auswahl kannst du immernoch entscheiden, ob du Wings nach der Panel-Installation noch installieren möchtest." 15 60 4 \
+"1" "Panel + Wings installieren" \
+"2" "Nur Wings installieren" 3>&1 1>&2 2>&3)
+
+EXITSTATUS=$?
+
+if [ $EXITSTATUS = 0 ]; then
+  # Benutzer hat eine Option gewählt
+  case $CHOICE in
+    1)
+      echo "Panel und Wings werden installiert..."
+      ;;
+    2)
+      install_wings
+      exit 0
+      ;;
+  esac
+else
+  # Wenn man abbricht, dann wird das Script auch abgebrochen.
+  exit 0
+fi
+
 
 # Überprüfen, ob die Datei existiert. Falls nicht, wird sie erstellt.
 LOG_FILE="tmp.txt"
@@ -603,10 +622,7 @@ while true; do
         if whiptail --title "Zugang geht?" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
             if whiptail --title "Bereit für den nächsten Schritt" --yesno "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können. Möchtest du Wings jetzt installieren?" 10 60; then
                 clear
-                echo "Weiterleitung zu Wings..."
-                wget https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh -O wings
-                chmod +x wings
-                ./wings
+                install_wings
                 exit 0
             else
                 whiptail --title "Installation abgebrochen" --msgbox "Wings-Installation wurde abgebrochen. Du kannst das Skript später erneut ausführen, um Wings zu installieren." 10 60
@@ -623,6 +639,8 @@ done
 
 }
 
+clear
 echo "Fertig"
+
 
 # Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
