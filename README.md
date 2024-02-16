@@ -1,4 +1,5 @@
-# Pterodactyl GUI Installer (inoffiziell) für GermanDactyl - Beta
+# Pterodactyl TUI Installer (inoffiziell) für GermanDactyl - Beta
+Zu allererst: Ja, es ist ein TUI keine GUI. Ich weiß.
 Installiert das Pterodactyl Panel automatisch in 2 Schritten, die Basis des Installationscriptes stammt von [dem Entwickler namens Vilhelm Prytz](https://github.com/vilhelmprytz).
 Dies ist ein Teil von GermanDactyl.
 
