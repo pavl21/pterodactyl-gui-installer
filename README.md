@@ -9,6 +9,9 @@ Es können noch Fehler auftreten.
 # Hinweis
 Das Script ist noch nicht vollständig einsatzbereit und noch in Entwicklung. Dies ist eine inoffizielle Methode und die Verwendung unterliegt auf eigene Verantwortung.
 
+Starten kannst du es mit diesem Befehl: 
+`curl -sSL https://setup.germandactyl.de/ | sudo bash -s --`
+
 
 ## Voreinstellungen
 Damit so wenig Eingaben wie möglich notwenig sind, werden einige Angaben vordefiniert. 
