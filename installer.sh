@@ -6,6 +6,30 @@ if ! command -v apt-get &> /dev/null; then
     exit 1
 fi
 
+# Prüfe, ob das System Debian 11 ist, andernfalls auf Inkompatibilität hinweisen.
+OS_INFO=$(cat /etc/os-release)
+DEBIAN_VERSION=$(echo "$OS_INFO" | grep 'VERSION_ID' | cut -d '"' -f 2)
+DEBIAN_PRETTY_NAME=$(echo "$OS_INFO" | grep 'PRETTY_NAME' | cut -d '"' -f 2)
+
+if [ "$DEBIAN_VERSION" != "11" ]; then
+    # Zeige die Konfliktmeldung an
+    clear
+    echo ""
+    echo ""
+    echo -n -e "\e[91mKONFLIKT - - - - - - - - - -\e[0m"
+    echo ""
+    echo "Dein Linux-System '$DEBIAN_PRETTY_NAME' ist nicht mit dem Script kompatibel. Das Problem ist hierbei die Unterstützung von Whiptail, also die Oberflächengestaltung der Installation. Du kannst es gerne testen, ob das trotzdem klappt, es wurde oft gemeldet, dass man keine Auswahl treffen konnte."
+    echo ""
+    echo "Aktuell funktioniert es nur mit Debian 11 einwandfrei. Wenn du fortfahren möchtest, kannst du es mit 'y' bestätigen. Ansonsten bitte mit 'n' abbrechen."
+
+    # Aufforderung zur Eingabe und Prüfung der Antwort
+    read -p "Möchtest du fortfahren? (y/n) " response
+    if [ "$response" != "y" ]; then
+        echo "Das Script wird abgebrochen."
+        exit 1
+    fi
+fi
+
 
 # BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
 
@@ -131,84 +155,82 @@ uninstall_pterodactyl() {
     log_file="uninstall_pterodactyl.txt"
     : > "$log_file" # Leere die Log-Datei zu Beginn
 
-    # Funktion zur Fortschrittsanzeige
-    update_progress() {
-        current_command=$((current_command + 1))
-        percent=$((current_command * 100 / total_commands))
-        echo "$percent"
-    }
-
     # Warnung vor der Deinstallation
-    if ! whiptail --title "WARNUNG" --yesno "Du bist dabei, das Panel und die dazugehörigen Server zu löschen. Fortfahren?" 10 50; then
-        main_loop
+    if ! whiptail --title "⚠️  WARNUNG" --yesno "Du bist dabei, das Panel und die dazugehörigen Server zu löschen. Fortfahren?" 10 50; then
+        echo "Deinstallation abgebrochen."
         return
     fi
 
     # Entscheidung, ob Server behalten werden sollen
-    if whiptail --title "Server behalten?" --yesno "Möchtest du die angelegten Server behalten?" 10 50; then
+    if whiptail --title "💾  Server behalten?" --yesno "Möchtest du die angelegten Server behalten?" 10 50; then
         total_size=$(du -sb /var/lib/pterodactyl/volumes/ | cut -f1)
         (cd /var/lib/pterodactyl/volumes/ && tar -cf - . | pv -n -s "$total_size" | gzip > /Backup_von_allen_Pterodactyl-Servern.tar.gz) 2>&1 | whiptail --gauge "Backup wird erstellt..." 6 50 0
-        if ! whiptail --title "Backup Überprüfung" --yesno "Backup erstellt. Fortfahren?" 10 50; then
-            main_loop
+        if ! whiptail --title "🔍  Backup Überprüfung" --yesno "Backup erstellt. Fortfahren?" 10 50; then
+            echo "Deinstallation abgebrochen."
             return
         fi
     fi
 
     # Bestätigung zur kompletten Löschung
     while true; do
-        CONFIRMATION=$(whiptail --title "Bestätige Löschung" --inputbox "Gib 'Ich bestätige die komplette Löschung von Pterodactyl' ein." 10 50 3>&1 1>&2 2>&3)
+        CONFIRMATION=$(whiptail --title "🗑️  Bestätigung" --inputbox "Gib 'Ich bestätige die komplette Löschung von Pterodactyl' ein." 10 50 3>&1 1>&2 2>&3)
         if [ "$CONFIRMATION" = "Ich bestätige die komplette Löschung von Pterodactyl" ]; then
             break
         else
-            whiptail --title "Falsche Eingabe" --msgbox "Falsche Bestätigung, versuche es erneut." 10 50
+            whiptail --title "❌  Falsche Eingabe" --msgbox "Falsche Bestätigung, versuche es erneut." 10 50
         fi
     done
 
-    # Beginn des Löschvorgangs
-    total_commands=9 # 9 Befehle entsprechen 100% Fortschritt
-    current_command=0
-
-    # Anpassung für das drehende Symbol in einem Whiptail-Fenster
-    spinning_wheel() {
-        local i=0
-        local sp='/-\|'
-        while [ "$i" -lt 100 ]; do
-            echo "XXX"
-            echo "$i"
-            echo "Bitte warten, die Daten werden gelöscht... ${sp:i++%${#sp}:1}"
-            echo "XXX"
-            ((i=i+1))
-            sleep 0.2
-        done
-    }
-
-    # Starte das Spinning Wheel in einem Hintergrundprozess und speichere die Prozess-ID
-    spinning_wheel | whiptail --title "Löschvorgang" --gauge "Bitte warten..." 6 50 0 &
-    SPIN_PID=$!
-
-    # Führe die Löschbefehle aus
+    # Fortschritt der Deinstallation überwachen und aktualisieren
+    progress=0
     {
-        for cmd in \
-            "systemctl stop nginx" \
-            "sudo rm -rf /var/www/pterodactyl" \
-            "sudo rm /etc/systemd/system/pteroq.service" \
-            "sudo unlink /etc/nginx/sites-enabled/pterodactyl.conf" \
-            "sudo systemctl stop wings" \
-            "sudo rm -rf /var/lib/pterodactyl" \
-            "sudo rm -rf /etc/pterodactyl" \
-            "sudo rm /usr/local/bin/wings" \
-            "sudo rm /etc/systemd/system/wings.service"; do
-            eval $cmd | tee -a "$log_file"
-            sleep 1 # Warte 1 Sekunde nach jedem Befehl
-        done
-    }
+        # Führe das Deinstallationsskript aus und lese die Ausgabe
+        bash <(curl -s https://pterodactyl-installer.se) <<EOF 2>&1 | while IFS= read -r line; do
+6
+y
+y
+y
+y
+y
+EOF
+            echo "$line" >> "$log_file"
+            case "$line" in
+                *SUCCESS:\ Removed\ panel\ files.*)
+                    progress=5 ;;
+                *Removing\ cron\ jobs...*)
+                    progress=10 ;;
+                *SUCCESS:\ Removed\ cron\ jobs.*)
+                    progress=20 ;;
+                *Removing\ database...*)
+                    progress=30 ;;
+                *SUCCESS:\ Removed\ database\ and\ database\ user.*)
+                    progress=40 ;;
+                *Removing\ services...*)
+                    progress=50 ;;
+                *SUCCESS:\ Removed\ services.*)
+                    progress=60 ;;
+                *Removing\ docker\ containers\ and\ images...*)
+                    progress=70 ;;
+                *SUCCESS:\ Removed\ docker\ containers\ and\ images.*)
+                    progress=80 ;;
+                *Removing\ wings\ files...*)
+                    progress=90 ;;
+                *SUCCESS:\ Removed\ wings\ files.*)
+                    progress=95 ;;
+                *Thank\ you\ for\ using\ this\ script.*)
+                    progress=100 ;;
+            esac
 
-    # Beende das Spinning Wheel, nachdem die Löschbefehle abgeschlossen sind
-    kill $SPIN_PID
+            # Aktualisiere den Fortschritt
+            echo "XXX"
+            echo "Die Deinstallation wird durchgeführt..."
+            echo "XXX"
+            echo $progress
+        done
+    } | whiptail --title "🗑️  Deinstallation" --gauge "Die Deinstallation wird durchgeführt..." 6 50 0
 
     # Abschlussmeldung
-    whiptail --title "Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde erfolgreich entferent. Der Webserver nginx bleibt aktiv, damit andere Dienste weiterhin online bleiben können." 10 50
-    exit
+    whiptail --title "✅  Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde erfolgreich entfernt. Der Webserver nginx bleibt aktiv, damit andere Dienste weiterhin online bleiben können." 10 50
     clear
 }
 
@@ -351,6 +373,43 @@ echo "STATUS - - - - - - - - - - - - - - - -"
 echo ""
 echo "Vorbereitung abgeschlossen."
 sleep 2
+
+# Prüfen, ob das System im Heimnetz installiert wird
+# Ermittle die IP-Adresse und den Systemnamen
+IP_ADDRESS=$(hostname -I | awk '{print $1}')
+SYSTEM_NAME=$(uname -o)
+
+# Prüfe, ob die IP-Adresse im Heimnetz liegt (192.168.*, 10.0.*, 172.16.* oder 172.32.*. Stand zumindest so im Interbrett.)
+if [[ $IP_ADDRESS == 192.168.* ]] || [[ $IP_ADDRESS == 10.0.* ]] || ([[ $IP_ADDRESS == 172.16.* ]] && [[ $IP_ADDRESS != 172.32.* ]]); then
+    # Sichere die aktuelle NEWT_COLORS Umgebungsvariable
+    OLD_NEWT_COLORS=$NEWT_COLORS
+
+    # Setze NEWT_COLORS nur für dieses spezifische Fenster
+    export NEWT_COLORS='
+    root=,red
+    window=,red
+    border=white,red
+    textbox=white,red
+    button=black,white
+    entry=,red
+    checkbox=,red
+    compactbutton=,red
+    '
+
+    # Zeige das Whiptail-Fenster an
+    if whiptail --title "Lokales Heimnetz" --yesno "Es scheint so, als wenn du dieses Script auf einem Rechner oder Server verwenden möchtest, der in deinem Heimnetz läuft. Wir möchten dich hier einmal darauf hinweisen, das wir dir nicht beim Einrichten bezüglich des Heimnetzes nach draußen helfen können. Vergewissere dich, das du das Script auf dem richtigen PC ausführst. Gerade startest du es über:\n\nSYSTEMNAME: $SYSTEM_NAME\nIP-Adresse: $IP_ADDRESS\n\nWenn das deine Absicht ist, dann bestätige mit Ja. Wenn du Abbrechen möchtest, mit Nein." 20 80; then
+        echo "Fortsetzung des Scripts..."
+    else
+        echo "Das Script wird abgebrochen."
+        exit 1
+    fi
+
+    # Stelle die ursprünglichen NEWT_COLORS nach dem Aufruf wieder her
+    export NEWT_COLORS=$OLD_NEWT_COLORS
+else
+    echo "IP-Adresse liegt nicht im privaten Bereich. Fortsetzung des Scripts..."
+fi
+
 
 # Begrüßung im Script, ganz am Anfang wenn Pterodactyl noch nicht installiert ist.
 if whiptail --title "Willkommen!" --yesno "Dieses Script hilft dir dabei, das Pterodactyl Panel zu installieren. Beachte hierbei, dass du eine Domain benötigst (bzw. 2 Subdomains von einer bestehenden Domain).
@@ -542,11 +601,11 @@ monitor_progress() {
                 *"* Installing pteroq service.."*)
                     update_progress 80 "Hintergrunddienste werden integriert..." ;;
                 *"Saving debug log to /var/log/letsencrypt/letsencrypt.log"*)
-                    update_progress 85 "SSL-Zertifikat wird bereigestellt..." ;;
+                    update_progress 85 "SSL-Zertifikat wird bereitgestellt..." ;;
                 *"Congratulations! You have successfully enabled"*)
                     update_progress 90 "Zertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
                 *"Es wurde kein Instanzort angegeben. Deine Pterodactyl-Instanz wird im default-Ordner gesucht."*)
-                    update_progress 95 "Die deutsche Übersetzung wird integriert..." ;;
+                    update_progress 95 "Die deutsche Übersetzung wird integriert. Das kann etwas länger dauern..." ;;
                 *"Der Patch wurde angewendet."*)
                     update_progress 100 "Prozesse werden beendet..." ;;
             esac
@@ -636,8 +695,6 @@ while true; do
         break
     fi
 done
-
-}
 
 clear
 echo "Fertig"
