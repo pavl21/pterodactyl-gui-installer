@@ -111,7 +111,7 @@ validate_email() {
 # Funktion zur Installation von Wings
 install_wings_with_script() {
     # Führe das externe Skript aus und leite die Ausgabe in die Log-Datei um
-    bash <(curl -s https://pterodactyl-installer.se) <<EOF > "$LOG_FILE" 2>&1 &
+    bash <(curl -s https://pterodactyl-installer.se) > "$LOG_FILE" 2>&1 <<EOF &
 1
 N
 N
@@ -120,6 +120,7 @@ $DOMAIN
 y
 $admin_email
 y
+$( [[ ! -d "/var/www/pterodactyl" ]] && echo "Y" )
 EOF
     # Starte das Monitoring im Vordergrund
     monitor_progress
@@ -129,6 +130,7 @@ EOF
     whiptail --title "Wings Integration" --msgbox "Wings wurde erfolgreich installiert und aktiviert. Jetzt muss Wings nur noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 60
     integrate_wings
 }
+
 
 monitor_progress() {
     declare -A progress_messages=(
@@ -171,12 +173,14 @@ swap_question() {
         if [ $response -eq 0 ]; then
             if [[ $size =~ ^[0-9]+$ ]]; then
                 sudo fallocate -l ${size}M /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-                whiptail --title "Swap-Speicher erstellt" --msgbox "Swap-Speicher wurde erfolgreich erstellt und aktiviert." 10 60
+                whiptail --title "Swap-Speicher erstellt" --msgbox "Swap-Speicher wurde erfolgreich erstellt und aktiviert. Das Script wird nun beendet." 10 60
+                exit 0
             else
                 whiptail --title "Das ist keine Zahl" --msgbox "Ungültige Eingabe. Bitte gebe eine Zahl ein." 10 60
             fi
         else
-            whiptail --title "Wings installiert" --msgbox "Wings wurde nun ohne SWAP-Speicher installiert. Du kannst es im Nachhinein über die Verwaltung nachinstallieren." 10 60
+            whiptail --title "Wings installiert" --msgbox "Wings wurde nun ohne SWAP-Speicher installiert. Du kannst es im Nachhinein über die Verwaltung nachinstallieren. Das Script wird nun beendet." 10 60
+            exit 0
         fi
     else
         exit 0
