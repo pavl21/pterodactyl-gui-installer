@@ -30,6 +30,10 @@ if [ "$DEBIAN_VERSION" != "11" ]; then
     fi
 fi
 
+# Whiptail Menü Antworten auf Deutsch Einstellungen
+export TEXTDOMAIN=dialog
+export LANGUAGE=de_DE.UTF-8
+
 
 # BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
 
