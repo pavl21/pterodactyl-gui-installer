@@ -30,10 +30,6 @@ if [ "$DEBIAN_VERSION" != "11" ]; then
     fi
 fi
 
-# Whiptail Menü Antworten auf Deutsch Einstellungen
-export TEXTDOMAIN=dialog
-export LANGUAGE=de_DE.UTF-8
-
 
 # BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
 
@@ -55,6 +51,11 @@ check_panel_reachability() {
         exit 1
     fi
 }
+
+
+# Whiptail Menü Antworten auf Deutsch Einstellungen
+export TEXTDOMAIN=dialog
+export LANGUAGE=de_DE.UTF-8
 
 # Globale Konfigurationsvariablen
 DOMAIN_REGEX="^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
@@ -123,6 +124,7 @@ troubleshoot_issues() {
     clear
     echo "Weiterleitung zu Problembehandlung..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+    exit 0
 }
 
 
@@ -131,6 +133,7 @@ install_wings() {
     clear
     echo "Weiterleitung zu Wings..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh | bash
+    exit 0
 }
 
 
@@ -139,6 +142,7 @@ manage_swap_storage() {
     clear
     echo "Weiterleitung zu swap-config..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/swap-verwaltung.sh | bash
+    exit 0
 }
 
 # Domain auf Gültigkeit prüfen
@@ -253,6 +257,7 @@ install_theme() {
     clear
     echo "Weiterleitung zu Theme-Verwaltung..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
+    exit 0
 }
 
 
@@ -262,6 +267,7 @@ setup_server_backups() {
     clear
     echo "Weiterleitung zu Backup-Script..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+    exit 0
 }
 
 
@@ -412,6 +418,7 @@ if [[ $IP_ADDRESS == 192.168.* ]] || [[ $IP_ADDRESS == 10.0.* ]] || ([[ $IP_ADDR
     export NEWT_COLORS=$OLD_NEWT_COLORS
 else
     echo "IP-Adresse liegt nicht im privaten Bereich. Fortsetzung des Scripts..."
+    clear
 fi
 
 
@@ -579,9 +586,9 @@ monitor_progress() {
                 *"Selecting previously unselected package mysql-common."*)
                     update_progress 15 "MariaDB wird jetzt installiert..." ;;
                 *"Unpacking php8.1-zip"*)
-                    update_progress 20 "Das Paket PHP 8.1 Common wird eingereichtet..." ;;
+                    update_progress 20 "Das Paket PHP 8.1 Common wird eingerichtet..." ;;
                 *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service → /lib/systemd/system/mariadb.service."*)
-                    update_progress 25 "MariaDB wird eingereichtet..." ;;
+                    update_progress 25 "MariaDB wird eingerichtet..." ;;
                 *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service → /lib/systemd/system/php8.1-fpm.service."*)
                     update_progress 30 "Das Paket PHP 8.1 FPM wird aktiviert..." ;;
                 *"Executing: /lib/systemd/systemd-sysv-install enable mariadb"*)
@@ -609,7 +616,7 @@ monitor_progress() {
                 *"Congratulations! You have successfully enabled"*)
                     update_progress 90 "Zertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
                 *"Es wurde kein Instanzort angegeben. Deine Pterodactyl-Instanz wird im default-Ordner gesucht."*)
-                    update_progress 95 "Die deutsche Übersetzung wird integriert. Das kann etwas länger dauern..." ;;
+                    update_progress 95 "Installiere GermanDactyl, das kann etwas dauern..." ;;
                 *"Der Patch wurde angewendet."*)
                     update_progress 100 "Prozesse werden beendet..." ;;
             esac
@@ -667,6 +674,7 @@ sleep 1
 # Schließe das Fortschrittsbalken-Fenster
 whiptail --clear
 clear
+recreate_user
 
 
 # Funktion, um die Zugangsdaten anzuzeigen
