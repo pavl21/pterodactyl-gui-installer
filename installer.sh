@@ -31,6 +31,7 @@ if [ "$DEBIAN_VERSION" != "11" ]; then
 fi
 
 
+
 # BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
 
 # Funktion zur Überprüfung der E-Mail-Adresse
@@ -358,7 +359,7 @@ show_spinner() {
     dpkg --configure -a
     apt-get update &&
     apt-get upgrade -y &&
-    apt-get install -y whiptail dnsutils curl openssl bc certbot python3-certbot-nginx pv sudo wget
+    sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y whiptail dnsutils curl openssl bc certbot python3-certbot-nginx pv sudo wget
 ) > /dev/null 2>&1 &
 
 PID=$!
