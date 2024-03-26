@@ -24,7 +24,7 @@ if [ "$DEBIAN_VERSION" != "11" ]; then
     echo "Aktuell funktioniert es nur mit Debian 11 einwandfrei. Wenn du fortfahren möchtest, warte bitte 60 Sekunden."
 
     # Wartezeit von 5 Sekunden
-    sleep 60
+    sleep 5
 
 fi
 
