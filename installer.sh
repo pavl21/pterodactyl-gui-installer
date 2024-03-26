@@ -21,21 +21,11 @@ if [ "$DEBIAN_VERSION" != "11" ]; then
     echo ""
     echo "Dein Linux-System '$DEBIAN_PRETTY_NAME' ist nicht mit dem Script kompatibel. Das Problem ist hierbei die Unterstützung von Whiptail, also die Oberflächengestaltung der Installation. Du kannst es gerne testen, ob das trotzdem klappt, es wurde oft gemeldet, dass man keine Auswahl treffen konnte."
     echo ""
-    echo "Aktuell funktioniert es nur mit Debian 11 einwandfrei."
+    echo "Aktuell funktioniert es nur mit Debian 11 einwandfrei. Wenn du fortfahren möchtest, warte bitte 60 Sekunden."
 
     # Wartezeit von 5 Sekunden
-    sleep 5
+    sleep 60
 
-    # Aufforderung zur Eingabe und Prüfung der Antwort
-    echo "Möchtest du fortfahren? (y/n) "
-    read -t 60 response
-    if [ "$response" != "y" ]; then
-        clear
-        echo "ABBRUCH - - - - - - - - - -"
-        echo ""
-        echo "Das Script wurde nun abgebrochen."
-        exit 1
-    fi
 fi
 
 
