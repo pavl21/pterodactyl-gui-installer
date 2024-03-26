@@ -7,7 +7,6 @@ if ! command -v apt-get &> /dev/null; then
 fi
 
 # Prüfe, ob das System Debian 11 ist, andernfalls auf Inkompatibilität hinweisen.
-apt install whiptail
 OS_INFO=$(cat /etc/os-release)
 DEBIAN_VERSION=$(echo "$OS_INFO" | grep 'VERSION_ID' | cut -d '"' -f 2)
 DEBIAN_PRETTY_NAME=$(echo "$OS_INFO" | grep 'PRETTY_NAME' | cut -d '"' -f 2)
@@ -21,10 +20,10 @@ if [ "$DEBIAN_VERSION" != "11" ]; then
     echo ""
     echo "Dein Linux-System '$DEBIAN_PRETTY_NAME' ist nicht mit dem Script kompatibel. Das Problem ist hierbei die Unterstützung von Whiptail, also die Oberflächengestaltung der Installation. Du kannst es gerne testen, ob das trotzdem klappt, es wurde oft gemeldet, dass man keine Auswahl treffen konnte."
     echo ""
-    echo "Aktuell funktioniert es nur mit Debian 11 einwandfrei. Wenn du fortfahren möchtest, warte bitte 60 Sekunden."
+    echo "Aktuell funktioniert es nur mit Debian 11 einwandfrei. Wenn du fortfahren möchtest, warte bitte 30 Sekunden."
 
-    # Wartezeit von 5 Sekunden
-    sleep 5
+    # Wartezeit von 30 Sekunden
+    sleep 30
 
 fi
 
