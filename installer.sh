@@ -25,7 +25,10 @@ if [ "$DEBIAN_VERSION" != "11" ]; then
     # Aufforderung zur Eingabe und Prüfung der Antwort
     read -p "Möchtest du fortfahren? (y/n) " response
     if [ "$response" != "y" ]; then
-        echo "Das Script wird abgebrochen."
+        clear
+        echo "ABBRUCH - - - - - - - - - -"
+        echo ""
+        echo "Das Script wurde nun abgebrochen."
         exit 1
     fi
 fi
