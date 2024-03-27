@@ -28,8 +28,6 @@ if [ "$DEBIAN_VERSION" != "11" ]; then
 fi
 
 
-
-
 # BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
 
 # Funktion zur Überprüfung der E-Mail-Adresse
@@ -245,9 +243,10 @@ EOF
 
 # Funktion für Phpmyadmin-Installation - OFFEN
 install_phpmyadmin() {
-    # Hier kommt dein Skript zur Installation von Phpmyadmin
-    echo "Phpmyadmin-Installationsskript ist noch zu implementieren."
-    sleep 5
+    clear
+    echo "Weiterleitung zu PhpMyAdmin..."
+    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/phpmyadmin-installer.sh | bash
+    exit 0
 }
 
 
