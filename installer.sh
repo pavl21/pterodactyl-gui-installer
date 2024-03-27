@@ -69,7 +69,7 @@ main_loop() {
         if [ -d "/var/www/pterodactyl" ]; then
             MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 30 90 13 \
                 "1" "🔍 Problembehandlung" \
-                "2" "📦 PhpMyAdmin installieren (Offen)" \
+                "2" "📦 PhpMyAdmin installieren" \
                 "3" "🐦 Wings nachinstallieren" \
                 "4" "📂 Backup-Verwaltung öffnen" \
                 "5" "🏢 Database-Host einrichten (Offen)" \
