@@ -73,7 +73,7 @@ main_loop() {
                 "3" "🐦 Wings nachinstallieren" \
                 "4" "📂 Backup-Verwaltung öffnen" \
                 "5" "🏢 Database-Host einrichten" \
-                "6" "🖌️ SSH-Loginseite integrieren" \
+                "6" "🖌️  SSH-Loginseite integrieren" \
                 "7" "🔄 SWAP-Verwaltung öffnen" \
                 "8" "🎨 Theme-Verwaltung öffnen" \
                 "9" "🗑️  Pterodactyl deinstallieren" \
