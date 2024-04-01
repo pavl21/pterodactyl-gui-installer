@@ -6,7 +6,7 @@ clear
 # "GermanDactyl Panel" Logo
 figlet -f small "GermanDactyl Panel" | /usr/games/lolcat -f
 echo -e "Pterodactyl Panel, übersetzt von Pavl21 und Verwaltung via GermanDactyl Setup" | /usr/games/lolcat
-echo "-----------------------------------------------------------------------" | /usr/games/lolcat
+echo "-----------------------------------------------------------------------------" | /usr/games/lolcat
 
 
 # Begrüßung basierend auf der Tageszeit
@@ -31,7 +31,7 @@ CRITICAL_UPDATE=$(echo "$UPDATES" | grep -E "containerd|docker" | wc -l)
 if [ "$CRITICAL_UPDATE" -gt 0 ]; then
     echo -e "\n📦 Es liegen $UPDATE_COUNT Updates und auch Sicherheitsupdates für die Pterodactyl-Instanzen bereit.\nInstalliere diese nach Gelegenheit, denn dabei müssen sämtliche Pterodactyl-Instanzen neu gestartet werden." | /usr/games/lolcat
 elif [ "$UPDATE_COUNT" -gt 0 ]; then
-    echo -e "\n📦 Es liegen $UPDATE_COUNT Updates vor, du kannst sie bei Gelegenheit aktualisieren aber derzeit ist es nicht notwendig." | /usr/games/lolcat
+    echo -e "\n📦 Es liegen $UPDATE_COUNT Updates vor Du kannst sie bei Gelegenheit aktualisieren, aber derzeit ist es nicht notwendig." | /usr/games/lolcat
 else
     echo -e "\n📦 Keine Paketupdates verfügbar." | /usr/games/lolcat
 fi
