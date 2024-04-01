@@ -72,11 +72,12 @@ main_loop() {
                 "2" "📦 PhpMyAdmin installieren" \
                 "3" "🐦 Wings nachinstallieren" \
                 "4" "📂 Backup-Verwaltung öffnen" \
-                "5" "🏢 Database-Host einrichten (Offen)" \
-                "6" "🔄 SWAP-Verwaltung öffnen" \
-                "7" "🎨 Theme-Verwaltung öffnen" \
-                "8" "🗑️  Pterodactyl deinstallieren" \
-                "9" "🚪 Skript beenden" 3>&1 1>&2 2>&3)
+                "5" "🏢 Database-Host einrichten" \
+                "6" "🖌️ SSH-Loginseite integrieren" \
+                "7" "🔄 SWAP-Verwaltung öffnen" \
+                "8" "🎨 Theme-Verwaltung öffnen" \
+                "9" "🗑️  Pterodactyl deinstallieren" \
+                "10" "🚪 Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
             # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
@@ -96,10 +97,11 @@ main_loop() {
                 3) install_wings ;;
                 4) setup_server_backups ;;
                 5) setup_database_host ;;
-                6) manage_swap_storage ;;
-                7) install_theme ;;
-                8) uninstall_pterodactyl ;;
-                9)
+                6) setup_ssh_login ;;
+                7) manage_swap_storage ;;
+                8) install_theme ;;
+                9) uninstall_pterodactyl ;;
+                10)
                    clear
                    echo ""
                    echo "INFO - - - - - - - - - -"
@@ -113,6 +115,7 @@ main_loop() {
         fi
     done
 }
+
 
 
 
@@ -241,7 +244,7 @@ EOF
 
 
 
-# Funktion für Phpmyadmin-Installation - OFFEN
+# Funktion für Phpmyadmin-Installation
 install_phpmyadmin() {
     clear
     echo "Weiterleitung zu PhpMyAdmin..."
@@ -271,11 +274,16 @@ setup_server_backups() {
 
 # Funktion zum Einrichten des Database-Hosts - OFFEN
 setup_database_host() {
-    # Füge hier den Code für die Einrichtung des Database-Hosts ein
-    # Zum Beispiel: echo "Database-Host wurde erfolgreich eingerichtet."
-    echo "Diese Funktion ist noch in Arbeit."
-    sleep 5
+    curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/database-host-config.sh | bash
+    exit 0
 }
+
+# Funktion zum integrieren der eigenen SSH Login-Page
+setup_ssh_login() {
+    curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/custom-ssh-login-config.sh | bash
+    exit 0
+}
+
 
 
 
