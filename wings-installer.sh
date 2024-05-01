@@ -108,43 +108,55 @@ validate_email() {
     fi
 }
 
-# Funktion zur Installation von Wings
+# Funktion zur Installation von Wings mit Docker-Installation
 install_wings_with_script() {
-    # Führe das externe Skript aus und leite die Ausgabe in die Log-Datei um
-    bash <(curl -s https://pterodactyl-installer.se) > "$LOG_FILE" 2>&1 <<EOF &
-1
-N
-N
-y
-$DOMAIN
-y
-$admin_email
-y
-$( [[ ! -d "/var/www/pterodactyl" ]] && echo "Y" )
-EOF
-    # Starte das Monitoring im Vordergrund
-    monitor_progress
-    # Warte auf den Abschluss des im Hintergrund laufenden Prozesses
-    wait $!
+    # Erstelle ein Skript für die Eingaben
+    echo -e "1\nN\nN\ny\n$DOMAIN\ny\n$admin_email\ny\n$( [[ ! -d "/var/www/pterodactyl" ]] && echo "Y" )" > inputs.txt
 
+    # Führe zuerst den Befehl zur Docker-Installation im Hintergrund aus und leite die Ausgabe in die Log-Datei um
+    curl -sSL https://get.docker.com/ | CHANNEL=stable sh >> "$LOG_FILE" 2>&1 &
+    PID_DOCKER=$!
+
+    # Starte den Fortschrittsmonitor im Hintergrund
+    monitor_progress &
+    PID_MONITOR=$!
+
+    # Warte auf den Abschluss der Docker-Installation
+    wait $PID_DOCKER
+    # Beende den Fortschrittsmonitor
+    kill $PID_MONITOR
+
+    # Führe das Pterodactyl-Installer-Skript aus, wenn Docker erfolgreich installiert wurde
+    bash <(curl -s https://pterodactyl-installer.se) < inputs.txt >> "$LOG_FILE" 2>&1
+
+    # Entferne die Eingabedatei nach Gebrauch
+    rm inputs.txt
+
+    # Meldung anzeigen, dass die Installation abgeschlossen ist
     whiptail --title "Wings Integration" --msgbox "Wings wurde erfolgreich installiert und aktiviert. Jetzt muss Wings nur noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 60
+
     integrate_wings
 }
 
 
+
+
+
+
 monitor_progress() {
     declare -A progress_messages=(
-        ["* Retrieving release information..."]=10
-        ["* SUCCESS: System is compatible with docker"]=20
-        ["* DNS verified!"]=30
-        ["gnupg set to manually installed."]=40
-        ["* SUCCESS: Dependencies installed!"]=50
-        ["* SUCCESS: Pterodactyl Wings downloaded successfully"]=60
-        ["* SUCCESS: Installed systemd service!"]=70
-        ["Plugins selected: Authenticator standalone, Installer None"]=80
-        ["Cleaning up challenges"]=90
-        ["* SUCCESS: The process of obtaining a Let's Encrypt certificate succeeded!"]=95
-        ["* Note: It is recommended to enable swap (for Docker, read more about it in official documentation)."]=100
+        ["+ sh -c DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-transport-https ca-certificates curl gnupg >/dev/null"]=15
+        ["+ sh -c DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-ce-rootless-extras docker-buildx-plugin >/dev/null"]=27
+        ["* Retrieving release information..."]=30
+        ["* Installing virt-what..."]=35
+        ["* - will not log or share any IP-information with any third-party."]=48
+        ["SetCreated symlink /etc/systemd/system/timers.target.wants/certbot.timer → /lib/systemd/system/certbot.timer."]=56
+        ["* SUCCESS: Pterodactyl Wings downloaded successfully"]=72
+        ["* SUCCESS: Installed systemd service!"]=79
+        ["* Configuring LetsEncrypt.."]=81
+        ["Plugins selected: Authenticator standalone, Installer None"]=86
+        ["Requesting a certificate for wings.pavl21.de"]=97
+        ["* Wings installation completed"]=99
     )
 
     # Fortschrittsbalken initialisieren
