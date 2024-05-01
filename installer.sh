@@ -320,8 +320,9 @@ isValidDomain() {
 
 # Kopfzeile für die Pterodactyl Panel Installation anzeigen
 clear
+clear
 echo "----------------------------------"
-echo "Pterodactyl Panel Installation"
+echo "GermanDactyl Setup"
 echo "Vereinfacht von Pavl21, Script von https://pterodactyl-installer.se/ wird zur Installation vom Panel und Wings verwendet. "
 echo "----------------------------------"
 sleep 3  # 3 Sekunden warten, bevor das Skript fortgesetzt wird
