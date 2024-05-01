@@ -365,7 +365,7 @@ show_spinner() {
     dpkg --configure -a
     apt-get update &&
     apt-get upgrade -y &&
-    sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y whiptail dnsutils curl openssl bc certbot python3-certbot-nginx pv sudo wget
+    sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y whiptail dnsutils curl expect openssl bc certbot python3-certbot-nginx pv sudo wget
 ) > /dev/null 2>&1 &
 
 PID=$!
@@ -482,6 +482,52 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 clear
+
+# Testen, ob CPU für den Betrieb ok ist.
+#!/bin/bash
+
+# Überprüfe die CPU-Architektur
+output=$(uname -m)
+echo "Aktuelle CPU-Architektur: $output"
+
+# Wenn die Architektur nicht amd64 ist, führe die folgenden Befehle aus
+if [ "$output" != "x86_64" ]; then
+    # Setze NEWT_COLORS nur für dieses spezifische Fenster
+    OLD_NEWT_COLORS=$NEWT_COLORS
+    export NEWT_COLORS='
+    root=,red
+    window=,red
+    border=white,red
+    textbox=white,red
+    button=black,white
+    entry=,red
+    checkbox=,red
+    compactbutton=,red
+    '
+
+    # Zeige ein Dialogfenster mit Whiptail an
+    if whiptail --title "Konflikt mit CPU-Architektur" --yesno "Die CPU, die in diesem Server verbaut ist, war in der Vergangenheit als Betrieb für das Panel für andere problematisch. Auch das Betreiben von Servern könnte zu unangenehmen Situationen kommen. Diese Probleme müssen nicht auftreten, aber es wäre zumindest bekannt. Du kannst trotzdem fortfahren, möchtest du?" 20 70; then
+        echo
+        echo "Fortsetzen des Scripts..."
+        cpu_arch_conflict=true
+    else
+        clear
+        echo "STATUS - - - - - - - - - -"
+        echo ""
+        echo "Das Script wurde abgebrochen."
+        # Stelle die ursprünglichen NEWT_COLORS nach dem Aufruf wieder her
+        export NEWT_COLORS=$OLD_NEWT_COLORS
+        exit 0
+    fi
+
+    # Stelle die ursprünglichen NEWT_COLORS nach dem Aufruf wieder her
+    export NEWT_COLORS=$OLD_NEWT_COLORS
+else
+    # Architektur ist amd64, kein Konflikt festgestellt
+    echo "Die CPU-Architektur ist amd64, kein Konflikt festgestellt."
+fi
+
+
 
 # Anzeige einer Whiptail-GUI zur Eingabe der Panel-Domain + Prüfung, ob es eine Domain ist.
 while true; do
@@ -645,6 +691,7 @@ MONITOR_PID=$!
 {
     bash <(curl -s https://pterodactyl-installer.se) <<EOF
     0
+    $( [[ "$cpu_arch_conflict" == "true" ]] && echo "y" )
     panel
     pterodactyl
     $database_password
@@ -663,6 +710,7 @@ MONITOR_PID=$!
     yes
 EOF
 } >> tmp.txt 2>&1
+
 
 {
     apt-get update && sudo apt-get install certbot python3-certbot-nginx -y
