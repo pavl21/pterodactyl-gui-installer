@@ -564,7 +564,7 @@ fi
 
 # Funktion zur Überprüfung einer E-Mail-Adresse
 validate_email() {
-    if [[ $1 =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$ ]]; then
+    if [[ $1 =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,10}$ ]]; then
         return 0
     else
         return 1
@@ -590,9 +590,9 @@ while true; do
     fi
 done
 
-# Funktion zum Generieren eines 16 Zeichen langen zufälligen Passworts ohne Sonderzeichen - Benutzerpasswort
+# Funktion zum Generieren eines 32 Zeichen langen zufälligen Passworts ohne Sonderzeichen - Benutzerpasswort
 generate_userpassword() {
-    < /dev/urandom tr -dc A-Za-z0-9 | head -c16
+    < /dev/urandom tr -dc A-Za-z0-9 | head -c32
 }
 
 user_password=$(generate_userpassword)
@@ -734,10 +734,11 @@ recreate_user
 
 # Funktion, um die Zugangsdaten anzuzeigen
 show_access_data() {
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (16 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (32 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
 }
 
 # Info: Installation abgeschlossen
+clear
 whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 22 80
 
 # Hauptlogik für die Zugangsdaten und die Entscheidung zur Installation von Wings
