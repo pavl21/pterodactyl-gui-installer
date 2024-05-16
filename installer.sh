@@ -136,6 +136,14 @@ install_wings() {
     exit 0
 }
 
+# Pelican Panel + Wings installieren
+install_pelican() {
+    clear
+    echo "Weiterleitung zu PP + W..."
+    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/pelican-installer.sh | bash
+    exit 0
+}
+
 
 # SWAP-Speicher zuweisen
 manage_swap_storage() {
@@ -454,7 +462,8 @@ fi
 # Panel + Wings, oder nur Wings? Das ist hier die Frage!
 CHOICE=$(whiptail --title "Dienste installieren" --menu "Möchtest du das Panel + Wings oder nur Wings installieren? Bei der ersten Auswahl kannst du immernoch entscheiden, ob du Wings nach der Panel-Installation noch installieren möchtest." 15 60 4 \
 "1" "Panel + Wings installieren" \
-"2" "Nur Wings installieren" 3>&1 1>&2 2>&3)
+"2" "Nur Wings installieren" \
+"3" "Pelican Panel + Wings installieren" 3>&1 1>&2 2>&3)
 
 EXITSTATUS=$?
 
@@ -468,11 +477,17 @@ if [ $EXITSTATUS = 0 ]; then
       install_wings
       exit 0
       ;;
+    3)
+      echo "Pelican Panel und Wings werden installiert..."
+      install_pelican
+      exit 0
+      ;;
   esac
 else
   # Wenn man abbricht, dann wird das Script auch abgebrochen.
   exit 0
 fi
+
 
 
 # Überprüfen, ob die Datei existiert. Falls nicht, wird sie erstellt.
