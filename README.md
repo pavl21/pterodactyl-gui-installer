@@ -10,7 +10,7 @@ Es können noch Fehler auftreten.
 Das Script ist noch nicht vollständig einsatzbereit und noch in Entwicklung. Dies ist eine inoffizielle Methode und die Verwendung unterliegt auf eigene Verantwortung.
 
 Starten kannst du es mit diesem Befehl: 
-`curl -sSL https://setup.germandactyl.de/ | sudo bash -s --`
+`sudo bash -c "$(curl -sSL https://setup.germandactyl.de/)"`
 
 
 ## Voreinstellungen
