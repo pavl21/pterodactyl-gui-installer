@@ -13,7 +13,7 @@ echo ""
 echo "### Passwortgenerierung gestartet ###"
 sleep 0.5
 ### Prüfe, ob notwendige Pakete vorhanden sind* ###
-apt install jq curl lolcat
+apt install jq curl lolcat -y
 
 # Funktion zur Passwortgenerierung
 generate_password() {
@@ -110,5 +110,6 @@ clear
 echo ""
 echo ""
 echo "================== Aufgabe beendet =================="
-sleep 3
-curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
+sleep 1
+sudo bash -c "$(curl -sSL https://setup.germandactyl.de/)"
+
