@@ -10,7 +10,7 @@ trouble_menu() {
 
         # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
         if [ $exitstatus != 0 ]; then
-            exec curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
+            sudo bash -c "$(curl -sSL https://setup.germandactyl.de/)"
             exit 0
         fi
 
@@ -28,6 +28,19 @@ trouble_menu() {
 run_certbot_renew() {
     curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/certbot-renew-verwaltung.sh | sudo bash -
     exit 0
+}
+
+
+# Domain auf Gültigkeit prüfen
+validate_domain() {
+    local domain=$1
+
+    # Einfache Überprüfung, ob die Domain-Struktur gültig ist
+    if [[ $domain =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        return 0  # 0 bedeutet 'erfolgreich' oder 'wahr' in Bash
+    else
+        return 1  # 1 bedeutet 'Fehler' oder 'falsch'
+    fi
 }
 
 
@@ -238,18 +251,6 @@ global_test() {
     echo "Weiterleitung zur Analyse..."
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/analyse.sh | bash
     exit 0
-}
-
-# Domain auf Gültigkeit prüfen
-validate_domain() {
-    local domain=$1
-
-    # Einfache Überprüfung, ob die Domain-Struktur gültig ist
-    if [[ $domain =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-        return 0  # 0 bedeutet 'erfolgreich' oder 'wahr' in Bash
-    else
-        return 1  # 1 bedeutet 'Fehler' oder 'falsch'
-    fi
 }
 
 # Funktion zur Generierung einer zufälligen dreistelligen Zahl
