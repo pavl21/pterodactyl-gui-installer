@@ -351,7 +351,7 @@ show_spinner() {
     dpkg --configure -a
     apt-get update &&
     apt-get upgrade -y &&
-    sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y whiptail dnsutils curl expect openssl bc certbot python3-certbot-nginx pv sudo wget ruby-full && sudo gem install lolcat && sudo apt autoremove
+    sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y whiptail dnsutils curl expect openssl bc certbot python3-certbot-nginx pv sudo wget ruby-full -y && sudo gem install lolcat && sudo apt autoremove -y
 ) > /dev/null 2>&1 &
 
 PID=$!
