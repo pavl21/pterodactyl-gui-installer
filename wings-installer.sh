@@ -39,38 +39,25 @@ LOG_FILE="wings-install.log"
 integrate_wings() {
     local DOMAIN="$1"
 
-    # Starte die Integration
+    # Verfügbaren RAM in MB und freien Speicherplatz in MB ermitteln
+    local mem_total_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local disk_avail_mb=$(df -m / | awk 'NR==2 {print $4}')
+    local mem_total_mb=$((mem_total_kb / 1024))
+
     systemctl enable wings
     systemctl stop wings
     cd /var/www/pterodactyl
-    php artisan p:location:make --short=DE --long="Hauptnetz"
 
-    # Zeige Infotext und frage, ob der Node erstellt wurde
-    while true; do
-        if whiptail --title "Wings Integration" --yesno "Erstelle jetzt im Panel mit der Domain für Wings ($domain) eine Node mit den Vorgaben des Servers. Bist du soweit? Dann fahren wir fort." 10 60; then
-            # Infotext zur Wings-Integration
-            whiptail --title "Manuelle Handlung notwendig" --msgbox "Öffne eine neue SSH-Verbindung und bearbeite die config.yml in /etc/pterodactyl/ (Mit dem Befehl 'nano /etc/pterodactyl/config.yml'). Im Panel unter der erstellten Node findest du den Punkt 'Wings-Integration'. Dort findest du eine config.yml, die dort in dem genannten Pfad eingebunden werden muss. Wenn du das getan hast, bestätige das. Es wird dann überprüft, ob du alles richtig gemacht hast." 15 100
+    # Versuche die notwendigen Einträge automatisch zu erzeugen
+    php artisan p:location:make --short=DE --long="Hauptnetz" >/dev/null 2>&1
+    php artisan p:node:make --location=1 --name="Wings" \
+        --fqdn="$DOMAIN" --scheme=https --daemon-listen=443 \
+        --daemon-sftp=2022 --behind-proxy=true --ssl=true \
+        --memory=${mem_total_mb} --disk=${disk_avail_mb} --no-interaction >/dev/null 2>&1
 
-            # Prüfe, ob die Integration abgeschlossen ist
-            if whiptail --title "Wings Integration" --yesno "Hast du die Wings-Integration abgeschlossen?" 10 60; then
-                if [ -f /etc/pterodactyl/config.yml ]; then
-                    systemctl start wings
-                    if whiptail --title "Wings Status prüfen" --yesno "Wings wurde nun gestartet. Überprüfe jetzt bitte, ob die Node aktiv ist. Das sieht du an einem grünen Herz, das schlägt." 10 60; then
-                        whiptail --title "🟢 Pterodactyl ist nun eingerichtet" --msgbox "Die Installation ist nun abgeschlossen, du kannst nun Server für dich (und andere) anlegen. Bevor du das aber tust, musst du noch einige Ports freigeben. Das kannst du unter der Node im Panel unter dem Reiter 'Freigegebene Ports' machen. Dort trägst du dann rechts oben die IP Adresse des Servers ein, in der Mitte einen Alias (zum Beispiel die Domain, unter der dein Server auch erreichbar ist. Das ist kein Pflichtfeld, kannst du auch frei lassen) und darunter die Ports, die du nutzen möchtest. Mit einem Komma kannst du mehrere eingeben. Viel Spaß mit deinem Panel und empfehle GermanDactyl gerne weiter, wenn wir dir weiterhelfen konnten :)." 15 100
-                        swap_question
-                    else
-                        break
-                    fi
-                else
-                    whiptail --title "Wings Integration" --msgbox "Die Datei /etc/pterodactyl/config.yml existiert nicht. Hast du es eventuell falsch abgelegt oder vergessen zu speichern?" 10 60
-                fi
-            else
-                continue
-            fi
-        else
-            whiptail --title "Wings Integration" --msgbox "Erstelle bitte erst eine neue Node im Pterodactyl Panel. Gebe dort die Daten an, die benötigt werden. Bei den Ressourcen kannst du die Gigabyte-Zahl mit 1024 multiplizieren (16*1024). Wenn du soweit bist, dann können wir weitermachen." 10 70
-        fi
-    done
+    systemctl start wings
+    whiptail --title "Wings Integration" --msgbox "Wings wurde automatisch in das Panel eingebunden." 10 60
+    swap_question
 }
 
 # Funktionen zur Validierung
@@ -135,7 +122,7 @@ install_wings_with_script() {
     # Meldung anzeigen, dass die Installation abgeschlossen ist
     whiptail --title "Wings Integration" --msgbox "Wings wurde erfolgreich installiert und aktiviert. Jetzt muss Wings nur noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 60
 
-    integrate_wings
+    integrate_wings "$DOMAIN"
 }
 
 
@@ -200,8 +187,18 @@ swap_question() {
 }
 
 # Hauptinstallationsschleife zu Beginn ... ->
+panel_domain_file="/var/.panel_domain"
+if [ -f "$panel_domain_file" ]; then
+    panel_domain=$(cat "$panel_domain_file")
+    if whiptail --title "Panel-Domain gefunden" --yesno "Soll Wings auf dem gleichen Server wie das Panel laufen und die Domain $panel_domain verwenden?" 10 70; then
+        DOMAIN="$panel_domain"
+    fi
+fi
+
 while true; do
-    DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest. Diese muss als DNS-Eintrag bei deiner Domain verfügbar sein." 10 70 3>&1 1>&2 2>&3)
+    if [ -z "$DOMAIN" ]; then
+        DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest. Diese muss als DNS-Eintrag bei deiner Domain verfügbar sein." 10 70 3>&1 1>&2 2>&3)
+    fi
 
     if [ -z "$DOMAIN" ]; then
         whiptail --title "Installation abgebrochen" --msgbox "Du hast keine Domain angegeben. Du musst eine Domain für Wings verwenden, streng genommen nicht zwingend aber dann unsicher. Das Script wird nun gestoppt, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 10 60
