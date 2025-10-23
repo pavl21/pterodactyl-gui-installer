@@ -6,6 +6,130 @@ if ! command -v apt-get &> /dev/null; then
     exit 1
 fi
 
+# Funktion: Warte bis APT Lock frei ist
+wait_for_apt() {
+    local max_wait=300  # 5 Minuten
+    local waited=0
+
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+          fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+          fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+
+        if [ $waited -eq 0 ]; then
+            echo "⏳ APT wird gerade von einem anderen Prozess verwendet. Warte..."
+        fi
+
+        sleep 5
+        waited=$((waited + 5))
+
+        if [ $waited -ge $max_wait ]; then
+            if whiptail --title "⚠️ APT blockiert" --yesno "APT ist seit 5 Minuten blockiert. Möchtest du den Lock erzwingen?\n\n⚠️ WARNUNG: Dies kann zu Problemen führen!" 12 70; then
+                rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock 2>/dev/null
+                dpkg --configure -a 2>/dev/null
+                return 0
+            else
+                echo "❌ Installation abgebrochen wegen APT Lock."
+                exit 1
+            fi
+        fi
+    done
+
+    if [ $waited -gt 0 ]; then
+        echo "✅ APT ist jetzt verfügbar."
+    fi
+    return 0
+}
+
+# Funktion: Sichere curl Ausführung mit Retry
+safe_curl() {
+    local url="$1"
+    local max_retries=3
+    local retry=0
+    local wait_time=2
+
+    while [ $retry -lt $max_retries ]; do
+        if curl -fsSL --connect-timeout 10 --max-time 30 "$url" 2>/dev/null; then
+            return 0
+        else
+            retry=$((retry + 1))
+            if [ $retry -lt $max_retries ]; then
+                echo "⚠️ Verbindung fehlgeschlagen. Neuer Versuch in ${wait_time}s... ($retry/$max_retries)"
+                sleep $wait_time
+                wait_time=$((wait_time * 2))  # Exponential backoff
+            fi
+        fi
+    done
+
+    echo "❌ Fehler: Konnte nach $max_retries Versuchen keine Verbindung herstellen zu: $url"
+    return 1
+}
+
+# Funktion: Prüfe Systemanforderungen
+check_system_requirements() {
+    local errors=""
+    local warnings=""
+
+    # RAM Check (mindestens 2GB empfohlen)
+    total_ram=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$total_ram" -lt 1024 ]; then
+        errors+="❌ Zu wenig RAM: ${total_ram}MB (Mindestens 1GB erforderlich)\n"
+    elif [ "$total_ram" -lt 2048 ]; then
+        warnings+="⚠️ Wenig RAM: ${total_ram}MB (2GB empfohlen)\n"
+    fi
+
+    # Disk Space Check (mindestens 10GB frei empfohlen)
+    free_space=$(df / | awk 'NR==2{print int($4/1024/1024)}')
+    if [ "$free_space" -lt 5 ]; then
+        errors+="❌ Zu wenig Speicherplatz: ${free_space}GB frei (Mindestens 5GB erforderlich)\n"
+    elif [ "$free_space" -lt 10 ]; then
+        warnings+="⚠️ Wenig Speicherplatz: ${free_space}GB frei (10GB empfohlen)\n"
+    fi
+
+    # CPU Cores Check
+    cpu_cores=$(nproc)
+    if [ "$cpu_cores" -lt 1 ]; then
+        errors+="❌ Keine CPU-Kerne erkannt\n"
+    elif [ "$cpu_cores" -lt 2 ]; then
+        warnings+="⚠️ Nur ${cpu_cores} CPU-Kern (2+ empfohlen)\n"
+    fi
+
+    # Zeige Fehler an
+    if [ -n "$errors" ]; then
+        if ! whiptail --title "❌ Systemanforderungen nicht erfüllt" --yesno "Kritische Probleme gefunden:\n\n${errors}\nDie Installation wird wahrscheinlich fehlschlagen.\nTrotzdem fortfahren?" 16 70; then
+            echo "Installation abgebrochen."
+            exit 1
+        fi
+    fi
+
+    # Zeige Warnungen an
+    if [ -n "$warnings" ]; then
+        whiptail --title "⚠️ Warnungen" --msgbox "Folgende Punkte sollten beachtet werden:\n\n${warnings}\nDie Installation läuft weiter, aber Performance könnte beeinträchtigt sein." 16 70
+    fi
+}
+
+# Funktion: Prüfe OS Version (Debian 10+, Ubuntu 20.04+)
+check_os_version() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+
+        # Debian Check
+        if [ "$ID" = "debian" ]; then
+            major_version=$(echo "$VERSION_ID" | cut -d. -f1)
+            if [ "$major_version" -lt 10 ]; then
+                whiptail --title "⚠️ Veraltetes OS" --msgbox "Debian $VERSION_ID ist veraltet.\n\nMinimal unterstützt: Debian 10\nEmpfohlen: Debian 11, 12 oder 13\n\nDie Installation könnte Probleme verursachen!" 14 70
+            elif [ "$major_version" -ge 13 ]; then
+                whiptail --title "ℹ️ Neue Debian Version" --msgbox "Debian $VERSION_ID erkannt.\n\nDiese Version wird unterstützt, aber es könnten kleinere Anpassungen nötig sein." 12 70
+            fi
+        # Ubuntu Check
+        elif [ "$ID" = "ubuntu" ]; then
+            major_version=$(echo "$VERSION_ID" | cut -d. -f1)
+            if [ "$major_version" -lt 20 ]; then
+                whiptail --title "⚠️ Veraltetes OS" --msgbox "Ubuntu $VERSION_ID ist veraltet.\n\nMinimal unterstützt: Ubuntu 20.04\nEmpfohlen: Ubuntu 22.04 oder 24.04\n\nDie Installation könnte Probleme verursachen!" 14 70
+            fi
+        fi
+    fi
+}
+
 # BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
 
 # Funktion zur Überprüfung der E-Mail-Adresse
@@ -319,6 +443,11 @@ if [ "$(id -u)" != "0" ]; then
     exit 1
 fi
 
+# Führe System-Checks durch
+echo "🔍 Prüfe Systemanforderungen..."
+check_system_requirements
+check_os_version
+
 # Notwendige Pakete installieren
 clear
 echo ""
@@ -346,6 +475,10 @@ show_spinner() {
     printf "                                             \r"
 }
 
+# Prüfe ob APT verfügbar ist
+echo "🔍 Prüfe APT Verfügbarkeit..."
+wait_for_apt
+
 # Starte die Installation im Hintergrund und leite die Ausgabe um
 (
     dpkg --configure -a
@@ -365,7 +498,13 @@ exit_status=$?
 
 # Überprüfe den Exit-Status
 if [ $exit_status -ne 0 ]; then
-    echo "Ein Fehler ist während der Vorbereitung aufgetreten. Einige Pakete scheinen entweder nicht zu existieren, die Aktualisierung der Pakete ist wegen fehlerhafter Quellen in apt nicht möglich, oder es läuft im Hintergrund bereits ein Installations- oder Updateprozess. Im zweiten Fall muss gewartet werden, bis es abgeschlossen ist. Die Vorbereitung und Installation wurde abgebrochen."
+    echo "❌ Ein Fehler ist während der Vorbereitung aufgetreten."
+    echo "Mögliche Ursachen:"
+    echo "- Pakete existieren nicht für diese Distribution"
+    echo "- Fehlerhafte APT-Quellen"
+    echo "- Netzwerkprobleme"
+    echo ""
+    echo "Prüfe die Logs mit: journalctl -xe"
     exit $exit_status
 fi
 

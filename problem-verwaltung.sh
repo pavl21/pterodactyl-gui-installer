@@ -1,3 +1,23 @@
+# Funktion zur dynamischen PHP-Version-Erkennung
+detect_php_version() {
+    # Methode 1: Prüfe welche PHP-FPM Socks verfügbar sind
+    for ver in 8.3 8.2 8.1 8.0 7.4 7.3; do
+        if [ -S "/run/php/php${ver}-fpm.sock" ]; then
+            echo "$ver"
+            return 0
+        fi
+    done
+
+    # Methode 2: Falls php CLI verfügbar ist
+    if command -v php >/dev/null 2>&1; then
+        php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null
+        return 0
+    fi
+
+    # Fallback: Standard für Pterodactyl
+    echo "8.1"
+}
+
 trouble_menu() {
     while true; do
         TROUBLE_MENU=$(whiptail --title "Problembehandlung" --menu "Wobei können wir dir weiterhelfen?" 20 60 10 \
@@ -181,6 +201,8 @@ check_nginx_config() {
 
 create_nginx_config() {
     local DOMAIN_CHECK=$1
+    local PHP_VERSION=$(detect_php_version)
+
     cat > /etc/nginx/sites-enabled/pterodactyl.conf <<EOL
 server {
     server_name $DOMAIN_CHECK;
@@ -207,7 +229,7 @@ server {
 
     location ~ \.php\$ {
         fastcgi_split_path_info ^(.+\.php)(/.+)\$;
-        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+        fastcgi_pass unix:/run/php/php${PHP_VERSION}-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
