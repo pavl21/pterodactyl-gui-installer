@@ -64,22 +64,55 @@ sleep 0.5
 
 # Zugangsdaten anzeigen
 clear
-whiptail --title "🎉 Database Host angelegt" --msgbox "Der Database Host wurde erfolgreich erstellt und steht nun zur Einrichtung zur Verfügung. Navigiere nun in deinem Admin Panel auf das Menü namens 'Alle Datenbanken'. Klicke auf Erstellen, wenn du soweit bist, bestätige es DANN ERST mit ENTER. Dir werden dann einmalig die angelegten Zugangsdaten angezeigt, die hinzugefügt werden können." 20 78
+whiptail --title "🎉 Database Host angelegt" --msgbox "Der Database Host wurde erfolgreich erstellt und steht nun zur Einrichtung zur Verfügung. Navigiere nun in deinem Admin Panel auf das Menü namens 'Alle Datenbanken'. Klicke auf Erstellen, wenn du soweit bist, bestätige es DANN ERST mit ENTER. Dir werden dann die angelegten Zugangsdaten angezeigt." 16 78
 
-# Zugangsdaten des Database Host
-whiptail --title "🔐 Zugangsdaten des Database Host" --msgbox "Hier sind die Zugangsdaten des MySQL Host, sobald es erfolgreich erstellt wurde brauchst du die Daten nicht mehr.\n\nName: (Darfst du selbst benennen)\nHost: ${IP_ADDRESS}\nPort: 3306\nBenutzername: ${USERNAME}\nPasswort: (wird nach Bestätigung extra gezeigt)\n\nUnter Linked Node musst du nichts verändern.\nDrücke Enter, um das Passwort zu sehen." 20 78
+# Erstelle temporäre Datei für Passwort (sicherer als nur Console)
+TEMP_PW_FILE="/tmp/db_password_$(date +%s).txt"
+echo "$PASSWORD" > "$TEMP_PW_FILE"
+chmod 600 "$TEMP_PW_FILE"
 
-# Passwort in der Konsole ausgeben
+# Zugangsdaten in whiptail anzeigen (bleibt sichtbar bis Enter)
+whiptail --title "🔐 Zugangsdaten des Database Host" --msgbox "Hier sind die Zugangsdaten des MySQL Host:\n\nName: (Darfst du selbst benennen)\nHost: ${IP_ADDRESS}\nPort: 3306\nBenutzername: ${USERNAME}\n\nPasswort-Datei: ${TEMP_PW_FILE}\n\nDas Passwort wird auf der nächsten Seite angezeigt.\n\nUnter Linked Node musst du nichts verändern.\nDrücke Enter um fortzufahren..." 20 78
+
+# Passwort direkt in whiptail anzeigen (scrollt nicht weg!)
+whiptail --title "🔐 PASSWORT - BITTE KOPIEREN" --msgbox "BENUTZERNAME:\n${USERNAME}\n\nPASSWORT (256 Zeichen):\n${PASSWORD}\n\n\nDas Passwort ist auch gespeichert in:\n${TEMP_PW_FILE}\n\nDu kannst es mit 'cat ${TEMP_PW_FILE}' erneut anzeigen.\n\nKOPIERE DAS PASSWORT JETZT!\nDrücke Enter wenn du fertig bist." 24 80
+
+# Zusätzlich in Console ausgeben (als Backup)
 clear
+echo "=============================================="
+echo "   DATABASE HOST ZUGANGSDATEN"
+echo "=============================================="
 echo ""
+echo "Host:         ${IP_ADDRESS}"
+echo "Port:         3306"
+echo "Benutzername: ${USERNAME}"
 echo ""
-echo "PASSWORT FREIGEGEBEN - - - - - - - - - - - - - - -"
-echo -e "\nPasswort zum Kopieren:"
-echo -e "$PASSWORD\n" | /usr/games/lolcat
-echo "Sobald du es kopiert und eingefügt hast, drücke bitte ERST DANN die Taste 'ENTER'."
+echo "Passwort:"
+echo "----------------------------------------------"
+echo "$PASSWORD"
+echo "----------------------------------------------"
 echo ""
-echo "-> Warte auf Eingabe der Taste Enter..."
-read -r  # Warten auf Eingabe des Benutzers
+echo "Temporäre Datei: ${TEMP_PW_FILE}"
+echo ""
+echo "=============================================="
+echo ""
+echo "Drücke Enter nachdem du das Passwort kopiert"
+echo "und im Panel eingefügt hast..."
+read -r
+
+# Frage ob Passwort nochmal angezeigt werden soll
+if ! whiptail --title "Passwort gespeichert?" --yesno "Hast du das Passwort erfolgreich im Panel eingefügt?" 10 60; then
+    whiptail --title "🔐 PASSWORT NOCHMAL" --msgbox "PASSWORT:\n\n${PASSWORD}\n\nOder öffne: ${TEMP_PW_FILE}" 18 80
+    echo ""
+    echo "Passwort wird nochmal angezeigt:"
+    echo "$PASSWORD"
+    echo ""
+    echo "Drücke Enter wenn fertig..."
+    read -r
+fi
+
+# Temporäre Datei löschen
+rm -f "$TEMP_PW_FILE" 2>/dev/null
 
 # Marker für das Ende dieses Skriptteils
 echo -e "\n### Passwortgenerierung und Anzeige abgeschlossen ###\n"

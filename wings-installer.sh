@@ -35,21 +35,129 @@ fi
 LOG_FILE="wings-install.log"
 > "$LOG_FILE"
 
-# Integrationshilfe für Wings
+# Integrationshilfe für Wings - AUTOMATISIERT
 integrate_wings() {
+    local DOMAIN="$1"
+
+    # Frage, ob automatische oder manuelle Integration gewünscht ist
+    if whiptail --title "Wings Integration" --yesno "Möchtest du die Wings Integration automatisch durchführen lassen?\n\nAutomatisch: Node wird automatisch erstellt und konfiguriert\nManuell: Du erstellst die Node selbst im Panel" 12 70; then
+        integrate_wings_auto "$DOMAIN"
+    else
+        integrate_wings_manual "$DOMAIN"
+    fi
+}
+
+# Automatische Wings Integration
+integrate_wings_auto() {
+    local DOMAIN="$1"
+
+    {
+        echo "10"
+        echo "XXX"
+        echo "Wings wird vorbereitet..."
+        echo "XXX"
+        systemctl enable wings > /dev/null 2>&1
+        systemctl stop wings > /dev/null 2>&1
+
+        echo "20"
+        echo "XXX"
+        echo "Location wird erstellt..."
+        echo "XXX"
+        cd /var/www/pterodactyl
+        # Prüfe ob Location schon existiert
+        LOCATION_ID=$(php artisan p:location:list 2>/dev/null | grep -i "hauptnetz" | awk '{print $1}' | head -n1)
+        if [ -z "$LOCATION_ID" ]; then
+            php artisan p:location:make --short=DE --long="Hauptnetz" > /dev/null 2>&1
+            LOCATION_ID=$(php artisan p:location:list 2>/dev/null | grep -i "hauptnetz" | awk '{print $1}' | head -n1)
+        fi
+        LOCATION_ID=${LOCATION_ID:-1}
+
+        echo "40"
+        echo "XXX"
+        echo "Node wird automatisch erstellt..."
+        echo "XXX"
+        # Hole Systemressourcen
+        SERVER_IP=$(hostname -I | awk '{print $1}')
+        TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+        TOTAL_DISK=$(df / | awk 'NR==2{print int($4/1024)}')
+
+        # Erstelle Node mit artisan
+        NODE_OUTPUT=$(php artisan p:node:make \
+            --name="Auto-Node-$(date +%s)" \
+            --location-id="$LOCATION_ID" \
+            --fqdn="$DOMAIN" \
+            --public=1 \
+            --scheme=https \
+            --memory="$TOTAL_RAM" \
+            --disk="$TOTAL_DISK" \
+            --daemon-listen=8080 \
+            --daemon-sftp=2022 2>&1)
+
+        NODE_ID=$(echo "$NODE_OUTPUT" | grep -oP '(?<=Successfully created node with ID )\d+' || echo "$NODE_OUTPUT" | grep -oP 'ID:\s*\d+' | grep -oP '\d+')
+
+        if [ -z "$NODE_ID" ]; then
+            echo "100"
+            whiptail --title "❌ Fehler" --msgbox "Node konnte nicht automatisch erstellt werden.\n\nFallback auf manuelle Integration..." 10 60
+            integrate_wings_manual "$DOMAIN"
+            return 1
+        fi
+
+        echo "60"
+        echo "XXX"
+        echo "Node-Konfiguration wird abgerufen (Node ID: $NODE_ID)..."
+        echo "XXX"
+
+        # Erstelle config.yml Verzeichnis
+        mkdir -p /etc/pterodactyl
+
+        # Hole Konfiguration via artisan
+        cd /var/www/pterodactyl
+        php artisan p:node:configuration "$NODE_ID" > /etc/pterodactyl/config.yml 2>&1
+
+        if [ ! -s /etc/pterodactyl/config.yml ]; then
+            echo "100"
+            whiptail --title "❌ Fehler" --msgbox "Konfiguration konnte nicht abgerufen werden.\n\nBitte prüfe manuell:\ncd /var/www/pterodactyl\nphp artisan p:node:configuration $NODE_ID" 12 70
+            return 1
+        fi
+
+        echo "80"
+        echo "XXX"
+        echo "Wings wird gestartet..."
+        echo "XXX"
+        systemctl start wings
+        sleep 3
+
+        echo "100"
+    } | whiptail --title "⚙️ Automatische Wings Integration" --gauge "Bitte warten..." 8 70 0
+
+    # Prüfe Wings Status
+    if systemctl is-active --quiet wings; then
+        whiptail --title "✅ Wings erfolgreich eingerichtet" --msgbox "Wings wurde automatisch konfiguriert und gestartet!\n\nNode ID: $NODE_ID\nDomain: $DOMAIN\n\nDu kannst jetzt Server erstellen. Vergiss nicht, Ports freizugeben!" 14 70
+        swap_question
+    else
+        whiptail --title "⚠️ Wings Status unklar" --msgbox "Wings wurde konfiguriert, aber der Status ist unklar.\n\nPrüfe die Logs mit:\njournalctl -u wings -n 50\n\nOder versuche:\nsudo wings --debug" 14 70
+
+        if whiptail --title "Manuell prüfen?" --yesno "Möchtest du jetzt manuell prüfen, ob Wings läuft?" 10 60; then
+            integrate_wings_manual "$DOMAIN"
+        fi
+    fi
+}
+
+# Manuelle Wings Integration (Original-Methode)
+integrate_wings_manual() {
     local DOMAIN="$1"
 
     # Starte die Integration
     systemctl enable wings
     systemctl stop wings
     cd /var/www/pterodactyl
-    php artisan p:location:make --short=DE --long="Hauptnetz"
+    php artisan p:location:make --short=DE --long="Hauptnetz" 2>/dev/null || true
 
     # Zeige Infotext und frage, ob der Node erstellt wurde
     while true; do
-        if whiptail --title "Wings Integration" --yesno "Erstelle jetzt im Panel mit der Domain für Wings ($domain) eine Node mit den Vorgaben des Servers. Bist du soweit? Dann fahren wir fort." 10 60; then
+        if whiptail --title "Wings Integration" --yesno "Erstelle jetzt im Panel mit der Domain für Wings ($DOMAIN) eine Node mit den Vorgaben des Servers. Bist du soweit? Dann fahren wir fort." 10 60; then
             # Infotext zur Wings-Integration
-            whiptail --title "Manuelle Handlung notwendig" --msgbox "Öffne eine neue SSH-Verbindung und bearbeite die config.yml in /etc/pterodactyl/ (Mit dem Befehl 'nano /etc/pterodactyl/config.yml'). Im Panel unter der erstellten Node findest du den Punkt 'Wings-Integration'. Dort findest du eine config.yml, die dort in dem genannten Pfad eingebunden werden muss. Wenn du das getan hast, bestätige das. Es wird dann überprüft, ob du alles richtig gemacht hast." 15 100
+            whiptail --title "Manuelle Handlung notwendig" --msgbox "Öffne eine neue SSH-Verbindung und bearbeite die config.yml in /etc/pterodactyl/ (Mit dem Befehl 'nano /etc/pterodactyl/config.yml').\n\nIm Panel unter der erstellten Node findest du den Punkt 'Wings-Integration'. Dort findest du eine config.yml, die dort in dem genannten Pfad eingebunden werden muss.\n\nWenn du das getan hast, bestätige das. Es wird dann überprüft, ob du alles richtig gemacht hast." 16 100
 
             # Prüfe, ob die Integration abgeschlossen ist
             if whiptail --title "Wings Integration" --yesno "Hast du die Wings-Integration abgeschlossen?" 10 60; then
