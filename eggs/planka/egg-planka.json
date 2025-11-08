@@ -1,0 +1,217 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PANEL",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2025-11-08T22:30:00+00:00",
+    "name": "Planka",
+    "author": "germandactyl@planka.app",
+    "uuid": "8f3d4a5b-9c2e-4d1a-b8f7-6e5c4d3a2b1c",
+    "description": "Planka ist ein elegantes, Open-Source-Projektmanagement-Tool für Workgroups. Verwalten Sie Ihre Projekte mit Kanban-Boards, ähnlich wie Trello - komplett selbst gehostet.",
+    "features": [
+        "pid_limit"
+    ],
+    "docker_images": {
+        "Planka Latest": "ghcr.io/plankanban/planka:latest",
+        "Planka 2.0.0-rc.4": "ghcr.io/plankanban/planka:2.0.0-rc.4",
+        "Planka 1.21.2": "ghcr.io/plankanban/planka:1.21.2"
+    },
+    "file_denylist": [],
+    "startup": "cd /app && node /app/server/index.js",
+    "config": {
+        "files": "{}",
+        "startup": "{\r\n    \"done\": \"Server is listening on port\"\r\n}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/ash\n# Planka Installation Script\n#\n# Server Files: /mnt/server\n\ncd /mnt/server\n\necho \"=================================================\"\necho \"Planka Pterodactyl Egg Installation\"\necho \"=================================================\"\necho \"\"\necho \"Planka läuft auf dem offiziellen Docker Image.\"\necho \"Keine zusätzliche Installation erforderlich.\"\necho \"\"\necho \"WICHTIG: Stellen Sie sicher, dass Sie:\"\necho \"1. Eine PostgreSQL-Datenbank konfiguriert haben\"\necho \"2. Die DATABASE_URL Variable korrekt gesetzt haben\"\necho \"3. Einen SECRET_KEY generiert haben (openssl rand -hex 64)\"\necho \"\"\necho \"Erstelle Verzeichnisstruktur...\"\n\n# Erstelle erforderliche Verzeichnisse für Planka\nmkdir -p /mnt/server/public/favicons\nmkdir -p /mnt/server/public/user-avatars\nmkdir -p /mnt/server/public/background-images\nmkdir -p /mnt/server/private/attachments\n\necho \"Verzeichnisse erstellt.\"\necho \"\"\necho \"=================================================\"\necho \"Installation abgeschlossen!\"\necho \"=================================================\"\necho \"\"\necho \"Nächste Schritte:\"\necho \"1. Setzen Sie die BASE_URL auf Ihre Domain/IP\"\necho \"2. Konfigurieren Sie die DATABASE_URL\"\necho \"3. Generieren Sie einen SECRET_KEY\"\necho \"4. Optional: Konfigurieren Sie SMTP für E-Mails\"\necho \"\"\necho \"Nach dem ersten Start erstellen Sie einen Admin:\"\necho \"docker exec -it <container> npm run db:create-admin-user\"\necho \"=================================================\"",
+            "container": "ghcr.io/parkervcp/installers:alpine",
+            "entrypoint": "ash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Base URL",
+            "description": "Die vollständige URL, unter der Planka erreichbar ist (z.B. https://planka.example.com oder http://localhost:3000). Wichtig für OAuth und E-Mail-Links.",
+            "env_variable": "BASE_URL",
+            "default_value": "http://localhost:3000",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:255",
+            "field_type": "text"
+        },
+        {
+            "name": "Database URL",
+            "description": "PostgreSQL Verbindungs-URL im Format: postgresql://username:password@host:port/database (z.B. postgresql://planka:secure_password@db.example.com:5432/planka)",
+            "env_variable": "DATABASE_URL",
+            "default_value": "postgresql://postgres:changeme@localhost:5432/planka",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Secret Key",
+            "description": "Sicherheitsschlüssel für Sessions und JWT-Tokens. MUSS ein zufälliger String sein! Generieren Sie einen mit: openssl rand -hex 64",
+            "env_variable": "SECRET_KEY",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|min:32",
+            "field_type": "text"
+        },
+        {
+            "name": "Default Language",
+            "description": "Standard-Sprache für neue Benutzer und Board-Benachrichtigungen",
+            "env_variable": "DEFAULT_LANGUAGE",
+            "default_value": "de-DE",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:de-DE,en-US,fr-FR,es-ES,it-IT,nl-NL,pt-BR,ru-RU,ja-JP,zh-CN",
+            "field_type": "text"
+        },
+        {
+            "name": "Trust Proxy",
+            "description": "Aktivieren Sie dies, wenn Planka hinter einem Reverse Proxy (z.B. Nginx, Caddy) läuft",
+            "env_variable": "TRUST_PROXY",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Log Level",
+            "description": "Log-Level für die Anwendung (debug, info, warn, error)",
+            "env_variable": "LOG_LEVEL",
+            "default_value": "info",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:debug,info,warn,error",
+            "field_type": "text"
+        },
+        {
+            "name": "Max Upload File Size",
+            "description": "Maximale Dateigröße für Uploads in Bytes (z.B. 10485760 für 10MB). Leer lassen für Standard.",
+            "env_variable": "MAX_UPLOAD_FILE_SIZE",
+            "default_value": "10485760",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Token Expires In",
+            "description": "Gültigkeitsdauer von Session-Tokens in Tagen",
+            "env_variable": "TOKEN_EXPIRES_IN",
+            "default_value": "365",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Default Admin Email",
+            "description": "E-Mail-Adresse des Standard-Admin-Benutzers. NICHT auskommentieren, wenn Sie verhindern möchten, dass dieser Benutzer bearbeitet/gelöscht wird.",
+            "env_variable": "DEFAULT_ADMIN_EMAIL",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|email",
+            "field_type": "text"
+        },
+        {
+            "name": "Default Admin Password",
+            "description": "Passwort des Standard-Admin-Benutzers. Leer lassen nach der ersten Einrichtung!",
+            "env_variable": "DEFAULT_ADMIN_PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Default Admin Name",
+            "description": "Vollständiger Name des Standard-Admin-Benutzers",
+            "env_variable": "DEFAULT_ADMIN_NAME",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Default Admin Username",
+            "description": "Benutzername des Standard-Admin-Benutzers",
+            "env_variable": "DEFAULT_ADMIN_USERNAME",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|alpha_dash",
+            "field_type": "text"
+        },
+        {
+            "name": "SMTP Host",
+            "description": "SMTP-Server für E-Mail-Benachrichtigungen (optional)",
+            "env_variable": "SMTP_HOST",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "SMTP Port",
+            "description": "SMTP-Port (Standard: 587 für TLS, 465 für SSL)",
+            "env_variable": "SMTP_PORT",
+            "default_value": "587",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "SMTP User",
+            "description": "SMTP-Benutzername für Authentifizierung",
+            "env_variable": "SMTP_USER",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "SMTP Password",
+            "description": "SMTP-Passwort für Authentifizierung",
+            "env_variable": "SMTP_PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "SMTP From",
+            "description": "Absender-Adresse für E-Mails (Format: \"Name\" <email@example.com>)",
+            "env_variable": "SMTP_FROM",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "SMTP Secure",
+            "description": "SMTP-Verbindung verschlüsseln (true für SSL, false für STARTTLS)",
+            "env_variable": "SMTP_SECURE",
+            "default_value": "false",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        }
+    ]
+}
