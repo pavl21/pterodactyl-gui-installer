@@ -243,8 +243,19 @@ cmd_update_scripts() {
     echo -e "${BLUE}Aktualisiere Scripte...${NC}"
     echo ""
 
+    # Branch-Erkennung
+    # Für Updates: Default ist main (stable)
+    # Kann mit GITHUB_BRANCH=branch gds update-scripts überschrieben werden
+    BRANCH="${GITHUB_BRANCH:-main}"
+
+    # Zeige Info über verwendeten Branch
+    if [ "$BRANCH" != "main" ]; then
+        echo -e "${YELLOW}INFO: Aktualisiere von Branch: ${BRANCH}${NC}"
+        echo ""
+    fi
+
     # GitHub Repository Basis-URL
-    REPO_URL="https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main"
+    REPO_URL="https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${BRANCH}"
 
     # Liste aller zu aktualisierenden Scripte
     SCRIPTS=(

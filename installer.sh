@@ -1088,12 +1088,26 @@ monitor_progress() {
 clear
 echo "Installation wird vorbereitet..."
 
-# Lade die eigenständige Installationsfunktion
-source <(curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/claude/review-script-parts-011CUxB2vXFZC4SE3gdGGWt1/standalone-panel-installer.sh)
+# Branch-Erkennung für standalone-panel-installer.sh
+INSTALL_BRANCH="${GITHUB_BRANCH:-main}"
 
-# Fallback: Lokale Datei verwenden, falls GitHub nicht erreichbar
-if [ $? -ne 0 ] && [ -f "$(dirname "$0")/standalone-panel-installer.sh" ]; then
+# Versuche Branch aus git zu erkennen (falls wir in einem git repo sind)
+if [ -z "$GITHUB_BRANCH" ] && [ -d "$(dirname "$0")/.git" ]; then
+    GIT_BRANCH=$(cd "$(dirname "$0")" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ -n "$GIT_BRANCH" ] && [ "$GIT_BRANCH" != "HEAD" ]; then
+        INSTALL_BRANCH="$GIT_BRANCH"
+    fi
+fi
+
+# Lade die eigenständige Installationsfunktion
+# Fallback 1: Lokale Datei (bevorzugt)
+if [ -f "/opt/pterodactyl/standalone-panel-installer.sh" ]; then
+    source /opt/pterodactyl/standalone-panel-installer.sh
+elif [ -f "$(dirname "$0")/standalone-panel-installer.sh" ]; then
     source "$(dirname "$0")/standalone-panel-installer.sh"
+else
+    # Fallback 2: Von GitHub mit erkanntem Branch
+    source <(curl -sSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${INSTALL_BRANCH}/standalone-panel-installer.sh")
 fi
 
 # Installationsfunktion aufrufen

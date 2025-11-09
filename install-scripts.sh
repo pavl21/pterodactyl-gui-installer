@@ -20,8 +20,22 @@ install_all_scripts() {
     # Erstelle Verzeichnis
     mkdir -p /opt/pterodactyl
 
-    # GitHub Repository Basis-URL
-    REPO_URL="https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main"
+    # Branch-Erkennung
+    # 1. Priorität: Umgebungsvariable GITHUB_BRANCH
+    # 2. Priorität: Auto-Detection aus git (falls verfügbar)
+    # 3. Fallback: main
+    BRANCH="${GITHUB_BRANCH:-main}"
+
+    # Versuche Branch aus git zu erkennen (falls wir in einem git repo sind)
+    if [ -z "$GITHUB_BRANCH" ] && [ -d "$(dirname "${BASH_SOURCE[0]}")/.git" ]; then
+        GIT_BRANCH=$(cd "$(dirname "${BASH_SOURCE[0]}")" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
+        if [ -n "$GIT_BRANCH" ] && [ "$GIT_BRANCH" != "HEAD" ]; then
+            BRANCH="$GIT_BRANCH"
+        fi
+    fi
+
+    # GitHub Repository Basis-URL mit erkanntem Branch
+    REPO_URL="https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${BRANCH}"
 
     # Script-Verzeichnis (falls lokal verfügbar)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
