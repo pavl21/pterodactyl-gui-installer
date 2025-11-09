@@ -271,6 +271,36 @@ Dieses Projekt ist **inoffiziell** und wird nicht vom Pterodactyl-Team unterstü
 
 ---
 
+## 🌟 Mehr Features gewünscht?
+
+**Du möchtest dich nicht selbst um das Panel kümmern und noch mehr Features haben?**
+
+Dann könnte mein eigenes Projekt **PVQ-Panel** für dich interessant sein:
+
+<div align="center">
+
+### 🎮 PVQ-Panel
+
+**Professionelle Game-Server-Verwaltung mit erweiterten Features**
+
+✨ **Kostenlos nutzbar** • 💝 **Spendenfinanziert**
+
+[**➡️ Mehr erfahren auf pavl21.de**](https://pavl21.de)
+
+</div>
+
+Das PVQ-Panel bietet dir:
+- 🎯 **Mehr Features** als Standard-Pterodactyl
+- 🛠️ **Fertig konfiguriert** - keine aufwendige Wartung
+- 🔄 **Automatische Updates** und Patches
+- 💡 **Erweiterte Verwaltungsfunktionen**
+- 🎨 **Optimierte Benutzeroberfläche**
+- 🆓 **Komplett kostenlos** - finanziert durch Spenden
+
+Wenn du lieber eine **schlüsselfertige Lösung** haben möchtest, statt das Panel selbst zu hosten und zu verwalten, ist PVQ-Panel die perfekte Alternative!
+
+---
+
 <div align="center">
 
 **Made with ❤️ for the German Pterodactyl Community**
