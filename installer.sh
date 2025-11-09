@@ -1042,7 +1042,15 @@ fi
 # Installationsfunktion aufrufen
 install_pterodactyl_standalone "$panel_domain" "$admin_email" "$user_password" "$database_password"
 
-# Frage nach GermanDactyl Installation
+# Frage nach Blueprint Installation (ZUERST Blueprint, DANN GermanDactyl!)
+if whiptail --title "Blueprint Installation" --yesno "Möchtest du Blueprint installieren?\n\nBlueprint ist ein Extension Manager für Pterodactyl, der es ermöglicht:\n\n✅ Themes einfach zu installieren\n✅ Addons/Plugins mit einem Klick hinzuzufügen\n✅ Gekaufte Extensions benutzerfreundlich zu verwalten\n✅ Anpassungen ohne manuelle Code-Änderungen\n\nBlueprint macht die Installation von gekauften Themes oder Addons deutlich einfacher!\n\nMöchtest du Blueprint jetzt installieren?" 20 80; then
+    install_blueprint
+    BLUEPRINT_INSTALLED=true
+else
+    BLUEPRINT_INSTALLED=false
+fi
+
+# Frage nach GermanDactyl Installation (NACH Blueprint!)
 if whiptail --title "GermanDactyl Installation" --yesno "Möchtest du GermanDactyl installieren?\n\nGermanDactyl ist eine deutsche Übersetzung des Pterodactyl Panels mit zusätzlichen Anpassungen.\n\nVorteile:\n✅ Vollständig auf Deutsch\n✅ Benutzerfreundlicher für deutsche Nutzer\n✅ Regelmäßige Updates\n\nMöchtest du GermanDactyl jetzt installieren?" 18 75; then
     echo "GermanDactyl wird installiert..."
     cd /var/www/pterodactyl
@@ -1050,14 +1058,6 @@ if whiptail --title "GermanDactyl Installation" --yesno "Möchtest du GermanDact
     GERMANDACTYL_INSTALLED=true
 else
     GERMANDACTYL_INSTALLED=false
-fi
-
-# Frage nach Blueprint Installation
-if whiptail --title "Blueprint Installation" --yesno "Möchtest du Blueprint installieren?\n\nBlueprint ist ein Extension Manager für Pterodactyl, der es ermöglicht:\n\n✅ Themes einfach zu installieren\n✅ Addons/Plugins mit einem Klick hinzuzufügen\n✅ Gekaufte Extensions benutzerfreundlich zu verwalten\n✅ Anpassungen ohne manuelle Code-Änderungen\n\nBlueprint macht die Installation von gekauften Themes oder Addons deutlich einfacher!\n\nMöchtest du Blueprint jetzt installieren?" 20 80; then
-    install_blueprint
-    BLUEPRINT_INSTALLED=true
-else
-    BLUEPRINT_INSTALLED=false
 fi
 
 # Benutzer neu anlegen mit korrekten Daten
