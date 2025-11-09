@@ -67,7 +67,8 @@ clear
 whiptail --title "🎉 Database Host angelegt" --msgbox "Der Database Host wurde erfolgreich erstellt und steht nun zur Einrichtung zur Verfügung. Navigiere nun in deinem Admin Panel auf das Menü namens 'Alle Datenbanken'. Klicke auf Erstellen, wenn du soweit bist, bestätige es DANN ERST mit ENTER. Dir werden dann einmalig die angelegten Zugangsdaten angezeigt, die hinzugefügt werden können." 20 78
 
 # Zugangsdaten des Database Host
-whiptail --title "🔐 Zugangsdaten des Database Host" --msgbox "Hier sind die Zugangsdaten des MySQL Host, sobald es erfolgreich erstellt wurde brauchst du die Daten nicht mehr.\n\nName: (Darfst du selbst benennen)\nHost: ${IP_ADDRESS}\nPort: 3306\nBenutzername: ${USERNAME}\nPasswort: (wird nach Bestätigung extra gezeigt)\n\nUnter Linked Node musst du nichts verändern.\nDrücke Enter, um das Passwort zu sehen." 20 78
+clear
+whiptail --title "🔐 Zugangsdaten des Database Host" --msgbox "Hier sind die Zugangsdaten des MySQL Host:\n\nName: (Darfst du selbst benennen)\nHost: ${IP_ADDRESS}\nPort: 3306\nBenutzername: ${USERNAME}\n\n⚠️  WICHTIG: Das Passwort wird im nächsten Schritt in der Konsole angezeigt!\n\nUnter 'Linked Node' musst du nichts verändern.\n\nDrücke ENTER um fortzufahren und das Passwort zu sehen." 20 78
 
 # Passwort in der Konsole ausgeben
 clear

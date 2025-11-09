@@ -131,12 +131,16 @@ install_wings() {
     exit 0
 }
 
-# Pelican Panel + Wings installieren
+# Pelican Panel + Wings installieren (EINGESTELLT)
 install_pelican() {
-    clear
-    echo "Weiterleitung zu PP + W..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/pelican-installer.sh | bash
+    whiptail --title "⚠️  Feature eingestellt" --msgbox "Die Pelican Panel Installation wurde eingestellt.\n\nDieses Script konzentriert sich ausschließlich auf Pterodactyl Panel.\n\nPelican Panel ist ein Fork von Pterodactyl und wird von diesem Script nicht mehr unterstützt.\n\nBitte verwende stattdessen:\n• Option 1: Panel + Wings installieren (Pterodactyl)\n• Option 2: Nur Panel installieren (Pterodactyl)\n\nFür Pelican Panel nutze bitte die offizielle Pelican Dokumentation." 18 75
     exit 0
+
+    # Original-Code auskommentiert:
+    # clear
+    # echo "Weiterleitung zu PP + W..."
+    # curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/pelican-installer.sh | bash
+    # exit 0
 }
 
 # Blueprint Installation
