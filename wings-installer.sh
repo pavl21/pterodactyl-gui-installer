@@ -418,6 +418,9 @@ main() {
         whiptail --title "✅ Wings installiert" --msgbox "Wings wurde erfolgreich installiert!\n\nDa du Wings standalone installiert hast, sollte die Node im Panel jetzt als AKTIV angezeigt werden (grünes schlagendes Herz).\n\nFalls nicht, überprüfe:\n• Ist die config.yml korrekt?\n• Läuft Wings? (systemctl status wings)\n• Sind die Firewall-Ports offen?" 16 75
         swap_question
     fi
+
+    # Spenden-Info
+    whiptail --title "💝 Projekt unterstützen" --msgbox "Wenn dir dieses Projekt weitergeholfen hat und du es unterstützen möchtest, würde ich mich über eine Spende freuen!\n\n🔗 Spenden-Link:\nhttps://spenden.24fire.de/pavl\n\nVielen Dank für deine Unterstützung!\n\n- GermanDactyl Setup Team" 16 78
 }
 
 # Starte Hauptinstallation

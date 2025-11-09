@@ -512,6 +512,28 @@ EOFFALLBACK
         show_progress 98 "✅ Installation wird finalisiert..."
         log "Installation abgeschlossen"
 
+        # GDS Management Commands installieren
+        show_progress 99 "📦 Management-Tools werden installiert..."
+        log "Installiere GDS Commands"
+
+        # GDS Command Script herunterladen und installieren
+        curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/gds-command.sh -o /usr/local/bin/gds 2>> "$LOG_FILE"
+        if [ $? -ne 0 ]; then
+            # Fallback: Lokale Kopie verwenden falls vorhanden
+            SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            if [ -f "$SCRIPT_DIR/gds-command.sh" ]; then
+                cp "$SCRIPT_DIR/gds-command.sh" /usr/local/bin/gds
+            fi
+        fi
+        chmod +x /usr/local/bin/gds 2>> "$LOG_FILE"
+
+        # Backup-Verwaltung installieren
+        if [ -f "$SCRIPT_DIR/backup-verwaltung.sh" ]; then
+            mkdir -p /opt/pterodactyl
+            cp "$SCRIPT_DIR/backup-verwaltung.sh" /opt/pterodactyl/backup-verwaltung.sh
+            chmod +x /opt/pterodactyl/backup-verwaltung.sh
+        fi
+
         sleep 1
         show_progress 100 "🎉 Installation erfolgreich abgeschlossen!"
         sleep 2
@@ -522,6 +544,12 @@ EOFFALLBACK
 
     # Erfolgsmeldung
     whiptail --title "✅ Installation erfolgreich" --msgbox "Pterodactyl Panel wurde erfolgreich installiert!\n\n🌐 Domain: https://${panel_domain}\n👤 Benutzer: admin\n📧 E-Mail: ${admin_email}\n🔑 Passwort: ${user_password}\n\n📋 Log-Datei: ${LOG_FILE}" 16 80
+
+    # Info über Management Commands
+    whiptail --title "🎯 GDS Management Commands installiert" --msgbox "Es stehen dir jetzt praktische Verwaltungsbefehle zur Verfügung!\n\nVerfügbare Befehle:\n\n• gds setup       - Wartungs- und Verwaltungsmenü\n• gds maintenance - Wartungsmodus aktivieren/deaktivieren\n• gds backup      - Backup-Verwaltung\n• gds domain      - Panel-Domain anzeigen\n• gds cert        - SSL-Zertifikat-Status\n• gds update      - Panel aktualisieren\n• gds status      - Dienste-Status anzeigen\n• gds user        - Benutzer erstellen\n\nUnd weitere! Verwende 'gds help' für die vollständige Liste." 24 78
+
+    # Spenden-Info
+    whiptail --title "💝 Projekt unterstützen" --msgbox "Wenn dir dieses Projekt weitergeholfen hat und du es unterstützen möchtest, würde ich mich über eine Spende freuen!\n\n🔗 Spenden-Link:\nhttps://spenden.24fire.de/pavl\n\nVielen Dank für deine Unterstützung!\n\n- GermanDactyl Setup Team" 16 78
 }
 
 # Export der Funktion für Verwendung in anderen Scripts
