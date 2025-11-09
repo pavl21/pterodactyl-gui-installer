@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
 # Log-Datei für Theme-Installation
 THEME_LOG="/opt/pterodactyl/theme-installation.log"
 
@@ -19,7 +22,7 @@ create_backup() {
         mkdir -p "$storage"
         log_theme "Backup-Verzeichnis nicht gefunden, leite zur Backup-Erstellung weiter"
 
-        whiptail --title "Backup erforderlich" --msgbox "Damit du keine unschönen Erfahrungen machen musst, empfehlen wir dir ein Backup vom aktuellen Panel zu machen. Die Themes sind von anderen Entwicklern auf Github, die du auf unserer Website nachlesen kannst. Es ist nie ausgeschlossen, dass Fehler passieren. Man sagt ja immer: 'Kein Backup, kein Mitleid'.
+        whiptail_warning --title "Backup erforderlich" --msgbox "Damit du keine unschönen Erfahrungen machen musst, empfehlen wir dir ein Backup vom aktuellen Panel zu machen. Die Themes sind von anderen Entwicklern auf Github, die du auf unserer Website nachlesen kannst. Es ist nie ausgeschlossen, dass Fehler passieren. Man sagt ja immer: 'Kein Backup, kein Mitleid'.
 
 Wir leiten dich nun weiter zu unserer Backup-Verwaltung. Erstelle dort bitte ein Backup für dein Panel. Wenn du das gemacht hast, kannst du zur Theme-Auswahl zurückkehren." 20 80
 
@@ -73,7 +76,7 @@ color_selection() {
         3) apply_theme 3 ;;
         4) apply_theme 4 ;;
         5) apply_theme 5 ;;
-        *) whiptail --title "Fehler" --msgbox "Ungültige Auswahl. Bitte wähle eine gültige Farboption." 8 45 ;;
+        *) whiptail_error --title "Fehler" --msgbox "Ungültige Auswahl. Bitte wähle eine gültige Farboption." 8 45 ;;
     esac
 }
 
@@ -84,7 +87,7 @@ rollback_theme() {
     log_theme "FEHLER: Theme-Installation fehlgeschlagen, versuche Rollback"
 
     if [ ! -d "$storage" ]; then
-        whiptail --title "Rollback nicht möglich" --msgbox "FEHLER: Kein Backup gefunden!\n\nEin Rollback ist nicht möglich.\n\nBitte stelle das Panel manuell wieder her oder führe eine Neuinstallation durch." 12 65
+        whiptail_error --title "Rollback nicht möglich" --msgbox "FEHLER: Kein Backup gefunden!\n\nEin Rollback ist nicht möglich.\n\nBitte stelle das Panel manuell wieder her oder führe eine Neuinstallation durch." 12 65
         log_theme "FEHLER: Rollback fehlgeschlagen - kein Backup vorhanden"
         return 1
     fi
@@ -153,7 +156,7 @@ n" &> /tmp/theme_install.log
     # Überprüfe den Exit-Status
     if [ $EXIT_STATUS -eq 0 ]; then
         log_theme "Theme-Installation erfolgreich: $theme_name"
-        whiptail --title "Farbtheme Anwendung" --msgbox "Das Farbtheme wurde erfolgreich angewendet.\n\nTheme: $theme_name" 10 50
+        whiptail_success --title "Farbtheme Anwendung" --msgbox "Das Farbtheme wurde erfolgreich angewendet.\n\nTheme: $theme_name" 10 50
     else
         log_theme "FEHLER: Theme-Installation fehlgeschlagen: $theme_name (Exit-Code: $EXIT_STATUS)"
 
@@ -162,7 +165,7 @@ n" &> /tmp/theme_install.log
             log_theme "Theme-Fehlerlog: $(tail -n 5 /tmp/theme_install.log)"
         fi
 
-        if whiptail --title "Theme-Installation fehlgeschlagen" --yesno "FEHLER: Bei der Theme-Installation ist ein Fehler aufgetreten.\n\nTheme: $theme_name\n\nMöchtest du einen Rollback durchführen?" 12 65; then
+        if whiptail_error --title "Theme-Installation fehlgeschlagen" --yesno "FEHLER: Bei der Theme-Installation ist ein Fehler aufgetreten.\n\nTheme: $theme_name\n\nMöchtest du einen Rollback durchführen?" 12 65; then
             rollback_theme
         else
             log_theme "Benutzer hat Rollback nach Fehler abgelehnt"
@@ -177,7 +180,7 @@ n" &> /tmp/theme_install.log
 
 # Platzhalter für Themes-Installation
 install_themes() {
-    whiptail --msgbox "Platzhalter für Themes" 8 45
+    whiptail_info --msgbox "Platzhalter für Themes" 8 45
     manage_themes
 }
 
@@ -187,13 +190,13 @@ restore_backup() {
 
     # Überprüfen, ob das Backup-Verzeichnis existiert
     if [ ! -d "$storage" ]; then
-        whiptail --title "Problem" --msgbox "Es konnte kein Backup gefunden werden. Das Script kann somit den vorherigen Zustand nicht wiederherstellen." 10 60
-        whiptail --title "Weiterleitung" --msgbox "Bitte drücke 'OK', um zur Neuinstallation des Panels zu gelangen." 10 60
+        whiptail_error --title "Problem" --msgbox "Es konnte kein Backup gefunden werden. Das Script kann somit den vorherigen Zustand nicht wiederherstellen." 10 60
+        whiptail_info --title "Weiterleitung" --msgbox "Bitte drücke 'OK', um zur Neuinstallation des Panels zu gelangen." 10 60
         curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
         return
     fi
 
-    whiptail --title "Backup wiederherstellen" --msgbox "Um das Panel zu einem früheren Zustand wiederherzustellen, wirst du zur Backup-Verwaltung weitergeleitet. Wähle dort das Backup aus, das du wiederherstellen möchtest. Wenn du möchtest, kannst du danach ein anderes Theme ausprobieren." 10 80
+    whiptail_info --title "Backup wiederherstellen" --msgbox "Um das Panel zu einem früheren Zustand wiederherzustellen, wirst du zur Backup-Verwaltung weitergeleitet. Wähle dort das Backup aus, das du wiederherstellen möchtest. Wenn du möchtest, kannst du danach ein anderes Theme ausprobieren." 10 80
 
     # Skript ausführen
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash

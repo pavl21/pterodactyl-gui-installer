@@ -1,14 +1,12 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
 # GermanDactyl Setup - Hauptinstaller
 # Einstiegspunkt für Panel/Wings Installation und Verwaltung
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Whiptail-Farben laden
-if [ -f "$SCRIPT_DIR/whiptail-colors.sh" ]; then
-    source "$SCRIPT_DIR/whiptail-colors.sh"
-fi
 
 # System-Check durchführen (nur bei Neuinstallation)
 if [ ! -d "/var/www/pterodactyl" ]; then
@@ -255,7 +253,7 @@ EOFBLUEPRINT
 
     } | whiptail --title "Blueprint Installation" --gauge "Blueprint wird installiert..." 10 70 0
 
-    whiptail --title "✅ Blueprint installiert" --msgbox "Blueprint wurde erfolgreich installiert!\n\nDu kannst jetzt Extensions über das Blueprint-System installieren.\n\nNützliche Befehle:\n• blueprint -install <extension.blueprint>\n• blueprint -remove <extension>\n• blueprint -list\n\nLog-Datei: /tmp/blueprint_install.log" 18 75
+    whiptail_success --title "Blueprint installiert" --msgbox "Blueprint wurde erfolgreich installiert!\n\nDu kannst jetzt Extensions über das Blueprint-System installieren.\n\nNützliche Befehle:\n• blueprint -install <extension.blueprint>\n• blueprint -remove <extension>\n• blueprint -list\n\nLog-Datei: /tmp/blueprint_install.log" 18 75
 }
 
 
@@ -290,7 +288,7 @@ uninstall_pterodactyl() {
     : > "$log_file" # Leere die Log-Datei zu Beginn
 
     # Warnung vor der Deinstallation
-    if ! whiptail --title "⚠️  WARNUNG" --yesno "Du bist dabei, das Panel und die dazugehörigen Server zu löschen. Fortfahren?" 10 50; then
+    if ! whiptail_warning --title "WARNUNG" --yesno "Du bist dabei, das Panel und die dazugehörigen Server zu löschen. Fortfahren?" 10 50; then
         echo "Deinstallation abgebrochen."
         return
     fi
@@ -311,7 +309,7 @@ uninstall_pterodactyl() {
         if [ "$CONFIRMATION" = "Ich bestätige die komplette Löschung von Pterodactyl" ]; then
             break
         else
-            whiptail --title "❌  Falsche Eingabe" --msgbox "Falsche Bestätigung, versuche es erneut." 10 50
+            whiptail_error --title "Falsche Eingabe" --msgbox "Falsche Bestätigung, versuche es erneut." 10 50
         fi
     done
 
@@ -364,7 +362,7 @@ EOF
     } | whiptail --title "🗑️  Deinstallation" --gauge "Die Deinstallation wird durchgeführt..." 6 50 0
 
     # Abschlussmeldung
-    whiptail --title "✅  Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde erfolgreich entfernt. Der Webserver nginx bleibt aktiv, damit andere Dienste weiterhin online bleiben können." 10 50
+    whiptail_success --title "Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde erfolgreich entfernt. Der Webserver nginx bleibt aktiv, damit andere Dienste weiterhin online bleiben können." 10 50
     clear
 }
 
@@ -484,7 +482,7 @@ list_blueprint_extensions() {
         extensions_list=$(ls -1 .blueprint/extensions 2>/dev/null)
 
         if [ -z "$extensions_list" ]; then
-            whiptail --title "Keine Extensions" --msgbox "Es sind keine Blueprint-Extensions installiert." 10 60
+            whiptail_info --title "Keine Extensions" --msgbox "Es sind keine Blueprint-Extensions installiert." 10 60
         else
             # Extensions zählen und anzeigen
             ext_count=$(echo "$extensions_list" | wc -l)
@@ -494,10 +492,10 @@ list_blueprint_extensions() {
                 ext_display="${ext_display}📦 $ext\n"
             done <<< "$extensions_list"
 
-            whiptail --title "Installierte Extensions" --msgbox "$ext_display" 20 70
+            whiptail_info --title "Installierte Extensions" --msgbox "$ext_display" 20 70
         fi
     else
-        whiptail --title "Keine Extensions" --msgbox "Das Extensions-Verzeichnis wurde nicht gefunden.\n\nMöglicherweise ist Blueprint nicht korrekt installiert." 10 60
+        whiptail_error --title "Keine Extensions" --msgbox "Das Extensions-Verzeichnis wurde nicht gefunden.\n\nMöglicherweise ist Blueprint nicht korrekt installiert." 10 60
     fi
 }
 
@@ -510,7 +508,7 @@ install_blueprint_extension() {
     fi
 
     if [ ! -f "$EXT_PATH" ]; then
-        whiptail --title "Datei nicht gefunden" --msgbox "Die Datei '$EXT_PATH' wurde nicht gefunden.\n\nBitte prüfe den Pfad und versuche es erneut." 10 70
+        whiptail_error --title "Datei nicht gefunden" --msgbox "Die Datei '$EXT_PATH' wurde nicht gefunden.\n\nBitte prüfe den Pfad und versuche es erneut." 10 70
         return
     fi
 
@@ -521,9 +519,9 @@ install_blueprint_extension() {
     bash blueprint.sh -install "$EXT_PATH" 2>&1 | tee /tmp/blueprint_install_ext.log
 
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
-        whiptail --title "✅ Extension installiert" --msgbox "Die Extension wurde erfolgreich installiert!\n\nLog: /tmp/blueprint_install_ext.log" 10 60
+        whiptail_success --title "Extension installiert" --msgbox "Die Extension wurde erfolgreich installiert!\n\nLog: /tmp/blueprint_install_ext.log" 10 60
     else
-        whiptail --title "❌ Fehler" --msgbox "Bei der Installation ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_install_ext.log" 10 70
+        whiptail_error --title "Fehler" --msgbox "Bei der Installation ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_install_ext.log" 10 70
     fi
 }
 
@@ -531,7 +529,7 @@ install_blueprint_extension() {
 remove_blueprint_extension() {
     # Liste der installierten Extensions holen
     if [ ! -d "/var/www/pterodactyl/.blueprint/extensions" ]; then
-        whiptail --title "Keine Extensions" --msgbox "Keine Extensions gefunden." 10 60
+        whiptail_info --title "Keine Extensions" --msgbox "Keine Extensions gefunden." 10 60
         return
     fi
 
@@ -539,7 +537,7 @@ remove_blueprint_extension() {
     extensions=$(ls -1 2>/dev/null)
 
     if [ -z "$extensions" ]; then
-        whiptail --title "Keine Extensions" --msgbox "Es sind keine Extensions installiert." 10 60
+        whiptail_info --title "Keine Extensions" --msgbox "Es sind keine Extensions installiert." 10 60
         return
     fi
 
@@ -568,9 +566,9 @@ remove_blueprint_extension() {
         bash blueprint.sh -remove "$EXT_NAME" 2>&1 | tee /tmp/blueprint_remove_ext.log
 
         if [ ${PIPESTATUS[0]} -eq 0 ]; then
-            whiptail --title "✅ Extension entfernt" --msgbox "Die Extension '$EXT_NAME' wurde erfolgreich entfernt!\n\nLog: /tmp/blueprint_remove_ext.log" 10 70
+            whiptail_success --title "Extension entfernt" --msgbox "Die Extension '$EXT_NAME' wurde erfolgreich entfernt!\n\nLog: /tmp/blueprint_remove_ext.log" 10 70
         else
-            whiptail --title "❌ Fehler" --msgbox "Beim Entfernen ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_remove_ext.log" 10 70
+            whiptail_error --title "Fehler" --msgbox "Beim Entfernen ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_remove_ext.log" 10 70
         fi
     fi
 }
@@ -585,9 +583,9 @@ upgrade_blueprint() {
         bash blueprint.sh -upgrade 2>&1 | tee /tmp/blueprint_upgrade.log
 
         if [ ${PIPESTATUS[0]} -eq 0 ]; then
-            whiptail --title "✅ Blueprint aktualisiert" --msgbox "Blueprint wurde erfolgreich aktualisiert!\n\nLog: /tmp/blueprint_upgrade.log" 10 70
+            whiptail_success --title "Blueprint aktualisiert" --msgbox "Blueprint wurde erfolgreich aktualisiert!\n\nLog: /tmp/blueprint_upgrade.log" 10 70
         else
-            whiptail --title "❌ Fehler" --msgbox "Beim Update ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_upgrade.log" 10 70
+            whiptail_error --title "Fehler" --msgbox "Beim Update ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_upgrade.log" 10 70
         fi
     fi
 }
@@ -612,7 +610,7 @@ show_blueprint_info() {
     INFO_TEXT="${INFO_TEXT}• blueprint -list\n"
     INFO_TEXT="${INFO_TEXT}• blueprint -upgrade"
 
-    whiptail --title "Blueprint Information" --msgbox "$INFO_TEXT" 20 75
+    whiptail_info --title "Blueprint Information" --msgbox "$INFO_TEXT" 20 75
 }
 
 
@@ -889,7 +887,7 @@ while true; do
     if [[ $panel_domain =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
         break
     else
-        whiptail --title "Domain ist ungültig" --msgbox "Bitte gib eine gültige Domain ein und prüfe auf Schreibfehler." 10 50
+        whiptail_error --title "Domain ist ungültig" --msgbox "Bitte gib eine gültige Domain ein und prüfe auf Schreibfehler." 10 50
     fi
 done
 
@@ -901,9 +899,9 @@ dns_ip=$(dig +short $panel_domain)
 
 # Überprüfung, ob die Domain korrekt verknüpft ist
 if [ "$dns_ip" == "$server_ip" ]; then
-    whiptail --title "Domain-Überprüfung" --msgbox "✅ Die Domain $panel_domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft. Die Installation wird fortgesetzt." 8 78
+    whiptail_success --title "Domain-Überprüfung" --msgbox "Die Domain $panel_domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft. Die Installation wird fortgesetzt." 8 78
 else
-    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 15 80
+    whiptail_error --title "Domain-Überprüfung" --msgbox "Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 15 80
     exit 1
 fi
 
@@ -932,7 +930,7 @@ while true; do
     if validate_email "$admin_email"; then
         break
     else
-        whiptail --title "E-Mail Adresse ungültig" --msgbox  "Prüfe bitte die E-Mail und versuche es erneut." 10 50
+        whiptail_error --title "E-Mail Adresse ungültig" --msgbox  "Prüfe bitte die E-Mail und versuche es erneut." 10 50
     fi
 done
 
@@ -1121,7 +1119,7 @@ show_access_data() {
 
 # Info: Installation abgeschlossen
 clear
-whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 22 80
+whiptail_success --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 22 80
 
 # Hauptlogik für die Zugangsdaten und die Entscheidung zur Installation von Wings
 while true; do
@@ -1141,7 +1139,7 @@ while true; do
                 fi
             else
                 # Nur Panel installiert - kein Wings
-                whiptail --title "✅ Installation abgeschlossen" --msgbox "Das Panel wurde erfolgreich installiert!\n\nDu kannst dich jetzt einloggen.\n\nHinweis: Um Server zu erstellen, musst du noch Wings installieren. Das kannst du später über die Wartung/Verwaltung machen." 14 75
+                whiptail_success --title "Installation abgeschlossen" --msgbox "Das Panel wurde erfolgreich installiert!\n\nDu kannst dich jetzt einloggen.\n\nHinweis: Um Server zu erstellen, musst du noch Wings installieren. Das kannst du später über die Wartung/Verwaltung machen." 14 75
                 exit 0
             fi
         else

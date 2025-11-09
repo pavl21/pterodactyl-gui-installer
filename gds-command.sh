@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
 # GermanDactyl Setup - Management Commands
 # Dieser Script bietet einfache Befehle zur Verwaltung des Pterodactyl Panels
 
@@ -66,18 +69,18 @@ cmd_maintenance() {
         cd "$PANEL_DIR" || exit 1
         php artisan down
         if [ $? -eq 0 ]; then
-            whiptail --title "Erfolgreich" --msgbox "Wartungsmodus wurde aktiviert.\n\nDas Panel ist nun für Besucher nicht erreichbar." 10 60
+            whiptail_success --title "Erfolgreich" --msgbox "Wartungsmodus wurde aktiviert.\n\nDas Panel ist nun für Besucher nicht erreichbar." 10 60
         else
-            whiptail --title "Fehler" --msgbox "Fehler beim Aktivieren des Wartungsmodus." 8 60
+            whiptail_error --title "Fehler" --msgbox "Fehler beim Aktivieren des Wartungsmodus." 8 60
         fi
     else
         # Deaktivieren
         cd "$PANEL_DIR" || exit 1
         php artisan up
         if [ $? -eq 0 ]; then
-            whiptail --title "Erfolgreich" --msgbox "Wartungsmodus wurde deaktiviert.\n\nDas Panel ist wieder erreichbar." 10 60
+            whiptail_success --title "Erfolgreich" --msgbox "Wartungsmodus wurde deaktiviert.\n\nDas Panel ist wieder erreichbar." 10 60
         else
-            whiptail --title "Fehler" --msgbox "Fehler beim Deaktivieren des Wartungsmodus." 8 60
+            whiptail_error --title "Fehler" --msgbox "Fehler beim Deaktivieren des Wartungsmodus." 8 60
         fi
     fi
 }
@@ -245,6 +248,8 @@ cmd_update_scripts() {
 
     # Liste aller zu aktualisierenden Scripte
     SCRIPTS=(
+        "installer.sh"
+        "gds-command.sh"
         "backup-verwaltung.sh"
         "database-host-config.sh"
         "phpmyadmin-installer.sh"
@@ -295,6 +300,17 @@ cmd_update_scripts() {
         fi
     done
 
+    # gds-command selbst aktualisieren (falls erfolgreich heruntergeladen)
+    if [ -f "/opt/pterodactyl/gds-command.sh" ]; then
+        echo -n "  Aktualisiere gds-Befehl... "
+        if cp "/opt/pterodactyl/gds-command.sh" /usr/local/bin/gds 2>/dev/null; then
+            chmod +x /usr/local/bin/gds
+            echo -e "${GREEN}OK${NC}"
+        else
+            echo -e "${YELLOW}WARNUNG${NC}"
+        fi
+    fi
+
     echo ""
     echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║${NC}  ${GREEN}Update abgeschlossen${NC}                                   ${BLUE}║${NC}"
@@ -307,6 +323,8 @@ cmd_update_scripts() {
     if [ $FAIL_COUNT -gt 0 ]; then
         echo -e "${YELLOW}Hinweis: Bei Fehlern wurden die alten Versionen beibehalten.${NC}"
     fi
+
+    echo -e "${BLUE}WICHTIG:${NC} Wenn gds-command.sh aktualisiert wurde, starte das Script neu um die Änderungen zu nutzen."
 }
 
 # Cache leeren
@@ -478,9 +496,9 @@ cmd_user() {
         --admin="$ADMIN"
 
     if [ $? -eq 0 ]; then
-        whiptail --title "Erfolgreich" --msgbox "Benutzer wurde erfolgreich erstellt!\n\nE-Mail: $EMAIL\nBenutzername: $USERNAME\nAdmin: $([ $ADMIN -eq 1 ] && echo 'Ja' || echo 'Nein')" 12 60
+        whiptail_success --title "Erfolgreich" --msgbox "Benutzer wurde erfolgreich erstellt!\n\nE-Mail: $EMAIL\nBenutzername: $USERNAME\nAdmin: $([ $ADMIN -eq 1 ] && echo 'Ja' || echo 'Nein')" 12 60
     else
-        whiptail --title "Fehler" --msgbox "Fehler beim Erstellen des Benutzers." 8 60
+        whiptail_error --title "Fehler" --msgbox "Fehler beim Erstellen des Benutzers." 8 60
     fi
 }
 

@@ -638,22 +638,14 @@ EOFFALLBACK
         show_progress 99 "📦 Management-Tools werden installiert..."
         log "Installiere GDS Commands"
 
-        # GDS Command Script herunterladen und installieren
-        curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/gds-command.sh -o /usr/local/bin/gds 2>> "$LOG_FILE"
-        if [ $? -ne 0 ]; then
-            # Fallback: Lokale Kopie verwenden falls vorhanden
-            SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-            if [ -f "$SCRIPT_DIR/gds-command.sh" ]; then
-                cp "$SCRIPT_DIR/gds-command.sh" /usr/local/bin/gds
-            fi
-        fi
-        chmod +x /usr/local/bin/gds 2>> "$LOG_FILE"
-
         # Alle Verwaltungs-Scripte nach /opt/pterodactyl/ kopieren
         mkdir -p /opt/pterodactyl
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
         # Liste aller zu kopierenden Scripte
         SCRIPTS_TO_INSTALL=(
+            "installer.sh"
+            "gds-command.sh"
             "backup-verwaltung.sh"
             "database-host-config.sh"
             "phpmyadmin-installer.sh"
@@ -689,8 +681,21 @@ EOFFALLBACK
             fi
         done
 
+        # gds-command.sh als 'gds' Befehl verfügbar machen
+        if [ -f "/opt/pterodactyl/gds-command.sh" ]; then
+            cp "/opt/pterodactyl/gds-command.sh" /usr/local/bin/gds
+            chmod +x /usr/local/bin/gds
+            log "GDS command installed as 'gds'"
+        fi
+
+        # installer.sh als 'pterodactyl-installer' verfügbar machen (optional)
+        if [ -f "/opt/pterodactyl/installer.sh" ]; then
+            chmod +x /opt/pterodactyl/installer.sh
+            log "Installer available at /opt/pterodactyl/installer.sh"
+        fi
+
         sleep 1
-        show_progress 100 "🎉 Installation erfolgreich abgeschlossen!"
+        show_progress 100 "Installation erfolgreich abgeschlossen!"
         sleep 2
 
     } | whiptail --title "Pterodactyl Panel Installation" --gauge "Bitte warten..." 10 80 0 3>&1 1>&2 2>&3
