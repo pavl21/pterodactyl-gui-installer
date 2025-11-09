@@ -77,10 +77,17 @@ echo ""
 echo "PASSWORT FREIGEGEBEN - - - - - - - - - - - - - - -"
 echo -e "\nPasswort zum Kopieren:"
 echo -e "$PASSWORD\n" | /usr/games/lolcat
-echo "Sobald du es kopiert und eingefügt hast, drücke bitte ERST DANN die Taste 'ENTER'."
+echo "Sobald du es kopiert und eingefügt hast, schreibe 'Gespeichert' und drücke ENTER."
 echo ""
-echo "-> Warte auf Eingabe der Taste Enter..."
-read -r  # Warten auf Eingabe des Benutzers
+while true; do
+    echo -n "-> Bestätigung: "
+    read -r confirmation
+    if [ "$confirmation" = "Gespeichert" ]; then
+        break
+    else
+        echo "❌ Bitte schreibe genau 'Gespeichert' (Groß-/Kleinschreibung beachten)"
+    fi
+done
 
 # Marker für das Ende dieses Skriptteils
 echo -e "\n### Passwortgenerierung und Anzeige abgeschlossen ###\n"
