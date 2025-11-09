@@ -173,13 +173,13 @@ restore_backup_server() {
 
 restore_backup() {
     local storage=$1
-    ensure_backup_storage_exists $storage
+    ensure_backup_storage_exists "$storage"
 
-    # Erstelle eine Liste von Backup-Dateien aus dem spezifizierten Verzeichnis
-    backups=($(ls $storage | grep 'Backup_.*_Uhr.tar.gz'))
+    # Backup-Dateien sicher mit find auflisten (kein ls Parsing!)
+    mapfile -t backups < <(find "$storage" -maxdepth 1 -name 'Backup_*_Uhr.tar.gz' -type f -printf '%f\n' | sort)
 
     if [ ${#backups[@]} -eq 0 ]; then
-        whiptail --title "Fehler" --msgbox "Keine Backups gefunden im Verzeichnis: $storage" 8 78
+        whiptail --title "Fehler" --msgbox "Keine Backups gefunden im Verzeichnis:\n$storage" 9 78
         return
     fi
 
@@ -279,25 +279,26 @@ set_backup_location() {
 }
 
 
-# Backup-Zeitpläne - WURDE ERSTMAL AUSSORTIERT, FUNKTIONIERT NICHT.
+# Backup-Rotation - Löscht alte Backups wenn Limit überschritten
 manage_backup_rotation() {
     local storage=$1
     local max_backups=$2
 
-    # Erstelle eine Liste der Backups, sortiert nach Erstellungsdatum (älteste zuerst)
-    backup_files=($(ls -t $storage/Backup_*.tar.gz))
-
-    # Überprüfe, ob $max_backups ein gültiger numerischer Wert ist
+    # Validierung: max_backups muss numerisch sein
     if [[ ! "$max_backups" =~ ^[0-9]+$ ]]; then
         echo "Ungültiger Wert für max_backups: $max_backups"
         return 1
     fi
 
+    # Backups mit find auflisten, nach Änderungszeit sortiert (älteste zuerst)
+    mapfile -t backup_files < <(find "$storage" -maxdepth 1 -name 'Backup_*.tar.gz' -type f -printf '%T+ %p\n' | sort | cut -d' ' -f2-)
+
     # Überprüfe, ob die Anzahl der Backups größer als das Maximum ist
-    while [ ${#backup_files[@]} -gt $max_backups ]; do
-        oldest_backup=${backup_files[-1]}
+    while [ ${#backup_files[@]} -gt "$max_backups" ]; do
+        oldest_backup="${backup_files[0]}"
         rm -f "$oldest_backup"
-        backup_files=("${backup_files[@]:0:${#backup_files[@]}-1}")
+        # Array neu aufbauen ohne das erste Element
+        backup_files=("${backup_files[@]:1}")
     done
 }
 

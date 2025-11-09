@@ -40,25 +40,60 @@ echo "Passwort wurde generiert: $PASSWORD"
 sleep 0.5
 
 echo "### Benutzernamengenerierung gestartet ###"
-USERNAME=$(curl -s 'https://randomuser.me/api/?nat=de' | jq -r '.results[0].name.first + .results[0].name.last' | tr -d 'äöü')
+# API-Call mit Error-Handling
+if ! USERNAME=$(curl -sf 'https://randomuser.me/api/?nat=de' | jq -r '.results[0].name.first + .results[0].name.last' 2>/dev/null | tr -d 'äöü'); then
+    # Fallback: Einfacher zufälliger Name
+    USERNAME="dbhost$(date +%s)"
+    echo "Warnung: API nicht erreichbar, verwende Fallback-Namen"
+fi
+
+# Validierung: Username darf nicht leer sein
+if [ -z "$USERNAME" ]; then
+    USERNAME="dbhost$(date +%s)"
+fi
+
 echo "Benutzername generiert: $USERNAME"
 sleep 0.5
 
 echo "### Ermittlung der öffentlichen IP-Adresse ###"
-IP_ADDRESS=$(curl -s http://ipinfo.io/ip)
+# IP-Ermittlung mit Fallback
+if ! IP_ADDRESS=$(curl -sf http://ipinfo.io/ip 2>/dev/null); then
+    # Fallback: Lokale IP ermitteln
+    IP_ADDRESS=$(hostname -I | awk '{print $1}')
+    echo "Warnung: Öffentliche IP konnte nicht ermittelt werden, verwende lokale IP"
+fi
+
+# Validierung
+if [ -z "$IP_ADDRESS" ]; then
+    whiptail --title "❌ Fehler" --msgbox "IP-Adresse konnte nicht ermittelt werden.\n\nBitte prüfe deine Netzwerkverbindung." 10 60
+    exit 1
+fi
+
 echo "Öffentliche IP-Adresse: $IP_ADDRESS"
 sleep 0.5
 
 echo "### MySQL-Benutzer und Berechtigungen werden erstellt ###"
-sudo mysql -e "CREATE USER '${USERNAME}'@'${IP_ADDRESS}' IDENTIFIED BY '${PASSWORD}';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '${USERNAME}'@'${IP_ADDRESS}' WITH GRANT OPTION;"
-sudo mysql -e "FLUSH PRIVILEGES;"
+# MySQL-Befehle mit Error-Handling
+if ! sudo mysql -e "CREATE USER IF NOT EXISTS '${USERNAME}'@'${IP_ADDRESS}' IDENTIFIED BY '${PASSWORD}';" 2>/dev/null; then
+    whiptail --title "❌ MySQL-Fehler" --msgbox "Konnte MySQL-Benutzer nicht erstellen.\n\nBitte prüfe ob MySQL läuft." 10 60
+    exit 1
+fi
+
+sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '${USERNAME}'@'${IP_ADDRESS}' WITH GRANT OPTION;" 2>/dev/null
+sudo mysql -e "FLUSH PRIVILEGES;" 2>/dev/null
 echo "MySQL-Benutzer und Berechtigungen erstellt."
 sleep 0.5
 
 echo "### MySQL-Konfiguration wird angepasst und MySQL neu gestartet ###"
-echo -e "[mysqld]\nbind-address=0.0.0.0" | sudo tee -a /etc/mysql/my.cnf
-sudo systemctl restart mysql
+# Prüfen ob bind-address schon gesetzt ist (verhindert Duplikate)
+if ! grep -q "^bind-address=0.0.0.0" /etc/mysql/my.cnf 2>/dev/null; then
+    echo -e "[mysqld]\nbind-address=0.0.0.0" | sudo tee -a /etc/mysql/my.cnf >/dev/null
+fi
+
+if ! sudo systemctl restart mysql; then
+    whiptail --title "⚠️  Warnung" --msgbox "MySQL konnte nicht neu gestartet werden.\n\nBitte starte MySQL manuell neu:\nsudo systemctl restart mysql" 12 65
+fi
+
 echo "MySQL-Konfiguration angepasst und MySQL neu gestartet."
 sleep 0.5
 

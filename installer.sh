@@ -1,9 +1,23 @@
 #!/bin/bash
 
-# Überprüfen, ob das System apt als Paketmanager verwendet
-if ! command -v apt-get &> /dev/null; then
-    echo "Abbruch: Für dein System ist dieses Script nicht vorgesehen. Derzeit wird nur Ubuntu, Debian und ähnliche Systeme unterstützt."
-    exit 1
+# GermanDactyl Setup - Hauptinstaller
+# Einstiegspunkt für Panel/Wings Installation und Verwaltung
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Whiptail-Farben laden
+if [ -f "$SCRIPT_DIR/whiptail-colors.sh" ]; then
+    source "$SCRIPT_DIR/whiptail-colors.sh"
+fi
+
+# System-Check durchführen (nur bei Neuinstallation)
+if [ ! -d "/var/www/pterodactyl" ]; then
+    if [ -f "$SCRIPT_DIR/system-check.sh" ]; then
+        bash "$SCRIPT_DIR/system-check.sh"
+        if [ $? -ne 0 ]; then
+            exit 1
+        fi
+    fi
 fi
 
 # BEGINN VON Vorbereitung ODER existiert bereits ODER Reparatur
@@ -133,7 +147,7 @@ install_wings() {
 
 # Pelican Panel + Wings installieren (EINGESTELLT)
 install_pelican() {
-    whiptail --title "⚠️  Feature eingestellt" --msgbox "Die Pelican Panel Installation wurde eingestellt.\n\nDieses Script konzentriert sich ausschließlich auf Pterodactyl Panel.\n\nPelican Panel ist ein Fork von Pterodactyl und wird von diesem Script nicht mehr unterstützt.\n\nBitte verwende stattdessen:\n• Option 1: Panel + Wings installieren (Pterodactyl)\n• Option 2: Nur Panel installieren (Pterodactyl)\n\nFür Pelican Panel nutze bitte die offizielle Pelican Dokumentation." 18 75
+    whiptail_warning --title "⚠️  Feature eingestellt" --msgbox "Die Pelican Panel Installation wurde eingestellt.\n\nDieses Script konzentriert sich ausschließlich auf Pterodactyl Panel.\n\nPelican Panel ist ein Fork von Pterodactyl und wird von diesem Script nicht mehr unterstützt.\n\nBitte verwende stattdessen:\n• Option 1: Panel + Wings installieren (Pterodactyl)\n• Option 2: Nur Panel installieren (Pterodactyl)\n\nFür Pelican Panel nutze bitte die offizielle Pelican Dokumentation." 18 75
     exit 0
 
     # Original-Code auskommentiert:

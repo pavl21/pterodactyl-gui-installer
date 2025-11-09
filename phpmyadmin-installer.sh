@@ -2,15 +2,31 @@
 
 # Funktion zur Installation von phpMyAdmin im Hintergrund
 function install_phpmyadmin() {
-    cd /var/www/pterodactyl/public/ && \
-    mkdir phpmyadmin && \
-    cd phpmyadmin && \
-    wget https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip -q && \
-    unzip -qq phpMyAdmin-5.2.1-all-languages.zip && \
-    mv phpMyAdmin-5.2.1-all-languages/* . && \
-    rm -rf phpMyAdmin-5.2.1-all-languages phpMyAdmin-5.2.1-all-languages.zip && \
-    mkdir tmp && \
-    chmod -R 777 tmp && \
+    cd /var/www/pterodactyl/public/ || { whiptail --title "❌ Fehler" --msgbox "Panel-Verzeichnis nicht gefunden" 8 50; exit 1; }
+
+    mkdir -p phpmyadmin || { whiptail --title "❌ Fehler" --msgbox "Konnte phpmyadmin-Verzeichnis nicht erstellen" 8 50; exit 1; }
+    cd phpmyadmin || exit 1
+
+    # Download mit Error-Handling
+    if ! wget https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip -q; then
+        whiptail --title "❌ Download fehlgeschlagen" --msgbox "phpMyAdmin konnte nicht heruntergeladen werden.\n\nBitte prüfe deine Internetverbindung." 10 60
+        exit 1
+    fi
+
+    # Unzip mit Error-Handling
+    if ! unzip -qq phpMyAdmin-5.2.1-all-languages.zip; then
+        whiptail --title "❌ Fehler" --msgbox "Entpacken fehlgeschlagen" 8 50
+        exit 1
+    fi
+
+    mv phpMyAdmin-5.2.1-all-languages/* . 2>/dev/null
+    rm -rf phpMyAdmin-5.2.1-all-languages phpMyAdmin-5.2.1-all-languages.zip
+
+    # Temp-Verzeichnis mit SICHEREN Berechtigungen
+    mkdir -p tmp
+    chmod 755 tmp  # NICHT 777!
+    chown www-data:www-data tmp
+
     create_config
 }
 
@@ -18,8 +34,14 @@ function install_phpmyadmin() {
 function create_database_user() {
     username="Admin$((RANDOM % 100000))"
     password=$(< /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c32)
-    mysql -u root -e "CREATE USER '$username'@'localhost' IDENTIFIED BY '$password'; GRANT ALL PRIVILEGES ON *.* TO '$username'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" > /dev/null 2>&1
-    echo "Benutzername: $username\nPasswort: $password"
+
+    # MySQL-Befehle mit Error-Handling
+    if ! mysql -u root -e "CREATE USER IF NOT EXISTS '$username'@'localhost' IDENTIFIED BY '$password'; GRANT ALL PRIVILEGES ON *.* TO '$username'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null; then
+        whiptail --title "❌ Datenbankfehler" --msgbox "Konnte Datenbankbenutzer nicht erstellen.\n\nBitte prüfe ob MySQL läuft und Root-Zugriff besteht." 10 65
+        return 1
+    fi
+
+    echo -e "Benutzername: $username\nPasswort: $password"
 }
 
 # Funktion zur Erstellung der Konfigurationsdatei
