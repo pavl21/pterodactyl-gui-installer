@@ -127,11 +127,39 @@ gds user
 
 Um die Installation so einfach wie möglich zu gestalten, werden folgende Voreinstellungen vorgenommen:
 
+### System & Sicherheit
+- **Betriebssystem:** Nur Debian 12 (Bookworm) und neuer unterstützt
+- **System-Check:** Automatische Prüfung vor Installation
+  - APT/DPKG Lock-Erkennung (wartet automatisch)
+  - Ressourcen-Validierung (RAM, Speicher)
+  - Netzwerk & DNS-Prüfung
+- **SWAP:** Automatisch erstellt (2% vom Speicher, min. 512 MB, max. 4 GB)
+- **Swappiness:** Optimiert auf 10 (minimales Swapping)
+
+### Installation
 - **UFW-Firewall:** Wird nicht automatisch aktiviert (verhindert Installationsprobleme)
 - **Panel-Datenbank:** Wird automatisch erstellt, Zugangsdaten werden intern verwaltet
 - **Composer-Telemetrie:** Standardmäßig aktiviert (enthält keine persönlichen Daten)
 - **Redis:** Als Cache- und Session-Driver konfiguriert
 - **Queue Worker:** Automatisch als systemd-Service eingerichtet
+
+### PHP & Extensions
+- **PHP Version:** 8.1 (aus Sury Repository)
+- **Kritische Extensions:** cli, openssl, gd, mysql, mbstring, tokenizer, bcmath, xml, dom, curl, zip, fpm
+- **Empfohlene Extensions:** intl, sqlite3, redis, opcache, fileinfo, pdo, xmlwriter
+- **PHP-Limits:** upload_max_filesize=100M, post_max_size=100M, memory_limit=256M
+
+### Datenbank & Webserver
+- **MariaDB:** Neueste Version aus offiziellem Repository (mit Fallback auf Debian-Version)
+- **Nginx:** Automatisch konfiguriert mit SSL-Support
+- **SSL-Zertifikate:** Let's Encrypt via Certbot
+- **SSL-Erneuerung:** Automatisch per Cronjob (alle 4 Tage, 3 Uhr nachts)
+
+### Tools & Utilities
+- **Automatisch installiert:** lolcat, pv, jq, dnsutils, net-tools, cron
+- **GDS Commands:** Systemweit verfügbar nach Installation
+- **Backup-Verwaltung:** In `/opt/pterodactyl/backups/`
+- **Farbige Dialoge:** Whiptail mit NEWT_COLORS (Erfolg=Grün, Fehler=Rot, etc.)
 
 ---
 
