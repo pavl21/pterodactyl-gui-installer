@@ -3,6 +3,9 @@
 # Lade Whiptail-Farben
 source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
 
+# Lade install-scripts.sh für Logging und call_script()
+source "$(dirname "$0")/install-scripts.sh" 2>/dev/null || source /opt/pterodactyl/install-scripts.sh 2>/dev/null || true
+
 # Info-Box, dass das Panel während des Prozesses nicht erreichbar ist
 whiptail_info --title "Info zum Panel" --msgbox "Hier werden die SSL-Zertifikate erneuert. Sämtliche Websites, auch das Panel, die über diesen Server laufen, werden während des Vorgangs offline sein. Das dauert in der Regel nur 1 Minute." 15 50
 
@@ -68,6 +71,6 @@ else
     whiptail_warning --title "$title" --msgbox "$text" 23 84
 fi
 
-# Zurück zur Oberfläche
-curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+# Zurück zur Problembehandlung
+call_script "problem-verwaltung.sh"
 

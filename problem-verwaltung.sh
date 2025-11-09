@@ -3,6 +3,9 @@
 # Lade Whiptail-Farben
 source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
 
+# Lade install-scripts.sh für Logging und call_script()
+source "$(dirname "$0")/install-scripts.sh" 2>/dev/null || source /opt/pterodactyl/install-scripts.sh 2>/dev/null || true
+
 trouble_menu() {
     while true; do
         TROUBLE_MENU=$(whiptail --title "Problembehandlung" --menu "Wobei können wir dir weiterhelfen?" 25 70 12 \
@@ -260,7 +263,7 @@ run_certbot_renew() {
     fi
 
     # Führe Zertifikatserneuerung aus mit Error-Handling
-    if ! curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/certbot-renew-verwaltung.sh | sudo bash -; then
+    if ! call_script "certbot-renew-verwaltung.sh"; then
         whiptail_error --title "Fehler" --msgbox "FEHLER: Zertifikatserneuerung fehlgeschlagen.\n\nBitte prüfe:\n• Ist die Internetverbindung aktiv?\n• Ist das certbot-renew-verwaltung.sh Script verfügbar?\n\nVersuche es manuell: certbot renew" 14 70
         return 1
     fi
@@ -521,7 +524,7 @@ EOL
 # Funktion für die globale Analyse
 global_test() {
     echo "Weiterleitung zur Analyse..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/analyse.sh | bash
+    call_script "analyse.sh"
     exit 0
 }
 

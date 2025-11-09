@@ -3,6 +3,9 @@
 # Lade Whiptail-Farben
 source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
 
+# Lade install-scripts.sh für call_script() Funktion
+source "$(dirname "$0")/install-scripts.sh" 2>/dev/null || source /opt/pterodactyl/install-scripts.sh 2>/dev/null || true
+
 # Log-Datei für Theme-Installation
 THEME_LOG="/opt/pterodactyl/theme-installation.log"
 
@@ -26,8 +29,8 @@ create_backup() {
 
 Wir leiten dich nun weiter zu unserer Backup-Verwaltung. Erstelle dort bitte ein Backup für dein Panel. Wenn du das gemacht hast, kannst du zur Theme-Auswahl zurückkehren." 20 80
 
-        # Skript ausführen
-        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+        # Backup-Verwaltung aufrufen (nutzt lokale Kopie)
+        call_script "backup-verwaltung.sh"
     else
         log_theme "Backup-Verzeichnis existiert, fahre mit Theme-Verwaltung fort"
         manage_themes
@@ -94,7 +97,7 @@ rollback_theme() {
 
     if whiptail --title "Theme-Rollback" --yesno "Möchtest du das letzte Backup wiederherstellen?\n\nDies wird das Theme-Update rückgängig machen." 10 65; then
         log_theme "Benutzer hat Rollback bestätigt, starte Wiederherstellung"
-        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+        call_script "backup-verwaltung.sh"
         log_theme "Rollback-Prozess abgeschlossen"
     else
         log_theme "Benutzer hat Rollback abgebrochen"
@@ -198,8 +201,8 @@ restore_backup() {
 
     whiptail_info --title "Backup wiederherstellen" --msgbox "Um das Panel zu einem früheren Zustand wiederherzustellen, wirst du zur Backup-Verwaltung weitergeleitet. Wähle dort das Backup aus, das du wiederherstellen möchtest. Wenn du möchtest, kannst du danach ein anderes Theme ausprobieren." 10 80
 
-    # Skript ausführen
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+    # Backup-Verwaltung aufrufen (nutzt lokale Kopie)
+    call_script "backup-verwaltung.sh"
 }
 
 # Hauptfunktion des Skripts
