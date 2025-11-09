@@ -56,7 +56,6 @@ export LANGUAGE=de_DE.UTF-8
 # Globale Konfigurationsvariablen
 DOMAIN_REGEX="^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
 LOG_FILE="wlog.txt"
-INSTALLER_URL="https://pterodactyl-installer.se"
 
 # Funktion zur Generierung einer zufälligen dreistelligen Zahl
 generate_random_number() {
@@ -661,7 +660,7 @@ clear
 clear
 echo "----------------------------------"
 echo "GermanDactyl Setup"
-echo "Vereinfacht von Pavl21, Script von https://pterodactyl-installer.se/ wird zur Installation vom Panel und Wings verwendet. "
+echo "Vereinfacht von Pavl21 - Automatisierte Installation von Pterodactyl Panel und Wings"
 echo "----------------------------------"
 sleep 3  # 3 Sekunden warten, bevor das Skript fortgesetzt wird
 
@@ -770,7 +769,7 @@ fi
 # Begrüßung im Script, ganz am Anfang wenn Pterodactyl noch nicht installiert ist.
 if whiptail --title "Willkommen!" --yesno "Dieses Script hilft dir dabei, das Pterodactyl Panel zu installieren. Beachte hierbei, dass du eine Domain benötigst (bzw. 2 Subdomains von einer bestehenden Domain).
 
-Das Script zur Installation basiert auf dem Github-Projekt 'pterodactyl-installer.se' von Vilhelm Prytz. Durch Bestätigung stimmst du zu, dass:
+Durch Bestätigung stimmst du zu, dass:
 - Abhängigkeiten, die benötigt werden, installiert werden dürfen
 - Du den TOS von Let's Encrypt zustimmst
 - Mit der Installation von GermanDactyl einverstanden bist
