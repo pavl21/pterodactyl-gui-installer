@@ -266,6 +266,7 @@ cmd_update_scripts() {
         "wings-pelican.sh"
         "motd.sh"
         "analyse.sh"
+        "install-scripts.sh"
     )
 
     # Erstelle Verzeichnis falls nicht vorhanden

@@ -662,6 +662,7 @@ EOFFALLBACK
             "wings-pelican.sh"
             "motd.sh"
             "analyse.sh"
+            "install-scripts.sh"
         )
 
         for script in "${SCRIPTS_TO_INSTALL[@]}"; do

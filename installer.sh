@@ -3,6 +3,15 @@
 # Lade Whiptail-Farben
 source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
 
+# Alle Verwaltungs-Scripte installieren (falls noch nicht vorhanden)
+if [ -f "$(dirname "$0")/install-scripts.sh" ]; then
+    source "$(dirname "$0")/install-scripts.sh"
+    install_all_scripts 2>/dev/null
+elif [ -f "/opt/pterodactyl/install-scripts.sh" ]; then
+    source /opt/pterodactyl/install-scripts.sh
+    install_all_scripts 2>/dev/null
+fi
+
 # GermanDactyl Setup - Hauptinstaller
 # Einstiegspunkt für Panel/Wings Installation und Verwaltung
 

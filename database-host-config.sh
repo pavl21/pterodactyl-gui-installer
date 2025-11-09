@@ -3,6 +3,15 @@
 # Lade Whiptail-Farben
 source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
 
+# Alle Verwaltungs-Scripte installieren (falls noch nicht vorhanden)
+if [ -f "$(dirname "$0")/install-scripts.sh" ]; then
+    source "$(dirname "$0")/install-scripts.sh"
+    install_all_scripts 2>/dev/null
+elif [ -f "/opt/pterodactyl/install-scripts.sh" ]; then
+    source /opt/pterodactyl/install-scripts.sh
+    install_all_scripts 2>/dev/null
+fi
+
 # Prüfen ob bereits Database Hosts konfiguriert sind
 IP_ADDRESS_CHECK=$(hostname -I | awk '{print $1}')
 EXISTING_HOSTS=$(mysql -e "SELECT User, Host FROM mysql.user WHERE Host='$IP_ADDRESS_CHECK' AND User LIKE '%Admin%' OR User LIKE '%dbhost%';" 2>/dev/null | tail -n +2)

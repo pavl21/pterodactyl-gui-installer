@@ -26,6 +26,15 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
+# Alle Verwaltungs-Scripte installieren (falls noch nicht vorhanden)
+if [ -f "$(dirname "$0")/install-scripts.sh" ]; then
+    source "$(dirname "$0")/install-scripts.sh"
+    install_all_scripts 2>/dev/null
+elif [ -f "/opt/pterodactyl/install-scripts.sh" ]; then
+    source /opt/pterodactyl/install-scripts.sh
+    install_all_scripts 2>/dev/null
+fi
+
 # Überprüfen, ob Wings bereits auf dem System installiert ist
 if [ -f "$WINGS_PATH" ]; then
     if whiptail_warning --title "WARNUNG: Wings bereits installiert" --yesno "Auf diesem System ist bereits Wings installiert.\n\nMöchtest du:\n- JA: Neuinstallation fortsetzen (überschreibt bestehende Installation)\n- NEIN: Status prüfen und ggf. Wings neu starten" 14 75; then
