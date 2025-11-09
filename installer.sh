@@ -178,7 +178,7 @@ install_blueprint() {
         echo "🧶 Yarn wird installiert..."
         echo "XXX"
 
-        cd $PTERODACTYL_DIRECTORY
+        cd "$PTERODACTYL_DIRECTORY"
         npm i -g yarn >> /tmp/blueprint_install.log 2>&1
         yarn install >> /tmp/blueprint_install.log 2>&1
 
@@ -188,7 +188,7 @@ install_blueprint() {
         echo "XXX"
 
         # Blueprint herunterladen
-        wget "$(curl -s https://api.github.com/repos/BlueprintFramework/framework/releases/latest | grep 'browser_download_url' | cut -d '"' -f 4)" -O $PTERODACTYL_DIRECTORY/release.zip >> /tmp/blueprint_install.log 2>&1
+        wget "$(curl -s https://api.github.com/repos/BlueprintFramework/framework/releases/latest | grep 'browser_download_url' | cut -d '"' -f 4)" -O "$PTERODACTYL_DIRECTORY/release.zip" >> /tmp/blueprint_install.log 2>&1
 
         echo "75"
         echo "XXX"
@@ -204,7 +204,7 @@ install_blueprint() {
         echo "XXX"
 
         # .blueprintrc erstellen
-        cat > $PTERODACTYL_DIRECTORY/.blueprintrc << 'EOFBLUEPRINT'
+        cat > "$PTERODACTYL_DIRECTORY/.blueprintrc" << 'EOFBLUEPRINT'
 WEBUSER="www-data";
 OWNERSHIP="www-data:www-data";
 USERSHELL="/bin/bash";
@@ -216,8 +216,8 @@ EOFBLUEPRINT
         echo "XXX"
 
         # blueprint.sh ausführbar machen und ausführen
-        chmod +x $PTERODACTYL_DIRECTORY/blueprint.sh
-        cd $PTERODACTYL_DIRECTORY
+        chmod +x "$PTERODACTYL_DIRECTORY/blueprint.sh"
+        cd "$PTERODACTYL_DIRECTORY"
         bash blueprint.sh >> /tmp/blueprint_install.log 2>&1
 
         echo "100"

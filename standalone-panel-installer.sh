@@ -271,7 +271,7 @@ install_pterodactyl_standalone() {
         show_progress 78 "🔐 Finale Berechtigungen werden gesetzt..."
         log "Setze finale Berechtigungen"
 
-        chown -R www-data:www-data "$PANEL_DIR/*"
+        chown -R www-data:www-data "$PANEL_DIR"
 
         # Schritt 14: Cronjob einrichten (80-82%)
         show_progress 80 "⏰ Cronjob für automatische Aufgaben wird eingerichtet..."
