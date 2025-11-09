@@ -6,7 +6,7 @@ if ! command -v apt-get &> /dev/null; then
     exit 1
 fi
 
-# BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
+# BEGINN VON Vorbereitung ODER existiert bereits ODER Reparatur
 
 # Funktion zur Überprüfung der E-Mail-Adresse
 validate_email() {
@@ -110,6 +110,21 @@ troubleshoot_issues() {
 install_wings() {
     clear
     echo "Weiterleitung zu Wings..."
+
+    # Email aus Panel-Konfiguration auslesen, falls vorhanden
+    if [ -f "/var/www/pterodactyl/.env" ]; then
+        PANEL_EMAIL=$(grep "^MAIL_FROM_ADDRESS=" /var/www/pterodactyl/.env 2>/dev/null | cut -d'=' -f2)
+        if [ -z "$PANEL_EMAIL" ]; then
+            # Fallback: Admin-Email aus Datenbank holen
+            DB_PASSWORD=$(grep "^DB_PASSWORD=" /var/www/pterodactyl/.env | cut -d'=' -f2)
+            DB_USERNAME=$(grep "^DB_USERNAME=" /var/www/pterodactyl/.env | cut -d'=' -f2)
+            DB_DATABASE=$(grep "^DB_DATABASE=" /var/www/pterodactyl/.env | cut -d'=' -f2)
+            PANEL_EMAIL=$(mysql -u"$DB_USERNAME" -p"$DB_PASSWORD" -D"$DB_DATABASE" -se "SELECT email FROM users WHERE root_admin = 1 LIMIT 1" 2>/dev/null)
+        fi
+        export PANEL_EMAIL
+    fi
+
+    # Wings-Installer mit Email-Variable aufrufen
     curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh | bash
     exit 0
 }
@@ -277,7 +292,7 @@ setup_ssh_login() {
 main_loop
 
 
-# ENDE VON Vorbereitung ODER existiert bereits ODER Reperatur
+# ENDE VON Vorbereitung ODER existiert bereits ODER Reparatur
 # BEGINN DER TATSÄCHLICHEN INSTALLATION
 
 # Funktion, um den Benutzer neu anzulegen
@@ -438,7 +453,7 @@ fi
 
 
 # Panel + Wings, oder nur Wings? Das ist hier die Frage!
-CHOICE=$(whiptail --title "Dienste installieren" --menu "Möchtest du das Panel + Wings oder nur Wings installieren? Bei der ersten Auswahl kannst du immernoch entscheiden, ob du Wings nach der Panel-Installation noch installieren möchtest." 15 60 4 \
+CHOICE=$(whiptail --title "Dienste installieren" --menu "Möchtest du das Panel + Wings oder nur Wings installieren? Bei der ersten Auswahl kannst du immer noch entscheiden, ob du Wings nach der Panel-Installation noch installieren möchtest." 15 60 4 \
 "1" "Panel + Wings installieren" \
 "2" "Nur Wings installieren" \
 "3" "Pelican Panel + Wings installieren" 3>&1 1>&2 2>&3)
@@ -592,7 +607,7 @@ user_password=$(generate_userpassword)
 
 
 
-# Funktion zum Generieren eines 64 Zeichen langen zufälligen Passworts ohne Sonderzeichen für Datenbank - Braucht keiner wisssen, weil die Datenbank sowieso nicht angerührt werden muss.
+# Funktion zum Generieren eines 64 Zeichen langen zufälligen Passworts ohne Sonderzeichen für Datenbank - Braucht keiner wissen, weil die Datenbank sowieso nicht angerührt werden muss.
 generate_dbpassword() {
     tr -dc 'A-Za-z0-9' </dev/urandom | head -c64
 }
@@ -618,60 +633,109 @@ update_progress() {
     echo -e "XXX\n$percentage\n$message\nXXX"
 }
 
-# Überwachungsfunktion für tmp.txt - Fortschritte müssen noch angepasst werden, Wert des Fortschritts springt dauernd hin und her.
+# Überwachungsfunktion für tmp.txt mit detaillierten Fortschrittsanzeigen
 monitor_progress() {
     highest_progress=0
     {
         while read line; do
-            current_progress=0
+            current_progress=$highest_progress
             case "$line" in
                 *"* Assume SSL? false"*)
-                    update_progress 5 "Die Einstellungen werden festgelegt..." ;;
+                    current_progress=3
+                    update_progress $current_progress "📋 Konfiguration wird vorbereitet..." ;;
+                *"* Configuring panel environment.."*)
+                    current_progress=5
+                    update_progress $current_progress "⚙️  Umgebungsvariablen werden gesetzt..." ;;
                 *"Selecting previously unselected package apt-transport-https."*)
-                    update_progress 10 "Der Installationsprozess beginnt in Kürze..." ;;
+                    current_progress=8
+                    update_progress $current_progress "📦 Basis-Pakete werden installiert..." ;;
                 *"Selecting previously unselected package mysql-common."*)
-                    update_progress 15 "MariaDB wird jetzt installiert..." ;;
-                *"Unpacking php8.1-zip"*)
-                    update_progress 20 "Das Paket PHP 8.1 Common wird eingerichtet..." ;;
-                *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service → /lib/systemd/system/mariadb.service."*)
-                    update_progress 25 "MariaDB wird eingerichtet..." ;;
-                *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service → /lib/systemd/system/php8.1-fpm.service."*)
-                    update_progress 30 "Das Paket PHP 8.1 FPM wird aktiviert..." ;;
-                *"Executing: /lib/systemd/systemd-sysv-install enable mariadb"*)
-                    update_progress 35 "MariaDB wird aktiviert..." ;;
+                    current_progress=12
+                    update_progress $current_progress "🗄️  MariaDB-Abhängigkeiten werden heruntergeladen..." ;;
+                *"Setting up mysql-common"*)
+                    current_progress=15
+                    update_progress $current_progress "🗄️  MariaDB wird konfiguriert..." ;;
+                *"Unpacking php8.1"*)
+                    current_progress=18
+                    update_progress $current_progress "🐘 PHP 8.1 wird installiert..." ;;
+                *"Setting up php8.1-common"*)
+                    current_progress=22
+                    update_progress $current_progress "🐘 PHP 8.1 Common wird konfiguriert..." ;;
+                *"Setting up php8.1-cli"*)
+                    current_progress=25
+                    update_progress $current_progress "🐘 PHP CLI wird eingerichtet..." ;;
+                *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service"*)
+                    current_progress=28
+                    update_progress $current_progress "🗄️  MariaDB-Service wird aktiviert..." ;;
+                *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service"*)
+                    current_progress=32
+                    update_progress $current_progress "🐘 PHP-FPM Service wird aktiviert..." ;;
+                *"Setting up mariadb-server"*)
+                    current_progress=35
+                    update_progress $current_progress "🗄️  MariaDB-Server wird gestartet..." ;;
+                *"Setting up nginx"*)
+                    current_progress=38
+                    update_progress $current_progress "🌐 Nginx Webserver wird installiert..." ;;
                 *"* Installing composer.."*)
-                    update_progress 40 "Composer wird installiert..." ;;
-                *"* Downloading pterodactyl panel files .. "*)
-                    update_progress 45 "Pterodactyl Panel Code wird heruntergeladen..." ;;
+                    current_progress=42
+                    update_progress $current_progress "🎼 Composer wird heruntergeladen und installiert..." ;;
+                *"* Downloading pterodactyl panel files"*)
+                    current_progress=48
+                    update_progress $current_progress "📥 Pterodactyl Panel-Dateien werden heruntergeladen..." ;;
                 *"database/.gitignore"*)
-                    update_progress 50 "Datenbank-Migrations werden integriert..." ;;
+                    current_progress=52
+                    update_progress $current_progress "📂 Datenbank-Struktur wird vorbereitet..." ;;
                 *"database/Seeders/eggs/"*)
-                    update_progress 55 "Eggs werden vorbereitet..." ;;
+                    current_progress=55
+                    update_progress $current_progress "🥚 Standard-Eggs werden geladen..." ;;
                 *"* Installing composer dependencies.."*)
-                    update_progress 60 "Composer-Abhängigkeiten werden installiert..." ;;
+                    current_progress=58
+                    update_progress $current_progress "📦 Composer-Abhängigkeiten werden installiert (kann dauern)..." ;;
+                *"Generating optimized autoload files"*)
+                    current_progress=62
+                    update_progress $current_progress "⚡ Autoloader wird optimiert..." ;;
                 *"* Creating database user pterodactyl..."*)
-                    update_progress 65 "Datenbank für Panel wird bereitgestellt..." ;;
+                    current_progress=65
+                    update_progress $current_progress "👤 Datenbank-Benutzer wird erstellt..." ;;
+                *"* Creating database pterodactyl..."*)
+                    current_progress=68
+                    update_progress $current_progress "🗄️  Panel-Datenbank wird angelegt..." ;;
                 *"INFO  Running migrations."*)
-                    update_progress 70 "Migrations werden gestartet..." ;;
-                *"* Installing cronjob.. "*)
-                    update_progress 75 "Cronjob wird bereitgestellt..." ;;
+                    current_progress=72
+                    update_progress $current_progress "🔄 Datenbank-Migrationen werden ausgeführt..." ;;
+                *"INFO  Seeding database."*)
+                    current_progress=75
+                    update_progress $current_progress "🌱 Datenbank wird mit Basisdaten befüllt..." ;;
+                *"* Installing cronjob.."*)
+                    current_progress=78
+                    update_progress $current_progress "⏰ Cronjob für automatische Aufgaben wird eingerichtet..." ;;
                 *"* Installing pteroq service.."*)
-                    update_progress 80 "Hintergrunddienste werden integriert..." ;;
+                    current_progress=82
+                    update_progress $current_progress "🔧 Queue-Worker-Service wird installiert..." ;;
+                *"* Configuring nginx.."*)
+                    current_progress=85
+                    update_progress $current_progress "🌐 Nginx-Konfiguration wird erstellt..." ;;
                 *"Saving debug log to /var/log/letsencrypt/letsencrypt.log"*)
-                    update_progress 85 "SSL-Zertifikat wird bereitgestellt..." ;;
+                    current_progress=88
+                    update_progress $current_progress "🔐 SSL-Zertifikat wird von Let's Encrypt angefordert..." ;;
+                *"Requesting a certificate for"*)
+                    current_progress=91
+                    update_progress $current_progress "🔐 Zertifikat-Validierung läuft..." ;;
                 *"Congratulations! You have successfully enabled"*)
-                    update_progress 90 "Zertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
-                *"Es wurde kein Instanzort angegeben. Deine Pterodactyl-Instanz wird im default-Ordner gesucht."*)
-                    update_progress 95 "Installiere GermanDactyl, das kann etwas dauern..." ;;
+                    current_progress=94
+                    update_progress $current_progress "✅ SSL-Zertifikat erfolgreich installiert..." ;;
+                *"Es wurde kein Instanzort angegeben"*)
+                    current_progress=96
+                    update_progress $current_progress "🇩🇪 GermanDactyl wird installiert..." ;;
                 *"Der Patch wurde angewendet."*)
-                    update_progress 100 "Prozesse werden beendet..." ;;
+                    current_progress=99
+                    update_progress $current_progress "🎉 Installation wird abgeschlossen..." ;;
             esac
             if [ "$current_progress" -gt "$highest_progress" ]; then
                 highest_progress=$current_progress
-                update_progress $highest_progress "Aktueller Status..."
             fi
         done < <(tail -n 0 -f tmp.txt)
-    } | whiptail --title "Pterodactyl Panel wird installiert" --gauge "Pterodactyl Panel - Installation" 10 70 0
+    } | whiptail --title "Pterodactyl Panel Installation" --gauge "Installation läuft..." 10 80 0
 }
 
 
@@ -712,6 +776,11 @@ EOF
     fuser -k 80/tcp
     fuser -k 443/tcp
     systemctl restart nginx
+
+    # Crontab für automatische SSL-Zertifikat-Erneuerung einrichten (alle 4 Tage, 3 Uhr nachts)
+    CRON_CMD="0 3 */4 * * systemctl stop nginx && certbot renew --quiet && systemctl start nginx"
+    (crontab -l 2>/dev/null | grep -v "certbot renew"; echo "$CRON_CMD") | crontab -
+
     curl -sSL https://install.germandactyl.de/ | sudo bash -s -- -v1.11.3
 } >> tmp.txt 2>&1
 
@@ -727,7 +796,7 @@ recreate_user
 
 # Funktion, um die Zugangsdaten anzuzeigen
 show_access_data() {
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (32 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (32 Zeichen): $user_password \n\nDieses Fenster wird sich nicht noch einmal öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
 }
 
 # Info: Installation abgeschlossen

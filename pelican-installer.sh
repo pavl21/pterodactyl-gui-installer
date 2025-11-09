@@ -287,7 +287,7 @@ user_password=$(generate_userpassword)
 
 
 
-# Funktion zum Generieren eines 64 Zeichen langen zufälligen Passworts ohne Sonderzeichen für Datenbank - Braucht keiner wisssen, weil die Datenbank sowieso nicht angerührt werden muss.
+# Funktion zum Generieren eines 64 Zeichen langen zufälligen Passworts ohne Sonderzeichen für Datenbank - Braucht keiner wissen, weil die Datenbank sowieso nicht angerührt werden muss.
 generate_dbpassword() {
     tr -dc 'A-Za-z0-9' </dev/urandom | head -c64
 }
@@ -443,7 +443,7 @@ clear
 # Zum Schluss:
 # Funktion, um die Zugangsdaten anzuzeigen
 show_access_data() {
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (32 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (32 Zeichen): $user_password \n\nDieses Fenster wird sich nicht noch einmal öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
 }
 
 # Info: Installation abgeschlossen

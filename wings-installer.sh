@@ -132,6 +132,11 @@ install_wings_with_script() {
     # Entferne die Eingabedatei nach Gebrauch
     rm inputs.txt
 
+    # Crontab für automatische SSL-Zertifikat-Erneuerung einrichten (alle 4 Tage, 3 Uhr nachts)
+    # Prüfe ob bereits ein Crontab-Eintrag für certbot existiert
+    CRON_CMD="0 3 */4 * * systemctl stop wings && systemctl stop nginx && certbot renew --quiet && systemctl start nginx && systemctl start wings"
+    (crontab -l 2>/dev/null | grep -v "certbot renew"; echo "$CRON_CMD") | crontab -
+
     # Meldung anzeigen, dass die Installation abgeschlossen ist
     whiptail --title "Wings Integration" --msgbox "Wings wurde erfolgreich installiert und aktiviert. Jetzt muss Wings nur noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 60
 
@@ -210,13 +215,19 @@ while true; do
         continue
     fi
 
-    admin_email=$(whiptail --title "E-Mail für Let's Encrypt" --inputbox "Gib die E-Mail Adresse erneut ein, die informiert werden soll, wenn das SSL Zertifikat ausläuft. Diese Zertifikate halten 90 Tage, kurz vor Ablauf wird man informiert. Wenn man es nicht verlängert (Mit dem Befehl 'certbot renew' über SSH), wird Wings nicht mehr erreichbar sein und alle Server können nicht mehr kontrolliert werden, die über diese Node laufen" 17 80 3>&1 1>&2 2>&3)
+    # Prüfen, ob Email bereits aus Panel-Installation vorhanden ist
+    if [ -n "$PANEL_EMAIL" ]; then
+        admin_email="$PANEL_EMAIL"
+        whiptail --title "E-Mail automatisch übernommen" --msgbox "Die E-Mail-Adresse wurde automatisch aus der Panel-Installation übernommen:\n\n$admin_email\n\nDiese wird für das SSL-Zertifikat von Wings verwendet." 12 70
+    else
+        admin_email=$(whiptail --title "E-Mail für Let's Encrypt" --inputbox "Gib die E-Mail Adresse ein, die informiert werden soll, wenn das SSL Zertifikat ausläuft. Diese Zertifikate halten 90 Tage, kurz vor Ablauf wird man informiert. Wenn man es nicht verlängert (Mit dem Befehl 'certbot renew' über SSH), wird Wings nicht mehr erreichbar sein und alle Server können nicht mehr kontrolliert werden, die über diese Node laufen.\n\nHinweis: Die automatische Erneuerung ist bereits eingerichtet." 17 80 3>&1 1>&2 2>&3)
 
-    if [ -z "$admin_email" ]; then
-        whiptail --title "Installation abgebrochen" --msgbox "Du hast keine E-Mail angegeben, die Installation wird abgebrochen, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 10 70
-        exit 0
-    elif ! validate_email "$admin_email"; then
-        continue
+        if [ -z "$admin_email" ]; then
+            whiptail --title "Installation abgebrochen" --msgbox "Du hast keine E-Mail angegeben, die Installation wird abgebrochen, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 10 70
+            exit 0
+        elif ! validate_email "$admin_email"; then
+            continue
+        fi
     fi
 
     install_wings_with_script
