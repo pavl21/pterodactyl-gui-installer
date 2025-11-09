@@ -1,16 +1,27 @@
 #!/bin/bash
 
 # Eigenständiger Pterodactyl Panel Installer
-# Komplett unabhängig von Drittanbieter-Scripts
-# Mit detailliertem Fortschritt und Fallbacks
+# Optimiert für Debian 12+ mit modernem Design
+# Vollständige Paket-Installation mit Fallbacks
 
 # Globale Variablen
 PTERODACTYL_VERSION="v1.11.5"
 PHP_VERSION="8.1"
 PANEL_DIR="/var/www/pterodactyl"
 LOG_FILE="/tmp/pterodactyl_install.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Fortschrittsanzeige-Funktion
+# Whiptail-Farben laden
+if [ -f "$SCRIPT_DIR/whiptail-colors.sh" ]; then
+    source "$SCRIPT_DIR/whiptail-colors.sh"
+fi
+
+# SWAP-Setup laden
+if [ -f "$SCRIPT_DIR/swap-setup.sh" ]; then
+    source "$SCRIPT_DIR/swap-setup.sh"
+fi
+
+# Fortschrittsanzeige-Funktion (modernisiert)
 show_progress() {
     local percentage=$1
     local message=$2
@@ -25,15 +36,79 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
-# Fehlerbehandlung
+# Fehlerbehandlung mit verbessertem Feedback
 handle_error() {
     local exit_code=$1
     local step=$2
     if [ $exit_code -ne 0 ]; then
         log "FEHLER bei Schritt: $step (Exit-Code: $exit_code)"
-        whiptail --title "❌ Installationsfehler" --msgbox "Ein Fehler ist aufgetreten bei:\n$step\n\nBitte prüfe die Log-Datei: $LOG_FILE" 12 70
+        whiptail --title "❌ Installationsfehler" --msgbox "Ein Fehler ist aufgetreten bei:\n$step\n\nFehlercode: $exit_code\nLog-Datei: $LOG_FILE\n\nBitte prüfe die Log-Datei für Details." 14 78
         exit 1
     fi
+}
+
+# Paket-Installation mit Fallback
+install_package() {
+    local package=$1
+    local retries=3
+    local attempt=1
+
+    while [ $attempt -le $retries ]; do
+        log "Installiere $package (Versuch $attempt/$retries)"
+
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y "$package" >> "$LOG_FILE" 2>&1; then
+            log "Paket $package erfolgreich installiert"
+            return 0
+        else
+            log "Fehler bei Installation von $package (Versuch $attempt)"
+
+            if [ $attempt -lt $retries ]; then
+                log "Aktualisiere Paketquellen und versuche erneut..."
+                apt-get update >> "$LOG_FILE" 2>&1
+                sleep 2
+            fi
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    log "WARNUNG: Konnte $package nicht installieren nach $retries Versuchen"
+    return 1
+}
+
+# System-Check durchführen
+perform_system_check() {
+    log "Starte System-Voraussetzungs-Prüfung"
+
+    # System-Check-Script ausführen wenn vorhanden
+    if [ -f "$SCRIPT_DIR/system-check.sh" ]; then
+        bash "$SCRIPT_DIR/system-check.sh"
+        if [ $? -ne 0 ]; then
+            log "System-Check fehlgeschlagen"
+            exit 1
+        fi
+    else
+        # Einfacher Inline-Check wenn Script nicht vorhanden
+        if [ ! -f /etc/os-release ]; then
+            echo "Fehler: Kann OS nicht identifizieren"
+            exit 1
+        fi
+
+        source /etc/os-release
+
+        if [ "$ID" != "debian" ]; then
+            whiptail --title "❌ Nicht unterstützt" --msgbox "Dieses Script unterstützt nur Debian 12 und neuer.\n\nErkanntes System: ${NAME}" 10 60
+            exit 1
+        fi
+
+        DEBIAN_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+        if [ "$DEBIAN_VERSION" -lt 12 ]; then
+            whiptail --title "❌ Veraltete Version" --msgbox "Dieses Script benötigt Debian 12 (Bookworm) oder neuer.\n\nAktuelle Version: Debian ${VERSION_ID}" 10 60
+            exit 1
+        fi
+    fi
+
+    log "System-Check erfolgreich"
 }
 
 # Hauptinstallationsfunktion
@@ -55,7 +130,12 @@ install_pterodactyl_standalone() {
         apt-get update >> "$LOG_FILE" 2>&1
         handle_error $? "Paketquellen aktualisieren"
 
-        # Schritt 2: Abhängigkeiten installieren (5-15%)
+        # Schritt 1.5: System-Check durchführen
+        show_progress 1 "🔍 System-Voraussetzungen werden geprüft..."
+        log "Führe System-Check durch"
+        perform_system_check
+
+        # Schritt 2: Basis-Abhängigkeiten installieren (5-15%)
         show_progress 3 "📦 Basis-Pakete werden installiert..."
         log "Installiere Basis-Pakete"
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -69,41 +149,77 @@ install_pterodactyl_standalone() {
             git \
             tar \
             unzip \
+            sudo \
             >> "$LOG_FILE" 2>&1
         handle_error $? "Basis-Pakete installieren"
 
-        show_progress 5 "📦 PHP-Repository wird hinzugefügt..."
-        log "Füge Sury PHP-Repository hinzu"
+        # Schritt 2.5: Utility-Pakete installieren (für Scripts)
+        show_progress 4 "🛠️  Zusätzliche Tools werden installiert..."
+        log "Installiere Utility-Pakete"
 
-        # Prüfe OS-Version
-        OS_VERSION=$(lsb_release -cs)
-        if [ "$OS_VERSION" = "focal" ] || [ "$OS_VERSION" = "jammy" ]; then
-            # Ubuntu
-            LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >> "$LOG_FILE" 2>&1
-        else
-            # Debian
-            curl -sSL https://packages.sury.org/php/README.txt | bash -x >> "$LOG_FILE" 2>&1
+        # Diese Pakete werden von verschiedenen Scripts benötigt
+        for pkg in lolcat pv jq dnsutils net-tools cron; do
+            install_package "$pkg"
+        done
+
+        show_progress 5 "📦 PHP-Repository wird hinzugefügt..."
+        log "Füge Sury PHP-Repository hinzu (Debian)"
+
+        # Nur Debian wird unterstützt (System-Check garantiert das bereits)
+        # Sury PHP-Repository für Debian hinzufügen
+        curl -sSL https://packages.sury.org/php/README.txt | bash -x >> "$LOG_FILE" 2>&1
+        if [ $? -ne 0 ]; then
+            log "WARNUNG: Automatisches PHP-Repository-Setup fehlgeschlagen, versuche manuell..."
+
+            # Fallback: Manuelles Setup
+            wget -qO /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg >> "$LOG_FILE" 2>&1
+            echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list
         fi
-        handle_error $? "PHP-Repository hinzufügen"
 
         show_progress 7 "📦 Paketquellen werden erneut aktualisiert..."
         apt-get update >> "$LOG_FILE" 2>&1
         handle_error $? "Paketquellen nach Repository-Hinzufügung aktualisieren"
 
         # Schritt 3: PHP installieren (15-30%)
-        show_progress 10 "🐘 PHP ${PHP_VERSION} und Extensions werden installiert..."
-        log "Installiere PHP ${PHP_VERSION} und alle benötigten Extensions"
+        show_progress 10 "🐘 PHP ${PHP_VERSION} wird installiert..."
+        log "Installiere PHP ${PHP_VERSION} Basis-Paket"
 
+        DEBIAN_FRONTEND=noninteractive apt-get install -y php${PHP_VERSION} php${PHP_VERSION}-common >> "$LOG_FILE" 2>&1
+        handle_error $? "PHP ${PHP_VERSION} Basis installieren"
+
+        # Pterodactyl-erforderliche PHP-Extensions
+        show_progress 13 "🐘 Erforderliche PHP-Extensions werden installiert..."
+        log "Installiere erforderliche PHP-Extensions"
+
+        # Kritische Extensions (Pterodactyl-Anforderungen)
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            php${PHP_VERSION} \
-            php${PHP_VERSION}-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip,intl,sqlite3,redis,opcache} \
+            php${PHP_VERSION}-cli \
+            php${PHP_VERSION}-openssl \
+            php${PHP_VERSION}-gd \
+            php${PHP_VERSION}-mysql \
+            php${PHP_VERSION}-mbstring \
+            php${PHP_VERSION}-tokenizer \
+            php${PHP_VERSION}-bcmath \
+            php${PHP_VERSION}-xml \
+            php${PHP_VERSION}-dom \
+            php${PHP_VERSION}-curl \
+            php${PHP_VERSION}-zip \
+            php${PHP_VERSION}-fpm \
             >> "$LOG_FILE" 2>&1
-        handle_error $? "PHP ${PHP_VERSION} installieren"
+        handle_error $? "Erforderliche PHP-Extensions installieren"
 
-        # Zusätzliche PHP-Extensions für erweiterte Funktionalität
-        show_progress 15 "🐘 Zusätzliche PHP-Extensions werden installiert..."
+        # Zusätzliche empfohlene Extensions
+        show_progress 16 "🐘 Empfohlene PHP-Extensions werden installiert..."
+        log "Installiere empfohlene PHP-Extensions"
+
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            php${PHP_VERSION}-{dom,fileinfo,pdo,tokenizer,xmlwriter} \
+            php${PHP_VERSION}-intl \
+            php${PHP_VERSION}-sqlite3 \
+            php${PHP_VERSION}-redis \
+            php${PHP_VERSION}-opcache \
+            php${PHP_VERSION}-fileinfo \
+            php${PHP_VERSION}-pdo \
+            php${PHP_VERSION}-xmlwriter \
             >> "$LOG_FILE" 2>&1
         # Kein Error-Handle hier, da manche Extensions optional sind
 
@@ -118,15 +234,23 @@ install_pterodactyl_standalone() {
         show_progress 22 "🗄️  MariaDB-Repository wird eingerichtet..."
         log "Füge MariaDB-Repository hinzu"
 
-        # MariaDB 10.11 Repository
+        # MariaDB 10.11+ Repository hinzufügen
         curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash >> "$LOG_FILE" 2>&1
-        handle_error $? "MariaDB-Repository einrichten"
+        if [ $? -ne 0 ]; then
+            log "WARNUNG: MariaDB-Repository-Setup fehlgeschlagen, verwende Debian-Standardversion..."
+
+            # Fallback: Apt-Paketquellen aktualisieren
+            apt-get update >> "$LOG_FILE" 2>&1
+        fi
 
         show_progress 25 "🗄️  MariaDB-Server wird installiert..."
         log "Installiere MariaDB"
 
-        DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server mariadb-client >> "$LOG_FILE" 2>&1
-        handle_error $? "MariaDB installieren"
+        # Versuche MariaDB-Installation mit Fallback
+        if ! install_package "mariadb-server" || ! install_package "mariadb-client"; then
+            log "FEHLER: MariaDB-Installation fehlgeschlagen"
+            handle_error 1 "MariaDB installieren"
+        fi
 
         # MariaDB starten und aktivieren
         systemctl start mariadb
