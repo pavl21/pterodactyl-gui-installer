@@ -66,17 +66,17 @@ main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
             MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 32 90 14 \
-                "1" "🔍 Problembehandlung" \
-                "2" "📦 PhpMyAdmin installieren" \
-                "3" "🐦 Wings nachinstallieren" \
-                "4" "📂 Backup-Verwaltung öffnen" \
-                "5" "🏢 Database-Host einrichten" \
-                "6" "🖌️  SSH-Loginseite integrieren" \
-                "7" "🔄 SWAP-Verwaltung öffnen" \
-                "8" "🎨 Theme-Verwaltung öffnen" \
-                "9" "🧩 Blueprint-Verwaltung öffnen" \
-                "10" "🗑️  Pterodactyl deinstallieren" \
-                "11" "🚪 Skript beenden" 3>&1 1>&2 2>&3)
+                "1" "Problembehandlung" \
+                "2" "PhpMyAdmin installieren" \
+                "3" "Wings nachinstallieren" \
+                "4" "Backup-Verwaltung öffnen" \
+                "5" "Database-Host einrichten" \
+                "6" "SSH-Loginseite integrieren" \
+                "7" "SWAP-Verwaltung öffnen" \
+                "8" "Theme-Verwaltung öffnen" \
+                "9" "Blueprint-Verwaltung öffnen" \
+                "10" "Pterodactyl deinstallieren" \
+                "11" "Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
             # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
@@ -161,7 +161,7 @@ install_wings() {
 
 # Pelican Panel + Wings installieren (EINGESTELLT)
 install_pelican() {
-    whiptail_warning --title "⚠️  Feature eingestellt" --msgbox "Die Pelican Panel Installation wurde eingestellt.\n\nDieses Script konzentriert sich ausschließlich auf Pterodactyl Panel.\n\nPelican Panel ist ein Fork von Pterodactyl und wird von diesem Script nicht mehr unterstützt.\n\nBitte verwende stattdessen:\n• Option 1: Panel + Wings installieren (Pterodactyl)\n• Option 2: Nur Panel installieren (Pterodactyl)\n\nFür Pelican Panel nutze bitte die offizielle Pelican Dokumentation." 18 75
+    whiptail_warning --title "Feature eingestellt" --msgbox "Die Pelican Panel Installation wurde eingestellt.\n\nDieses Script konzentriert sich ausschließlich auf Pterodactyl Panel.\n\nPelican Panel ist ein Fork von Pterodactyl und wird von diesem Script nicht mehr unterstützt.\n\nBitte verwende stattdessen:\n• Option 1: Panel + Wings installieren (Pterodactyl)\n• Option 2: Nur Panel installieren (Pterodactyl)\n\nFür Pelican Panel nutze bitte die offizielle Pelican Dokumentation." 18 75
     exit 0
 
     # Original-Code auskommentiert:
@@ -531,12 +531,12 @@ manage_blueprint() {
 
     while true; do
         BLUEPRINT_MENU=$(whiptail --title "Blueprint Verwaltung" --menu "Was möchtest du tun?" 20 75 8 \
-            "1" "📋 Installierte Extensions anzeigen" \
-            "2" "📥 Extension installieren" \
-            "3" "🗑️  Extension entfernen" \
-            "4" "🔄 Blueprint aktualisieren" \
-            "5" "ℹ️  Blueprint Info anzeigen" \
-            "6" "🚪 Zurück zum Hauptmenü" 3>&1 1>&2 2>&3)
+            "1" "Installierte Extensions anzeigen" \
+            "2" "Extension installieren" \
+            "3" "Extension entfernen" \
+            "4" "Blueprint aktualisieren" \
+            "5" "Blueprint Info anzeigen" \
+            "6" "Zurück zum Hauptmenü" 3>&1 1>&2 2>&3)
 
         exitstatus=$?
 
@@ -1186,25 +1186,33 @@ else
     source <(curl -sSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${INSTALL_BRANCH}/standalone-panel-installer.sh")
 fi
 
+# Frage nach Blueprint Installation (ZUERST Blueprint, DANN GermanDactyl!) - VOR der Installation
+if whiptail --title "Blueprint Installation" --yesno "Möchtest du Blueprint installieren?\n\nBlueprint ist ein Extension Manager für Pterodactyl, der es ermöglicht:\n\n✅ Themes einfach zu installieren\n✅ Addons/Plugins mit einem Klick hinzuzufügen\n✅ Gekaufte Extensions benutzerfreundlich zu verwalten\n✅ Anpassungen ohne manuelle Code-Änderungen\n\nBlueprint macht die Installation von gekauften Themes oder Addons deutlich einfacher!\n\nMöchtest du Blueprint jetzt installieren?" 20 80; then
+    INSTALL_BLUEPRINT=true
+else
+    INSTALL_BLUEPRINT=false
+fi
+
+# Frage nach GermanDactyl Installation (NACH Blueprint!) - VOR der Installation
+if whiptail --title "GermanDactyl Installation" --yesno "Möchtest du GermanDactyl installieren?\n\nGermanDactyl ist eine deutsche Übersetzung des Pterodactyl Panels mit zusätzlichen Anpassungen.\n\nVorteile:\n✅ Vollständig auf Deutsch\n✅ Benutzerfreundlicher für deutsche Nutzer\n✅ Regelmäßige Updates\n\nMöchtest du GermanDactyl jetzt installieren?" 18 75; then
+    INSTALL_GERMANDACTYL=true
+else
+    INSTALL_GERMANDACTYL=false
+fi
+
 # Installationsfunktion aufrufen
 install_pterodactyl_standalone "$panel_domain" "$admin_email" "$user_password" "$database_password"
 
-# Frage nach Blueprint Installation (ZUERST Blueprint, DANN GermanDactyl!)
-if whiptail --title "Blueprint Installation" --yesno "Möchtest du Blueprint installieren?\n\nBlueprint ist ein Extension Manager für Pterodactyl, der es ermöglicht:\n\n✅ Themes einfach zu installieren\n✅ Addons/Plugins mit einem Klick hinzuzufügen\n✅ Gekaufte Extensions benutzerfreundlich zu verwalten\n✅ Anpassungen ohne manuelle Code-Änderungen\n\nBlueprint macht die Installation von gekauften Themes oder Addons deutlich einfacher!\n\nMöchtest du Blueprint jetzt installieren?" 20 80; then
+# Blueprint installieren (falls gewünscht) - NACH der Panel-Installation
+if [ "$INSTALL_BLUEPRINT" = true ]; then
     install_blueprint
-    BLUEPRINT_INSTALLED=true
-else
-    BLUEPRINT_INSTALLED=false
 fi
 
-# Frage nach GermanDactyl Installation (NACH Blueprint!)
-if whiptail --title "GermanDactyl Installation" --yesno "Möchtest du GermanDactyl installieren?\n\nGermanDactyl ist eine deutsche Übersetzung des Pterodactyl Panels mit zusätzlichen Anpassungen.\n\nVorteile:\n✅ Vollständig auf Deutsch\n✅ Benutzerfreundlicher für deutsche Nutzer\n✅ Regelmäßige Updates\n\nMöchtest du GermanDactyl jetzt installieren?" 18 75; then
+# GermanDactyl installieren (falls gewünscht) - NACH Blueprint
+if [ "$INSTALL_GERMANDACTYL" = true ]; then
     echo "GermanDactyl wird installiert..."
     cd /var/www/pterodactyl
     curl -sSL https://install.germandactyl.de/ | sudo bash -s -- -v1.11.3 >> /tmp/germandactyl_install.log 2>&1
-    GERMANDACTYL_INSTALLED=true
-else
-    GERMANDACTYL_INSTALLED=false
 fi
 
 # Benutzer neu anlegen mit korrekten Daten

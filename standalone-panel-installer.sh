@@ -117,6 +117,32 @@ install_pterodactyl_standalone() {
     local user_password=$3
     local database_password=$4
 
+    # Moderne CLI Ausgabe vor der Installation
+    clear
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║  Pterodactyl Panel Installation                            ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "==> Installation wird vorbereitet"
+    echo "    → Domain: $panel_domain"
+    echo "    → Admin E-Mail: $admin_email"
+    echo "    → Version: $PTERODACTYL_VERSION"
+    echo ""
+    echo "==> Installationsschritte"
+    echo "    1. System-Update & Abhängigkeiten"
+    echo "    2. PHP $PHP_VERSION Installation"
+    echo "    3. MariaDB Datenbank-Setup"
+    echo "    4. Nginx Webserver-Konfiguration"
+    echo "    5. Redis Cache Installation"
+    echo "    6. Pterodactyl Panel Download & Setup"
+    echo "    7. SSL-Zertifikat (Let's Encrypt)"
+    echo "    8. Service-Konfiguration"
+    echo ""
+    echo "⏱  Dieser Vorgang dauert mehrere Minuten..."
+    echo ""
+    sleep 3
+
     exec 3>&1
     {
         show_progress 0 "🚀 Installation wird gestartet..."
@@ -134,7 +160,7 @@ install_pterodactyl_standalone() {
         perform_system_check
 
         # Schritt 2: Basis-Abhängigkeiten installieren (5-15%)
-        show_progress 3 "📦 Basis-Pakete werden installiert..."
+        show_progress 3 "==> Basis-Abhängigkeiten werden installiert"
         log "Installiere Basis-Pakete"
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
             software-properties-common \
@@ -152,7 +178,7 @@ install_pterodactyl_standalone() {
         handle_error $? "Basis-Pakete installieren"
 
         # Schritt 2.5: Utility-Pakete installieren (für Scripts)
-        show_progress 4 "🛠️  Zusätzliche Tools werden installiert..."
+        show_progress 4 "==> Utility-Pakete werden installiert"
         log "Installiere Utility-Pakete"
 
         # Diese Pakete werden von verschiedenen Scripts benötigt
@@ -179,14 +205,14 @@ install_pterodactyl_standalone() {
         handle_error $? "Paketquellen nach Repository-Hinzufügung aktualisieren"
 
         # Schritt 3: PHP installieren (15-30%)
-        show_progress 10 "🐘 PHP ${PHP_VERSION} wird installiert..."
+        show_progress 10 "==> PHP ${PHP_VERSION} wird installiert"
         log "Installiere PHP ${PHP_VERSION} Basis-Paket"
 
         DEBIAN_FRONTEND=noninteractive apt-get install -y php${PHP_VERSION} php${PHP_VERSION}-common >> "$LOG_FILE" 2>&1
         handle_error $? "PHP ${PHP_VERSION} Basis installieren"
 
         # Pterodactyl-erforderliche PHP-Extensions
-        show_progress 13 "🐘 Erforderliche PHP-Extensions werden installiert..."
+        show_progress 13 "    → Erforderliche PHP-Extensions werden installiert..."
         log "Installiere erforderliche PHP-Extensions"
 
         # Kritische Extensions (Pterodactyl-Anforderungen)
@@ -207,7 +233,7 @@ install_pterodactyl_standalone() {
         handle_error $? "Erforderliche PHP-Extensions installieren"
 
         # Zusätzliche empfohlene Extensions
-        show_progress 16 "🐘 Empfohlene PHP-Extensions werden installiert..."
+        show_progress 16 "    → Optionale PHP-Extensions werden installiert..."
         log "Installiere empfohlene PHP-Extensions"
 
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -221,7 +247,7 @@ install_pterodactyl_standalone() {
             >> "$LOG_FILE" 2>&1
         # Kein Error-Handle hier, da manche Extensions optional sind
 
-        show_progress 18 "🐘 PHP-Konfiguration wird optimiert..."
+        show_progress 18 "    ✓ PHP-Konfiguration optimiert"
         log "Konfiguriere PHP für Pterodactyl"
 
         # PHP-Konfiguration anpassen
@@ -241,7 +267,7 @@ install_pterodactyl_standalone() {
             apt-get update >> "$LOG_FILE" 2>&1
         fi
 
-        show_progress 25 "🗄️  MariaDB-Server wird installiert..."
+        show_progress 25 "==> MariaDB Datenbankserver wird installiert"
         log "Installiere MariaDB"
 
         # Versuche MariaDB-Installation mit Fallback
@@ -265,7 +291,7 @@ install_pterodactyl_standalone() {
         mysql -e "FLUSH PRIVILEGES;" >> "$LOG_FILE" 2>&1
 
         # Schritt 4: Nginx installieren (30-35%)
-        show_progress 32 "🌐 Nginx Webserver wird installiert..."
+        show_progress 32 "==> Nginx Webserver wird installiert"
         log "Installiere Nginx"
 
         apt-get install -y nginx >> "$LOG_FILE" 2>&1
@@ -274,7 +300,7 @@ install_pterodactyl_standalone() {
         systemctl enable nginx >> "$LOG_FILE" 2>&1
 
         # Schritt 5: Redis installieren (35-38%)
-        show_progress 35 "💾 Redis-Cache wird installiert..."
+        show_progress 35 "==> Redis Cache wird installiert"
         log "Installiere Redis"
 
         apt-get install -y redis-server >> "$LOG_FILE" 2>&1
@@ -284,13 +310,13 @@ install_pterodactyl_standalone() {
         systemctl enable redis-server >> "$LOG_FILE" 2>&1
 
         # Schritt 6: Composer installieren (38-42%)
-        show_progress 38 "🎼 Composer wird heruntergeladen..."
+        show_progress 38 "==> Composer Abhängigkeitsmanager wird installiert"
         log "Installiere Composer"
 
         curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer >> "$LOG_FILE" 2>&1
         handle_error $? "Composer installieren"
 
-        show_progress 40 "🎼 Composer-Berechtigungen werden gesetzt..."
+        show_progress 40 "    ✓ Composer erfolgreich installiert"
         chmod +x /usr/local/bin/composer
 
         # Schritt 7: Panel-Verzeichnis vorbereiten (42-45%)
@@ -301,13 +327,13 @@ install_pterodactyl_standalone() {
         cd "$PANEL_DIR" || exit 1
 
         # Schritt 8: Pterodactyl Panel herunterladen (45-52%)
-        show_progress 45 "📥 Pterodactyl Panel wird heruntergeladen..."
+        show_progress 45 "==> Pterodactyl Panel ${PTERODACTYL_VERSION} wird heruntergeladen"
         log "Lade Pterodactyl Panel ${PTERODACTYL_VERSION} herunter"
 
         curl -Lo panel.tar.gz "https://github.com/pterodactyl/panel/releases/download/${PTERODACTYL_VERSION}/panel.tar.gz" >> "$LOG_FILE" 2>&1
         handle_error $? "Panel herunterladen"
 
-        show_progress 48 "📦 Panel-Archiv wird entpackt..."
+        show_progress 48 "    → Panel-Dateien werden entpackt..."
         log "Entpacke Panel"
 
         tar -xzf panel.tar.gz >> "$LOG_FILE" 2>&1
@@ -332,7 +358,7 @@ install_pterodactyl_standalone() {
         mysql -e "FLUSH PRIVILEGES;" >> "$LOG_FILE" 2>&1
 
         # Schritt 10: Composer-Abhängigkeiten installieren (58-68%)
-        show_progress 58 "📦 Composer-Abhängigkeiten werden installiert (kann mehrere Minuten dauern)..."
+        show_progress 58 "==> Composer-Abhängigkeiten werden installiert (dies kann mehrere Minuten dauern)"
         log "Installiere Composer-Abhängigkeiten"
 
         COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader >> "$LOG_FILE" 2>&1
@@ -525,13 +551,13 @@ EOFNGINX
         fi
 
         # Schritt 17: SSL-Zertifikat mit Certbot (88-95%)
-        show_progress 88 "📦 Certbot wird installiert..."
+        show_progress 88 "==> Certbot wird installiert (Let's Encrypt)"
         log "Installiere Certbot"
 
         apt-get install -y certbot python3-certbot-nginx >> "$LOG_FILE" 2>&1
         handle_error $? "Certbot installieren"
 
-        show_progress 90 "🔐 SSL-Zertifikat wird von Let's Encrypt angefordert..."
+        show_progress 90 "    → SSL-Zertifikat wird von Let's Encrypt angefordert..."
         log "Fordere SSL-Zertifikat an"
 
         # Ports freigeben
@@ -547,7 +573,7 @@ EOFNGINX
         if [ $CERT_RESULT -ne 0 ]; then
             log "WARNUNG: SSL-Zertifikat konnte nicht erstellt werden (Exit-Code: $CERT_RESULT)"
             # Fallback: Nginx ohne SSL starten
-            show_progress 92 "⚠️  SSL-Fehler - Starte ohne SSL (HTTP only)..."
+            show_progress 92 "    ⚠  SSL-Fehler - Start ohne SSL (nur HTTP)..."
 
             # Erstelle einfache HTTP-Only Konfiguration
             cat > /etc/nginx/sites-available/pterodactyl.conf << EOFSSL
@@ -583,7 +609,7 @@ EOFSSL
             CRON_CMD="0 3 */4 * * systemctl stop nginx && certbot renew --quiet && systemctl start nginx"
             (crontab -l 2>/dev/null | grep -v "certbot renew"; echo "$CRON_CMD") | crontab -
 
-            show_progress 92 "✅ SSL-Zertifikat erfolgreich installiert..."
+            show_progress 92 "    ✓ SSL-Zertifikat erfolgreich installiert"
         fi
 
         # Nginx Konfiguration testen
@@ -620,7 +646,7 @@ EOFFALLBACK
         fi
 
         # Schritt 18: Abschluss (95-100%)
-        show_progress 95 "🧹 Aufräumarbeiten werden durchgeführt..."
+        show_progress 95 "==> Installation wird abgeschlossen"
         log "Führe Aufräumarbeiten durch"
 
         # Cache leeren
@@ -631,11 +657,11 @@ EOFFALLBACK
         # Finale Berechtigungen
         chown -R www-data:www-data "$PANEL_DIR"
 
-        show_progress 98 "✅ Installation wird finalisiert..."
+        show_progress 98 "    → Aufräumen..."
         log "Installation abgeschlossen"
 
         # GDS Management Commands installieren
-        show_progress 99 "📦 Management-Tools werden installiert..."
+        show_progress 99 "    → Verwaltungstools werden installiert..."
         log "Installiere GDS Commands"
 
         # Alle Verwaltungs-Scripte nach /opt/pterodactyl/ kopieren
@@ -696,12 +722,44 @@ EOFFALLBACK
         fi
 
         sleep 1
-        show_progress 100 "Installation erfolgreich abgeschlossen!"
+        show_progress 100 "    ✓ Installation erfolgreich abgeschlossen!"
         sleep 2
 
     } | whiptail --title "Pterodactyl Panel Installation" --gauge "Bitte warten..." 10 80 0 3>&1 1>&2 2>&3
 
     exec 3>&-
+
+    # Moderne CLI Ausgabe nach der Installation
+    clear
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║  ✓ Installation erfolgreich abgeschlossen                  ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "==> Installations-Zusammenfassung"
+    echo "    ✓ Pterodactyl Panel ${PTERODACTYL_VERSION} installiert"
+    echo "    ✓ PHP ${PHP_VERSION} konfiguriert"
+    echo "    ✓ MariaDB Datenbank erstellt"
+    echo "    ✓ Nginx Webserver konfiguriert"
+    echo "    ✓ Redis Cache aktiviert"
+    echo "    ✓ SSL-Zertifikat installiert"
+    echo "    ✓ Services gestartet und aktiviert"
+    echo ""
+    echo "==> Zugriffsinformationen"
+    echo "    → Panel URL: https://${panel_domain}"
+    echo "    → Username: admin"
+    echo "    → Email: ${admin_email}"
+    echo "    → Password: ${user_password}"
+    echo ""
+    echo "==> Nächste Schritte"
+    echo "    1. Speichere deine Zugangsdaten an einem sicheren Ort"
+    echo "    2. Melde dich im Panel an"
+    echo "    3. Installiere Wings, um Gameserver zu erstellen"
+    echo "    4. Konfiguriere deinen ersten Node"
+    echo ""
+    echo "⏱  Installations-Log: ${LOG_FILE}"
+    echo ""
+    sleep 3
 
     # Erfolgsmeldung
     whiptail_success --title "Installation erfolgreich" --msgbox "Pterodactyl Panel wurde erfolgreich installiert!\n\nDomain: https://${panel_domain}\nBenutzer: admin\nE-Mail: ${admin_email}\nPasswort: ${user_password}\n\nLog-Datei: ${LOG_FILE}" 16 80
