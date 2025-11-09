@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
 # Eigenständiger Pterodactyl Wings Installer
 # Komplett unabhängig von Drittanbieter-Scripts
 # Mit Config-First Ansatz für standalone Installation
@@ -25,32 +28,36 @@ log() {
 
 # Überprüfen, ob Wings bereits auf dem System installiert ist
 if [ -f "$WINGS_PATH" ]; then
-    if whiptail --title "🚀 Wings bereits installiert" --yesno "Auf diesem System ist bereits Wings installiert. Wenn du versuchst Wings zu starten, falls es nicht reagiert, können wir das hier versuchen. Soll der Status ermittelt werden?" 10 60; then
+    if whiptail_warning --title "WARNUNG: Wings bereits installiert" --yesno "Auf diesem System ist bereits Wings installiert.\n\nMöchtest du:\n- JA: Neuinstallation fortsetzen (überschreibt bestehende Installation)\n- NEIN: Status prüfen und ggf. Wings neu starten" 14 75; then
+        # Benutzer möchte neu installieren - Warnung und Bestätigung
+        if ! whiptail_warning --title "Neuinstallation bestätigen" --yesno "ACHTUNG: Die Neuinstallation wird die bestehende Wings-Installation überschreiben!\n\nBist du sicher, dass du fortfahren möchtest?" 12 70; then
+            whiptail_info --title "Abgebrochen" --msgbox "Installation wurde abgebrochen." 8 50
+            exit 0
+        fi
+        # Fortfahren mit Installation (Script läuft weiter)
+    else
+        # Status prüfen und Wings neu starten
         status_output=$(systemctl status wings 2>&1)
         if [[ $status_output == *"Failed to start Pterodactyl Wings Daemon."* ]]; then
-            whiptail --title "🔴 Wings Fehler" --msgbox "Es gab einen Fehler beim Starten von Wings. Versuche, Wings neu zu starten. Bestätige, wenn der Neustart erfolgen soll." 10 60
+            whiptail_error --title "Wings Fehler" --msgbox "Es gab einen Fehler beim Starten von Wings. Versuche, Wings neu zu starten. Bestätige, wenn der Neustart erfolgen soll." 10 60
             sudo systemctl restart wings
             status_output=$(systemctl status wings 2>&1)
             if [[ $status_output == *"Failed to start Pterodactyl Wings Daemon."* ]]; then
-                whiptail --title "🔴 Wings Fehler" --msgbox "Wings konnte nicht gestartet werden, trotz Neustart. Überprüfe, ob eventuell Port-Konflikte vorhanden sind und versuche es erneut, dies kannst du mit dem Befehl 'sudo wings' nachprüfen." 10 80
+                whiptail_error --title "Wings Fehler" --msgbox "Wings konnte nicht gestartet werden, trotz Neustart. Überprüfe, ob eventuell Port-Konflikte vorhanden sind und versuche es erneut, dies kannst du mit dem Befehl 'sudo wings' nachprüfen." 10 80
             else
-                whiptail --title "🟢 Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein. Das Script wird nun beendet." 10 60
+                whiptail_success --title "Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein. Das Script wird nun beendet." 10 60
             fi
         elif [[ $status_output == *"inactive (dead)"* ]]; then
             sudo systemctl start wings
             status_output=$(systemctl status wings 2>&1)
             if [[ $status_output == *"Active: active (running)"* ]]; then
-                whiptail --title "🟢 Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein." 10 60
+                whiptail_success --title "Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein." 10 60
             fi
         else
-            whiptail --title "🚀 Wings bereits installiert" --msgbox "Wings ist bereits auf diesem System installiert und läuft." 10 60
-            exit 0
+            whiptail_success --title "Wings bereits installiert" --msgbox "Wings ist bereits auf diesem System installiert und läuft." 10 60
         fi
-    else
-        whiptail --title "🚫 Wings Installation abgebrochen" --msgbox "Die Installation von Wings wurde abgebrochen." 10 60
         exit 0
     fi
-    exit 0
 fi
 
 # Funktionen zur Validierung
@@ -60,18 +67,18 @@ validate_domain() {
         local server_ip=$(hostname -I | awk '{print $1}')
         local dns_ip=$(dig +short $domain | head -n1)
         if [[ "$dns_ip" == "$server_ip" ]]; then
-            title="✅ Erfolg - Domain Überprüfung"
+            title="Erfolg - Domain Überprüfung"
             message="Die IP-Adresse der Domain $domain stimmt mit der IP-Adresse des Servers überein. Die Installation wird fortgesetzt."
             whiptail --title "$title" --msgbox "$message" 10 60
             return 0
         else
-            title="❌ Fehler - Domain Überprüfung"
+            title="Fehler - Domain Überprüfung"
             message="Die IP-Adresse der Domain $domain stimmt nicht mit der IP-Adresse des Servers überein.\n\nDomain -> $domain\nServer IP -> $server_ip\nDNS IP -> $dns_ip"
             whiptail --title "$title" --msgbox "$message" 12 70
             return 1
         fi
     else
-        title="❌ Fehler - Domain Überprüfung"
+        title="Fehler - Domain Überprüfung"
         message="Die eingegebene Domain $domain ist keine gültige Domain-Struktur."
         whiptail --title "$title" --msgbox "$message" 10 60
         return 1
@@ -100,7 +107,7 @@ show_progress() {
 
 # Config-First Ansatz für Standalone Installation
 prepare_config_for_standalone() {
-    whiptail --title "📋 Standalone Wings Installation" --msgbox "Du installierst Wings ohne Panel auf diesem Server.\n\nVor der Installation muss die Konfigurationsdatei vorbereitet werden.\n\nIm nächsten Schritt wird das Verzeichnis /etc/pterodactyl/ erstellt und eine leere config.yml Datei angelegt." 14 75
+    whiptail_info --title "Standalone Wings Installation" --msgbox "Du installierst Wings ohne Panel auf diesem Server.\n\nVor der Installation muss die Konfigurationsdatei vorbereitet werden.\n\nIm nächsten Schritt wird das Verzeichnis /etc/pterodactyl/ erstellt und eine leere config.yml Datei angelegt." 14 75
 
     # Erstelle Verzeichnis und leere config.yml
     mkdir -p /etc/pterodactyl
@@ -111,29 +118,29 @@ prepare_config_for_standalone() {
     log "Leere config.yml erstellt: $CONFIG_PATH"
 
     # Zeige Anleitung
-    whiptail --title "⚠️  WICHTIG: Config vorbereiten" --msgbox "BEVOR die Installation fortfährt, musst du folgendes tun:\n\n1️⃣  Gehe in dein Pterodactyl Panel (Admin-Bereich)\n2️⃣  Erstelle eine neue Node (Location -> Nodes -> Create New)\n3️⃣  Trage die Daten für diesen Server ein:\n     - FQDN: Die Domain, die du gleich angibst\n     - Memory & Disk: Ressourcen dieses Servers\n4️⃣  Nach dem Erstellen: Klicke auf 'Configuration'\n5️⃣  Kopiere den KOMPLETTEN Inhalt der config.yml\n6️⃣  Öffne eine ZWEITE SSH-Verbindung zu diesem Server\n7️⃣  Führe aus: nano /etc/pterodactyl/config.yml\n8️⃣  Füge den kopierten Inhalt ein (Rechtsklick -> Paste)\n9️⃣  Speichere mit STRG+O, Enter, dann STRG+X\n\n⚠️  Erst NACH diesem Schritt kannst du fortfahren!" 24 85
+    whiptail_info --title "WICHTIG: Config vorbereiten" --msgbox "BEVOR die Installation fortfährt, musst du folgendes tun:\n\n1. Gehe in dein Pterodactyl Panel (Admin-Bereich)\n2. Erstelle eine neue Node (Location -> Nodes -> Create New)\n3. Trage die Daten für diesen Server ein:\n     - FQDN: Die Domain, die du gleich angibst\n     - Memory & Disk: Ressourcen dieses Servers\n4. Nach dem Erstellen: Klicke auf 'Configuration'\n5. Kopiere den KOMPLETTEN Inhalt der config.yml\n6. Öffne eine ZWEITE SSH-Verbindung zu diesem Server\n7. Führe aus: nano /etc/pterodactyl/config.yml\n8. Füge den kopierten Inhalt ein (Rechtsklick -> Paste)\n9. Speichere mit STRG+O, Enter, dann STRG+X\n\nErst NACH diesem Schritt kannst du fortfahren!" 24 85
 
     # Warte auf Bestätigung in Schleife
     while true; do
         if whiptail --title "Config bereit?" --yesno "Hast du die config.yml aus dem Panel in /etc/pterodactyl/config.yml eingefügt?\n\nWenn ja, wird jetzt geprüft ob die Datei gültig ist." 12 70; then
             # Prüfe ob config.yml nicht leer ist
             if [ ! -s "$CONFIG_PATH" ]; then
-                whiptail --title "❌ Config ist leer" --msgbox "Die Datei /etc/pterodactyl/config.yml ist leer oder existiert nicht.\n\nBitte füge die Konfiguration aus dem Panel ein und versuche es erneut." 10 70
+                whiptail_error --title "Config ist leer" --msgbox "Die Datei /etc/pterodactyl/config.yml ist leer oder existiert nicht.\n\nBitte füge die Konfiguration aus dem Panel ein und versuche es erneut." 10 70
                 continue
             fi
 
             # Prüfe ob config.yml valides YAML mit benötigten Feldern enthält
             if ! grep -q "token_id:" "$CONFIG_PATH" || ! grep -q "token:" "$CONFIG_PATH" || ! grep -q "api:" "$CONFIG_PATH"; then
-                whiptail --title "❌ Config ungültig" --msgbox "Die config.yml scheint nicht vollständig zu sein.\n\nStelle sicher, dass du den KOMPLETTEN Inhalt aus dem Panel kopiert hast.\n\nBenötigte Felder: token_id, token, api" 12 70
+                whiptail_error --title "Config ungültig" --msgbox "Die config.yml scheint nicht vollständig zu sein.\n\nStelle sicher, dass du den KOMPLETTEN Inhalt aus dem Panel kopiert hast.\n\nBenötigte Felder: token_id, token, api" 12 70
                 continue
             fi
 
-            whiptail --title "✅ Config validiert" --msgbox "Die config.yml wurde erfolgreich validiert!\n\nDie Installation wird jetzt fortgesetzt." 10 60
+            whiptail_success --title "Config validiert" --msgbox "Die config.yml wurde erfolgreich validiert!\n\nDie Installation wird jetzt fortgesetzt." 10 60
             log "Config validiert und bereit"
             break
         else
             if whiptail --title "Installation abbrechen?" --yesno "Möchtest du die Installation abbrechen?\n\nWenn Nein, kehren wir zur Config-Anleitung zurück." 10 60; then
-                whiptail --title "🚫 Installation abgebrochen" --msgbox "Die Wings-Installation wurde abgebrochen.\n\nDu kannst sie später über die Wartung erneut starten." 10 60
+                whiptail_info --title "Installation abgebrochen" --msgbox "Die Wings-Installation wurde abgebrochen.\n\nDu kannst sie später über die Wartung erneut starten." 10 60
                 exit 0
             fi
         fi
@@ -146,28 +153,31 @@ install_docker_standalone() {
 
     exec 3>&1
     {
-        show_progress 5 "🐳 Docker-Repository wird hinzugefügt..."
+        show_progress 5 "Docker-Repository wird hinzugefügt..."
 
         # Alte Docker-Versionen entfernen
         apt-get remove -y docker docker-engine docker.io containerd runc >> "$LOG_FILE" 2>&1
 
         # Docker GPG Key hinzufügen
         install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg -o /etc/apt/keyrings/docker.asc >> "$LOG_FILE" 2>&1
+        if ! curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg -o /etc/apt/keyrings/docker.asc >> "$LOG_FILE" 2>&1; then
+            log "FEHLER: Docker GPG Key konnte nicht heruntergeladen werden"
+            return 1
+        fi
         chmod a+r /etc/apt/keyrings/docker.asc
 
-        show_progress 10 "🐳 Docker-Repository wird konfiguriert..."
+        show_progress 10 "Docker-Repository wird konfiguriert..."
 
         # Repository hinzufügen
         echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-        show_progress 15 "📦 Paketquellen werden aktualisiert..."
+        show_progress 15 "Paketquellen werden aktualisiert..."
         apt-get update >> "$LOG_FILE" 2>&1
 
-        show_progress 20 "🐳 Docker wird installiert..."
+        show_progress 20 "Docker wird installiert..."
         DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >> "$LOG_FILE" 2>&1
 
-        show_progress 30 "🐳 Docker wird konfiguriert..."
+        show_progress 30 "Docker wird konfiguriert..."
         systemctl enable docker >> "$LOG_FILE" 2>&1
         systemctl start docker >> "$LOG_FILE" 2>&1
 
@@ -185,17 +195,24 @@ install_wings_standalone() {
 
     exec 3>&1
     {
-        show_progress 35 "🚀 Wings Binary wird heruntergeladen..."
+        show_progress 35 "Wings Binary wird heruntergeladen..."
 
         # Neueste Wings-Version ermitteln
-        WINGS_VERSION=$(curl -s https://api.github.com/repos/pterodactyl/wings/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        if ! WINGS_VERSION=$(curl -s https://api.github.com/repos/pterodactyl/wings/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); then
+            log "WARNUNG: Konnte Wings-Version nicht von GitHub abrufen"
+            WINGS_VERSION="latest"
+        fi
         log "Wings Version: $WINGS_VERSION"
 
         # Wings herunterladen
-        curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64" >> "$LOG_FILE" 2>&1
+        if ! curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64" >> "$LOG_FILE" 2>&1; then
+            log "FEHLER: Wings Binary konnte nicht heruntergeladen werden"
+            show_progress 37 "FEHLER: Wings-Download fehlgeschlagen"
+            return 1
+        fi
         chmod u+x /usr/local/bin/wings
 
-        show_progress 45 "🔧 Wings Systemd Service wird erstellt..."
+        show_progress 45 "Wings Systemd Service wird erstellt..."
 
         # Systemd Service erstellen
         cat > /etc/systemd/system/wings.service << 'EOF'
@@ -222,12 +239,12 @@ EOF
 
         log "Wings Systemd Service erstellt"
 
-        show_progress 50 "📦 Certbot wird installiert..."
+        show_progress 50 "Certbot wird installiert..."
 
         # Certbot installieren
         apt-get install -y certbot >> "$LOG_FILE" 2>&1
 
-        show_progress 60 "🔒 SSL-Zertifikat wird erstellt..."
+        show_progress 60 "SSL-Zertifikat wird erstellt..."
 
         # Stoppe Docker temporär für certbot
         systemctl stop docker >> "$LOG_FILE" 2>&1
@@ -238,39 +255,39 @@ EOF
 
         if [ $CERT_RESULT -ne 0 ]; then
             log "WARNUNG: SSL-Zertifikat konnte nicht erstellt werden"
-            show_progress 65 "⚠️  SSL-Zertifikat fehlgeschlagen, fahre ohne SSL fort..."
+            show_progress 65 "SSL-Zertifikat fehlgeschlagen, fahre ohne SSL fort..."
         else
             log "SSL-Zertifikat erfolgreich erstellt"
-            show_progress 70 "✅ SSL-Zertifikat erfolgreich erstellt"
+            show_progress 70 "SSL-Zertifikat erfolgreich erstellt"
         fi
 
         # Docker wieder starten
         systemctl start docker >> "$LOG_FILE" 2>&1
 
-        show_progress 75 "🔧 Wings wird konfiguriert..."
+        show_progress 75 "Wings wird konfiguriert..."
 
         # Wings Service aktivieren
         systemctl enable wings >> "$LOG_FILE" 2>&1
 
-        show_progress 80 "⏰ Automatische SSL-Erneuerung wird eingerichtet..."
+        show_progress 80 "Automatische SSL-Erneuerung wird eingerichtet..."
 
         # Crontab für automatische SSL-Zertifikat-Erneuerung (alle 4 Tage, 3 Uhr nachts)
         CRON_CMD="0 3 */4 * * systemctl stop wings && systemctl stop docker && certbot renew --quiet && systemctl start docker && systemctl start wings"
         (crontab -l 2>/dev/null | grep -v "certbot renew"; echo "$CRON_CMD") | crontab -
         log "SSL Auto-Renewal Cronjob eingerichtet"
 
-        show_progress 90 "🚀 Wings wird gestartet..."
+        show_progress 90 "Wings wird gestartet..."
 
         # Wings starten
         systemctl start wings >> "$LOG_FILE" 2>&1
 
         sleep 2
 
-        show_progress 95 "✅ Installation wird abgeschlossen..."
+        show_progress 95 "Installation wird abgeschlossen..."
 
         log "Wings Installation abgeschlossen"
 
-        show_progress 100 "✅ Wings erfolgreich installiert!"
+        show_progress 100 "Wings erfolgreich installiert!"
         sleep 1
 
     } | whiptail --title "Wings Installation" --gauge "Wings wird installiert..." 8 70 0 3>&1
@@ -300,15 +317,15 @@ integrate_wings() {
                     systemctl start wings
                     sleep 2
                     if whiptail --title "Wings Status prüfen" --yesno "Wings wurde nun gestartet. Überprüfe jetzt bitte, ob die Node aktiv ist. Das siehst du an einem grünen Herz, das schlägt." 10 60; then
-                        whiptail --title "🟢 Pterodactyl ist nun eingerichtet" --msgbox "Die Installation ist nun abgeschlossen, du kannst nun Server für dich (und andere) anlegen. Bevor du das aber tust, musst du noch einige Ports freigeben. Das kannst du unter der Node im Panel unter dem Reiter 'Allocations' machen. Dort trägst du dann rechts oben die IP Adresse des Servers ein, in der Mitte einen Alias (zum Beispiel die Domain, unter der dein Server auch erreichbar ist. Das ist kein Pflichtfeld, kannst du auch frei lassen) und darunter die Ports, die du nutzen möchtest. Mit einem Komma kannst du mehrere eingeben. Viel Spaß mit deinem Panel und empfehle GermanDactyl gerne weiter, wenn wir dir weiterhelfen konnten :)." 18 100
+                        whiptail_success --title "Pterodactyl ist nun eingerichtet" --msgbox "Die Installation ist nun abgeschlossen, du kannst nun Server für dich (und andere) anlegen. Bevor du das aber tust, musst du noch einige Ports freigeben. Das kannst du unter der Node im Panel unter dem Reiter 'Allocations' machen. Dort trägst du dann rechts oben die IP Adresse des Servers ein, in der Mitte einen Alias (zum Beispiel die Domain, unter der dein Server auch erreichbar ist. Das ist kein Pflichtfeld, kannst du auch frei lassen) und darunter die Ports, die du nutzen möchtest. Mit einem Komma kannst du mehrere eingeben. Viel Spaß mit deinem Panel und empfehle GermanDactyl gerne weiter, wenn wir dir weiterhelfen konnten :)." 18 100
                         swap_question
                         return 0
                     else
-                        whiptail --title "⚠️  Node nicht aktiv" --msgbox "Die Node scheint nicht aktiv zu sein. Überprüfe folgendes:\n\n1. Ist die config.yml korrekt?\n2. Läuft Wings? (systemctl status wings)\n3. Sind Ports freigegeben?\n4. Firewall-Regeln korrekt?" 14 70
+                        whiptail_error --title "Node nicht aktiv" --msgbox "Die Node scheint nicht aktiv zu sein. Überprüfe folgendes:\n\n1. Ist die config.yml korrekt?\n2. Läuft Wings? (systemctl status wings)\n3. Sind Ports freigegeben?\n4. Firewall-Regeln korrekt?" 14 70
                         break
                     fi
                 else
-                    whiptail --title "Wings Integration" --msgbox "Die Datei /etc/pterodactyl/config.yml existiert nicht oder ist leer. Hast du es eventuell falsch abgelegt oder vergessen zu speichern?" 10 70
+                    whiptail_error --title "Wings Integration" --msgbox "Die Datei /etc/pterodactyl/config.yml existiert nicht oder ist leer. Hast du es eventuell falsch abgelegt oder vergessen zu speichern?" 10 70
                 fi
             else
                 continue
@@ -319,6 +336,153 @@ integrate_wings() {
     done
 }
 
+# HDD Backup-Speicher konfigurieren (ALPHA FEATURE)
+configure_hdd_backup_storage() {
+    log "Checking for additional hard drives for backup storage"
+
+    # Systemfestplatte ermitteln (wo / gemountet ist)
+    SYSTEM_DISK=$(lsblk --noheadings --raw -o NAME,MOUNTPOINT,TYPE | grep "/$" | awk '{print $1}' | sed 's/[0-9]*$//')
+
+    # Alle Festplatten auflisten (TYPE=disk), die nicht gemountet sind und nicht die Systemfestplatte sind
+    mapfile -t AVAILABLE_DISKS < <(lsblk --noheadings --raw -o NAME,SIZE,TYPE,MOUNTPOINT | \
+        awk -v sys="$SYSTEM_DISK" '$3=="disk" && $4=="" && $1!=sys {print $1 " (" $2 ")"}')
+
+    # Wenn keine zusätzlichen Festplatten gefunden wurden
+    if [ ${#AVAILABLE_DISKS[@]} -eq 0 ]; then
+        log "No additional unmounted hard drives found"
+        return 0
+    fi
+
+    log "Found ${#AVAILABLE_DISKS[@]} unmounted disk(s)"
+
+    # Benutzer fragen ob HDD für Backups verwendet werden soll
+    if ! whiptail_warning --title "ALPHA: HDD für Backups erkannt" --yesno "Es wurde(n) ${#AVAILABLE_DISKS[@]} zusätzliche Festplatte(n) gefunden!\n\nMöchtest du eine davon für Server-Backups verwenden?\n\nVorteile:\n• Schneller Speicher (SSD) bleibt für Server frei\n• Backups auf separater Festplatte\n• Bessere Datensicherheit\n\nWARNUNG: Dies ist ein ALPHA-Feature!\nDie gewählte Festplatte wird formatiert und alle Daten gehen verloren!" 20 75; then
+        log "User declined HDD backup storage"
+        return 0
+    fi
+
+    # Wenn nur eine Festplatte: direkt verwenden
+    # Wenn mehrere: Auswahlmenü anzeigen
+    local SELECTED_DISK
+    if [ ${#AVAILABLE_DISKS[@]} -eq 1 ]; then
+        SELECTED_DISK=$(echo "${AVAILABLE_DISKS[0]}" | awk '{print $1}')
+    else
+        # Menü-Array erstellen
+        local menu_options=()
+        for i in "${!AVAILABLE_DISKS[@]}"; do
+            DISK_NAME=$(echo "${AVAILABLE_DISKS[$i]}" | awk '{print $1}')
+            DISK_SIZE=$(echo "${AVAILABLE_DISKS[$i]}" | grep -oP '\(.*?\)')
+            menu_options+=("$DISK_NAME" "$DISK_SIZE")
+        done
+
+        SELECTED_DISK=$(whiptail --title "Festplatte auswählen" --menu "Wähle die Festplatte für Backups:" 18 60 10 "${menu_options[@]}" 3>&1 1>&2 2>&3)
+
+        if [ -z "$SELECTED_DISK" ]; then
+            log "User cancelled disk selection"
+            return 0
+        fi
+    fi
+
+    log "User selected disk: $SELECTED_DISK"
+
+    # Finale Bestätigung
+    DISK_INFO=$(lsblk "/dev/$SELECTED_DISK" --noheadings -o NAME,SIZE,MODEL 2>/dev/null | head -n 1)
+    if ! whiptail_warning --title "WARNUNG: Festplatte formatieren" --yesno "ACHTUNG: Die Festplatte wird jetzt formatiert!\n\nFestplatte: /dev/$SELECTED_DISK\nInfo: $DISK_INFO\n\nALLE DATEN AUF DIESER FESTPLATTE GEHEN VERLOREN!\n\nFortfahren?" 16 70; then
+        log "User cancelled HDD formatting"
+        return 0
+    fi
+
+    # Festplatte vorbereiten
+    {
+        echo 10
+        echo "XXX"
+        echo "Erstelle Partitionstabelle..."
+        echo "XXX"
+        # Partition erstellen
+        echo -e "o\nn\np\n1\n\n\nw" | fdisk "/dev/$SELECTED_DISK" >> "$LOG_FILE" 2>&1
+        sleep 2
+
+        echo 30
+        echo "XXX"
+        echo "Formatiere Festplatte (ext4)..."
+        echo "XXX"
+        # Formatieren mit ext4
+        mkfs.ext4 -F "/dev/${SELECTED_DISK}1" >> "$LOG_FILE" 2>&1
+        sleep 1
+
+        echo 50
+        echo "XXX"
+        echo "Erstelle Mount-Point..."
+        echo "XXX"
+        # Mount-Point erstellen
+        mkdir -p /mnt/storage
+
+        echo 60
+        echo "XXX"
+        echo "Mounte Festplatte..."
+        echo "XXX"
+        # Temporär mounten
+        mount "/dev/${SELECTED_DISK}1" /mnt/storage >> "$LOG_FILE" 2>&1
+
+        echo 70
+        echo "XXX"
+        echo "Konfiguriere automatisches Mounten (fstab)..."
+        echo "XXX"
+        # UUID ermitteln
+        DISK_UUID=$(blkid -s UUID -o value "/dev/${SELECTED_DISK}1")
+
+        # fstab Backup
+        cp /etc/fstab /etc/fstab.backup-$(date +%Y%m%d-%H%M%S)
+
+        # Zu fstab hinzufügen (wenn noch nicht vorhanden)
+        if ! grep -q "$DISK_UUID" /etc/fstab 2>/dev/null; then
+            echo "UUID=$DISK_UUID /mnt/storage ext4 defaults,nofail 0 2" >> /etc/fstab
+        fi
+
+        echo 80
+        echo "XXX"
+        echo "Aktualisiere Wings Konfiguration..."
+        echo "XXX"
+        # Wings config.yml updaten
+        if [ -f "$CONFIG_PATH" ]; then
+            # Backup der config
+            cp "$CONFIG_PATH" "${CONFIG_PATH}.backup-$(date +%Y%m%d-%H%M%S)"
+
+            # Backup-Verzeichnis in config.yml aktualisieren
+            # Suche nach "backup_directory:" und ersetze den Wert
+            if grep -q "backup_directory:" "$CONFIG_PATH"; then
+                sed -i 's|backup_directory:.*|backup_directory: /mnt/storage/backups|g' "$CONFIG_PATH"
+            else
+                # Falls nicht vorhanden, hinzufügen (nach system: Sektion)
+                sed -i '/^system:/a\  backup_directory: /mnt/storage/backups' "$CONFIG_PATH"
+            fi
+        fi
+
+        echo 90
+        echo "XXX"
+        echo "Setze Berechtigungen..."
+        echo "XXX"
+        # Backup-Verzeichnis erstellen und Berechtigungen setzen
+        mkdir -p /mnt/storage/backups
+        chown -R www-data:www-data /mnt/storage
+        chmod -R 755 /mnt/storage
+
+        echo 100
+        echo "XXX"
+        echo "Fertig!"
+        echo "XXX"
+        sleep 1
+    } | whiptail --title "HDD Backup-Speicher einrichten" --gauge "Festplatte wird konfiguriert..." 8 70 0
+
+    # Wings neu starten um neue Config zu laden
+    systemctl restart wings >> "$LOG_FILE" 2>&1
+
+    # Erfolgsmeldung
+    whiptail_success --title "HDD Backup-Speicher konfiguriert" --msgbox "Die Festplatte wurde erfolgreich konfiguriert!\n\nMount-Point: /mnt/storage\nBackup-Verzeichnis: /mnt/storage/backups\n\nWings wurde neu gestartet und verwendet jetzt den neuen Backup-Speicher.\n\nDie Konfiguration wird auch nach Neustarts automatisch geladen (fstab)." 16 75
+
+    log "HDD backup storage configured successfully: /dev/$SELECTED_DISK mounted at /mnt/storage"
+}
+
 # SWAP-Speicher zuweisen
 swap_question() {
     if whiptail --title "Swap-Speicher für Wings" --yesno "Möchtest du SWAP-Speicher für Wings einbinden?\n\nSWAP ist virtueller Arbeitsspeicher auf der Festplatte und kann hilfreich sein, wenn der RAM knapp wird." 12 70; then
@@ -327,34 +491,34 @@ swap_question() {
         if [ $exitstatus -eq 0 ]; then
             if [[ $size =~ ^[0-9]+$ ]]; then
                 {
-                    show_progress 20 "💾 Swap-Datei wird erstellt..."
+                    show_progress 20 "Swap-Datei wird erstellt..."
                     fallocate -l ${size}M /swapfile >> "$LOG_FILE" 2>&1
 
-                    show_progress 40 "🔒 Berechtigungen werden gesetzt..."
+                    show_progress 40 "Berechtigungen werden gesetzt..."
                     chmod 600 /swapfile
 
-                    show_progress 60 "🔧 Swap wird konfiguriert..."
+                    show_progress 60 "Swap wird konfiguriert..."
                     mkswap /swapfile >> "$LOG_FILE" 2>&1
 
-                    show_progress 80 "✅ Swap wird aktiviert..."
+                    show_progress 80 "Swap wird aktiviert..."
                     swapon /swapfile
 
-                    show_progress 100 "✅ Swap erfolgreich erstellt!"
+                    show_progress 100 "Swap erfolgreich erstellt!"
                     sleep 1
                 } | whiptail --title "Swap-Erstellung" --gauge "SWAP-Speicher wird erstellt..." 8 70 0
 
-                whiptail --title "Swap-Speicher erstellt" --msgbox "Swap-Speicher wurde erfolgreich erstellt und aktiviert (${size}MB).\n\nDas Script wird nun beendet." 10 60
+                whiptail_success --title "Swap-Speicher erstellt" --msgbox "Swap-Speicher wurde erfolgreich erstellt und aktiviert (${size}MB).\n\nDas Script wird nun beendet." 10 60
                 exit 0
             else
-                whiptail --title "Ungültige Eingabe" --msgbox "Ungültige Eingabe. Bitte gebe eine Zahl ein." 10 60
+                whiptail_error --title "Ungültige Eingabe" --msgbox "Ungültige Eingabe. Bitte gebe eine Zahl ein." 10 60
                 swap_question
             fi
         else
-            whiptail --title "Wings installiert" --msgbox "Wings wurde ohne SWAP-Speicher installiert. Du kannst es im Nachhinein über die Verwaltung nachinstallieren.\n\nDas Script wird nun beendet." 10 70
+            whiptail_info --title "Wings installiert" --msgbox "Wings wurde ohne SWAP-Speicher installiert. Du kannst es im Nachhinein über die Verwaltung nachinstallieren.\n\nDas Script wird nun beendet." 10 70
             exit 0
         fi
     else
-        whiptail --title "✅ Installation abgeschlossen" --msgbox "Wings wurde erfolgreich installiert!\n\nDas Script wird nun beendet." 10 60
+        whiptail_success --title "Installation abgeschlossen" --msgbox "Wings wurde erfolgreich installiert!\n\nDas Script wird nun beendet." 10 60
         exit 0
     fi
 }
@@ -366,33 +530,54 @@ main() {
         prepare_config_for_standalone
     fi
 
-    # Domain und Email abfragen
+    # Domain und Email abfragen mit verbesserter Validierung
     while true; do
         DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest. Diese muss als DNS-Eintrag bei deiner Domain verfügbar sein.\n\nBeispiel: wings.meinedomain.de" 12 70 3>&1 1>&2 2>&3)
 
-        if [ -z "$DOMAIN" ]; then
-            whiptail --title "Installation abgebrochen" --msgbox "Du hast keine Domain angegeben. Du musst eine Domain für Wings verwenden, streng genommen nicht zwingend aber dann unsicher. Das Script wird nun gestoppt, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 12 70
+        # Prüfe ob Eingabe abgebrochen wurde
+        if [ $? -ne 0 ]; then
+            whiptail_info --title "Installation abgebrochen" --msgbox "Installation wurde abgebrochen." 10 60
             exit 0
-        elif ! validate_domain "$DOMAIN"; then
+        fi
+
+        # Prüfe ob Domain leer ist
+        if [ -z "$DOMAIN" ]; then
+            whiptail_warning --title "Domain erforderlich" --msgbox "Du musst eine Domain eingeben.\n\nDie Installation erfordert eine gültige Domain für SSL-Zertifikate." 10 70
+            continue
+        fi
+
+        # Validiere Domain-Format
+        if ! validate_domain "$DOMAIN"; then
             continue
         fi
         break
     done
 
-    # Email abfragen
+    # Email abfragen mit verbesserter Validierung
     while true; do
         # Prüfen, ob Email bereits aus Panel-Installation vorhanden ist
         if [ -n "$PANEL_EMAIL" ]; then
             admin_email="$PANEL_EMAIL"
-            whiptail --title "E-Mail automatisch übernommen" --msgbox "Die E-Mail-Adresse wurde automatisch aus der Panel-Installation übernommen:\n\n$admin_email\n\nDiese wird für das SSL-Zertifikat von Wings verwendet." 12 70
+            whiptail_info --title "E-Mail automatisch übernommen" --msgbox "Die E-Mail-Adresse wurde automatisch aus der Panel-Installation übernommen:\n\n$admin_email\n\nDiese wird für das SSL-Zertifikat von Wings verwendet." 12 70
             break
         else
-            admin_email=$(whiptail --title "E-Mail für Let's Encrypt" --inputbox "Gib die E-Mail Adresse ein, die informiert werden soll, wenn das SSL Zertifikat ausläuft. Diese Zertifikate halten 90 Tage, kurz vor Ablauf wird man informiert.\n\n✅ Die automatische Erneuerung ist bereits eingerichtet (alle 4 Tage)." 15 80 3>&1 1>&2 2>&3)
+            admin_email=$(whiptail --title "E-Mail für Let's Encrypt" --inputbox "Gib die E-Mail Adresse ein, die informiert werden soll, wenn das SSL Zertifikat ausläuft. Diese Zertifikate halten 90 Tage, kurz vor Ablauf wird man informiert.\n\nDie automatische Erneuerung ist bereits eingerichtet (alle 4 Tage)." 15 80 3>&1 1>&2 2>&3)
 
-            if [ -z "$admin_email" ]; then
-                whiptail --title "Installation abgebrochen" --msgbox "Du hast keine E-Mail angegeben, die Installation wird abgebrochen, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 10 70
+            # Prüfe ob Eingabe abgebrochen wurde
+            if [ $? -ne 0 ]; then
+                whiptail_info --title "Installation abgebrochen" --msgbox "Installation wurde abgebrochen." 10 60
                 exit 0
-            elif ! validate_email "$admin_email"; then
+            fi
+
+            # Prüfe ob Email leer ist
+            if [ -z "$admin_email" ]; then
+                whiptail_warning --title "E-Mail erforderlich" --msgbox "Du musst eine gültige E-Mail-Adresse eingeben.\n\nDiese wird für das SSL-Zertifikat benötigt." 10 70
+                continue
+            fi
+
+            # Validiere Email-Format
+            if ! validate_email "$admin_email"; then
+                whiptail_error --title "Ungültige E-Mail" --msgbox "Die eingegebene E-Mail-Adresse ist ungültig.\n\nBitte gib eine gültige E-Mail-Adresse ein." 10 70
                 continue
             fi
             break
@@ -411,16 +596,20 @@ main() {
 
     # Bei Panel-Installation: Integration durchführen
     if [ "$PANEL_INSTALLED" = true ]; then
-        whiptail --title "Wings Integration" --msgbox "Wings wurde erfolgreich installiert!\n\nJetzt muss Wings noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 70
+        whiptail_info --title "Wings Integration" --msgbox "Wings wurde erfolgreich installiert!\n\nJetzt muss Wings noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 70
         integrate_wings "$DOMAIN"
     else
         # Standalone: Erfolgsmeldung und Hinweis auf Panel
-        whiptail --title "✅ Wings installiert" --msgbox "Wings wurde erfolgreich installiert!\n\nDa du Wings standalone installiert hast, sollte die Node im Panel jetzt als AKTIV angezeigt werden (grünes schlagendes Herz).\n\nFalls nicht, überprüfe:\n• Ist die config.yml korrekt?\n• Läuft Wings? (systemctl status wings)\n• Sind die Firewall-Ports offen?" 16 75
+        whiptail_success --title "Wings installiert" --msgbox "Wings wurde erfolgreich installiert!\n\nDa du Wings standalone installiert hast, sollte die Node im Panel jetzt als AKTIV angezeigt werden (grünes schlagendes Herz).\n\nFalls nicht, überprüfe:\n• Ist die config.yml korrekt?\n• Läuft Wings? (systemctl status wings)\n• Sind die Firewall-Ports offen?" 16 75
+
+        # HDD Backup-Speicher konfigurieren (falls zusätzliche Festplatten vorhanden)
+        configure_hdd_backup_storage
+
         swap_question
     fi
 
     # Spenden-Info
-    whiptail --title "💝 Projekt unterstützen" --msgbox "Wenn dir dieses Projekt weitergeholfen hat und du es unterstützen möchtest, würde ich mich über eine Spende freuen!\n\n🔗 Spenden-Link:\nhttps://spenden.24fire.de/pavl\n\nVielen Dank für deine Unterstützung!\n\n- GermanDactyl Setup Team" 16 78
+    whiptail_info --title "Projekt unterstützen" --msgbox "Wenn dir dieses Projekt weitergeholfen hat und du es unterstützen möchtest, würde ich mich über eine Spende freuen!\n\nSpenden-Link:\nhttps://spenden.24fire.de/pavl\n\nVielen Dank für deine Unterstützung!\n\n- GermanDactyl Setup Team" 16 78
 }
 
 # Starte Hauptinstallation

@@ -11,10 +11,8 @@ PANEL_DIR="/var/www/pterodactyl"
 LOG_FILE="/tmp/pterodactyl_install.log"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Whiptail-Farben laden
-if [ -f "$SCRIPT_DIR/whiptail-colors.sh" ]; then
-    source "$SCRIPT_DIR/whiptail-colors.sh"
-fi
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
 
 # SWAP-Setup laden
 if [ -f "$SCRIPT_DIR/swap-setup.sh" ]; then
@@ -42,7 +40,7 @@ handle_error() {
     local step=$2
     if [ $exit_code -ne 0 ]; then
         log "FEHLER bei Schritt: $step (Exit-Code: $exit_code)"
-        whiptail --title "❌ Installationsfehler" --msgbox "Ein Fehler ist aufgetreten bei:\n$step\n\nFehlercode: $exit_code\nLog-Datei: $LOG_FILE\n\nBitte prüfe die Log-Datei für Details." 14 78
+        whiptail_error --title "Installationsfehler" --msgbox "Ein Fehler ist aufgetreten bei:\n$step\n\nFehlercode: $exit_code\nLog-Datei: $LOG_FILE\n\nBitte prüfe die Log-Datei für Details." 14 78
         exit 1
     fi
 }
@@ -97,13 +95,13 @@ perform_system_check() {
         source /etc/os-release
 
         if [ "$ID" != "debian" ]; then
-            whiptail --title "❌ Nicht unterstützt" --msgbox "Dieses Script unterstützt nur Debian 12 und neuer.\n\nErkanntes System: ${NAME}" 10 60
+            whiptail_error --title "Nicht unterstützt" --msgbox "Dieses Script unterstützt nur Debian 12 und neuer.\n\nErkanntes System: ${NAME}" 10 60
             exit 1
         fi
 
         DEBIAN_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
         if [ "$DEBIAN_VERSION" -lt 12 ]; then
-            whiptail --title "❌ Veraltete Version" --msgbox "Dieses Script benötigt Debian 12 (Bookworm) oder neuer.\n\nAktuelle Version: Debian ${VERSION_ID}" 10 60
+            whiptail_error --title "Veraltete Version" --msgbox "Dieses Script benötigt Debian 12 (Bookworm) oder neuer.\n\nAktuelle Version: Debian ${VERSION_ID}" 10 60
             exit 1
         fi
     fi
@@ -651,12 +649,45 @@ EOFFALLBACK
         fi
         chmod +x /usr/local/bin/gds 2>> "$LOG_FILE"
 
-        # Backup-Verwaltung installieren
-        if [ -f "$SCRIPT_DIR/backup-verwaltung.sh" ]; then
-            mkdir -p /opt/pterodactyl
-            cp "$SCRIPT_DIR/backup-verwaltung.sh" /opt/pterodactyl/backup-verwaltung.sh
-            chmod +x /opt/pterodactyl/backup-verwaltung.sh
-        fi
+        # Alle Verwaltungs-Scripte nach /opt/pterodactyl/ kopieren
+        mkdir -p /opt/pterodactyl
+
+        # Liste aller zu kopierenden Scripte
+        SCRIPTS_TO_INSTALL=(
+            "backup-verwaltung.sh"
+            "database-host-config.sh"
+            "phpmyadmin-installer.sh"
+            "wings-installer.sh"
+            "problem-verwaltung.sh"
+            "custom-ssh-login-config.sh"
+            "swap-verwaltung.sh"
+            "theme-verwaltung.sh"
+            "whiptail-colors.sh"
+            "system-check.sh"
+            "swap-setup.sh"
+            "certbot-renew-verwaltung.sh"
+            "pelican-installer.sh"
+            "wings-pelican.sh"
+            "motd.sh"
+            "analyse.sh"
+        )
+
+        for script in "${SCRIPTS_TO_INSTALL[@]}"; do
+            if [ -f "$SCRIPT_DIR/$script" ]; then
+                cp "$SCRIPT_DIR/$script" "/opt/pterodactyl/$script"
+                chmod +x "/opt/pterodactyl/$script"
+                log "Installed: $script"
+            else
+                # Falls lokal nicht vorhanden, von GitHub holen
+                curl -sSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/$script" -o "/opt/pterodactyl/$script" 2>> "$LOG_FILE"
+                if [ $? -eq 0 ]; then
+                    chmod +x "/opt/pterodactyl/$script"
+                    log "Downloaded from GitHub: $script"
+                else
+                    log "WARNING: Could not install $script"
+                fi
+            fi
+        done
 
         sleep 1
         show_progress 100 "🎉 Installation erfolgreich abgeschlossen!"
@@ -667,13 +698,13 @@ EOFFALLBACK
     exec 3>&-
 
     # Erfolgsmeldung
-    whiptail --title "✅ Installation erfolgreich" --msgbox "Pterodactyl Panel wurde erfolgreich installiert!\n\n🌐 Domain: https://${panel_domain}\n👤 Benutzer: admin\n📧 E-Mail: ${admin_email}\n🔑 Passwort: ${user_password}\n\n📋 Log-Datei: ${LOG_FILE}" 16 80
+    whiptail_success --title "Installation erfolgreich" --msgbox "Pterodactyl Panel wurde erfolgreich installiert!\n\nDomain: https://${panel_domain}\nBenutzer: admin\nE-Mail: ${admin_email}\nPasswort: ${user_password}\n\nLog-Datei: ${LOG_FILE}" 16 80
 
     # Info über Management Commands
-    whiptail --title "🎯 GDS Management Commands installiert" --msgbox "Es stehen dir jetzt praktische Verwaltungsbefehle zur Verfügung!\n\nVerfügbare Befehle:\n\n• gds setup       - Wartungs- und Verwaltungsmenü\n• gds maintenance - Wartungsmodus aktivieren/deaktivieren\n• gds backup      - Backup-Verwaltung\n• gds domain      - Panel-Domain anzeigen\n• gds cert        - SSL-Zertifikat-Status\n• gds update      - Panel aktualisieren\n• gds status      - Dienste-Status anzeigen\n• gds user        - Benutzer erstellen\n\nUnd weitere! Verwende 'gds help' für die vollständige Liste." 24 78
+    whiptail_info --title "GDS Management Commands installiert" --msgbox "Es stehen dir jetzt praktische Verwaltungsbefehle zur Verfügung!\n\nVerfügbare Befehle:\n\n• gds setup       - Wartungs- und Verwaltungsmenü\n• gds maintenance - Wartungsmodus aktivieren/deaktivieren\n• gds backup      - Backup-Verwaltung\n• gds domain      - Panel-Domain anzeigen\n• gds cert        - SSL-Zertifikat-Status\n• gds update      - Panel aktualisieren\n• gds status      - Dienste-Status anzeigen\n• gds user        - Benutzer erstellen\n\nUnd weitere! Verwende 'gds help' für die vollständige Liste." 24 78
 
     # Spenden-Info
-    whiptail --title "💝 Projekt unterstützen" --msgbox "Wenn dir dieses Projekt weitergeholfen hat und du es unterstützen möchtest, würde ich mich über eine Spende freuen!\n\n🔗 Spenden-Link:\nhttps://spenden.24fire.de/pavl\n\nVielen Dank für deine Unterstützung!\n\n- GermanDactyl Setup Team" 16 78
+    whiptail_info --title "Projekt unterstützen" --msgbox "Wenn dir dieses Projekt weitergeholfen hat und du es unterstützen möchtest, würde ich mich über eine Spende freuen!\n\nSpenden-Link:\nhttps://spenden.24fire.de/pavl\n\nVielen Dank für deine Unterstützung!\n\n- GermanDactyl Setup Team" 16 78
 }
 
 # Export der Funktion für Verwendung in anderen Scripts

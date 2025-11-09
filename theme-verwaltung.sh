@@ -1,12 +1,24 @@
 #!/bin/bash
 
+# Log-Datei für Theme-Installation
+THEME_LOG="/opt/pterodactyl/theme-installation.log"
+
+# Logging-Funktion
+log_theme() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$THEME_LOG"
+}
+
 # Funktion zum Erstellen eines Backups
 create_backup() {
     local storage="/opt/pterodactyl/backups/panel"
 
+    log_theme "Theme-Verwaltung gestartet"
+
     # Überprüfen, ob das Backup-Verzeichnis existiert
     if [ ! -d "$storage" ]; then
         mkdir -p "$storage"
+        log_theme "Backup-Verzeichnis nicht gefunden, leite zur Backup-Erstellung weiter"
+
         whiptail --title "Backup erforderlich" --msgbox "Damit du keine unschönen Erfahrungen machen musst, empfehlen wir dir ein Backup vom aktuellen Panel zu machen. Die Themes sind von anderen Entwicklern auf Github, die du auf unserer Website nachlesen kannst. Es ist nie ausgeschlossen, dass Fehler passieren. Man sagt ja immer: 'Kein Backup, kein Mitleid'.
 
 Wir leiten dich nun weiter zu unserer Backup-Verwaltung. Erstelle dort bitte ein Backup für dein Panel. Wenn du das gemacht hast, kannst du zur Theme-Auswahl zurückkehren." 20 80
@@ -14,6 +26,7 @@ Wir leiten dich nun weiter zu unserer Backup-Verwaltung. Erstelle dort bitte ein
         # Skript ausführen
         curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
     else
+        log_theme "Backup-Verzeichnis existiert, fahre mit Theme-Verwaltung fort"
         manage_themes
     fi
 }
@@ -64,14 +77,44 @@ color_selection() {
     esac
 }
 
+# Rollback-Funktion bei Theme-Fehlern
+rollback_theme() {
+    local storage="/opt/pterodactyl/backups/panel"
+
+    log_theme "FEHLER: Theme-Installation fehlgeschlagen, versuche Rollback"
+
+    if [ ! -d "$storage" ]; then
+        whiptail --title "Rollback nicht möglich" --msgbox "FEHLER: Kein Backup gefunden!\n\nEin Rollback ist nicht möglich.\n\nBitte stelle das Panel manuell wieder her oder führe eine Neuinstallation durch." 12 65
+        log_theme "FEHLER: Rollback fehlgeschlagen - kein Backup vorhanden"
+        return 1
+    fi
+
+    if whiptail --title "Theme-Rollback" --yesno "Möchtest du das letzte Backup wiederherstellen?\n\nDies wird das Theme-Update rückgängig machen." 10 65; then
+        log_theme "Benutzer hat Rollback bestätigt, starte Wiederherstellung"
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+        log_theme "Rollback-Prozess abgeschlossen"
+    else
+        log_theme "Benutzer hat Rollback abgebrochen"
+    fi
+}
+
 # Funktion, um das Theme anzuwenden
 apply_theme() {
     local selection=$1 # Die übergebene Nummer für das Farbthema
+    local theme_names=("Dunkelrot" "Dunkelblau" "Dunkelgelb" "Dunkelgrün" "Dunkellila")
+    local theme_name="${theme_names[$((selection-1))]}"
+
+    log_theme "Theme-Installation gestartet: $theme_name (Auswahl: $selection)"
+
+    # Erstelle temporäres Backup-Marker
+    local backup_marker="/tmp/theme_backup_$(date +%s).marker"
+    touch "$backup_marker"
+
     {
         # Starte das externe Skript im Hintergrund und leite die Ausgabe um
         bash <(curl -s https://raw.githubusercontent.com/Sigma-Production/PteroFreeStuffinstaller/V1.10.1/resources/script.sh) <<< "1
 $selection
-n" &> /dev/null
+n" &> /tmp/theme_install.log
     } &
 
     # Prozess-ID des Hintergrundprozesses
@@ -104,11 +147,26 @@ n" &> /dev/null
     wait $PID
     EXIT_STATUS=$?
 
+    # Cleanup
+    rm -f "$backup_marker"
+
     # Überprüfe den Exit-Status
     if [ $EXIT_STATUS -eq 0 ]; then
-        whiptail --title "Farbtheme Anwendung" --msgbox "Das Farbtheme wurde erfolgreich angewendet." 8 45
+        log_theme "Theme-Installation erfolgreich: $theme_name"
+        whiptail --title "Farbtheme Anwendung" --msgbox "Das Farbtheme wurde erfolgreich angewendet.\n\nTheme: $theme_name" 10 50
     else
-        whiptail --title "Fehler" --msgbox "Es gab ein Problem bei der Anwendung des Farbthemes." 8 45
+        log_theme "FEHLER: Theme-Installation fehlgeschlagen: $theme_name (Exit-Code: $EXIT_STATUS)"
+
+        # Zeige Fehlerdetails aus Log
+        if [ -f /tmp/theme_install.log ]; then
+            log_theme "Theme-Fehlerlog: $(tail -n 5 /tmp/theme_install.log)"
+        fi
+
+        if whiptail --title "Theme-Installation fehlgeschlagen" --yesno "FEHLER: Bei der Theme-Installation ist ein Fehler aufgetreten.\n\nTheme: $theme_name\n\nMöchtest du einen Rollback durchführen?" 12 65; then
+            rollback_theme
+        else
+            log_theme "Benutzer hat Rollback nach Fehler abgelehnt"
+        fi
     fi
 
     # Kehre zum Hauptmenü zurück

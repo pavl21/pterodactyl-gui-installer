@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
 # SWAP-Setup für Pterodactyl Installation
 # Erstellt automatisch SWAP basierend auf verfügbarem Speicher (2%)
 
@@ -20,7 +23,7 @@ setup_swap() {
 
     # Prüfen ob bereits SWAP existiert
     if swapon --show | grep -q '/swapfile'; then
-        echo -e "${YELLOW}⚠${NC}  SWAP bereits konfiguriert, überspringe..."
+        echo -e "${YELLOW}Warnung:${NC}  SWAP bereits konfiguriert, überspringe..."
         log "SWAP bereits konfiguriert"
         return 0
     fi
@@ -40,13 +43,13 @@ setup_swap() {
         SWAP_SIZE=4096
     fi
 
-    echo -e "${BLUE}ℹ${NC}  SWAP wird erstellt: ${SWAP_SIZE} MB (2% von ${TOTAL_DISK_SPACE} MB Gesamtspeicher)"
+    echo -e "${BLUE}Info:${NC}  SWAP wird erstellt: ${SWAP_SIZE} MB (2% von ${TOTAL_DISK_SPACE} MB Gesamtspeicher)"
     log "Erstelle ${SWAP_SIZE} MB SWAP"
 
     # SWAP-Datei erstellen
     dd if=/dev/zero of=/swapfile bs=1M count=$SWAP_SIZE status=progress 2>> "${LOG_FILE:-/tmp/pterodactyl_install.log}"
     if [ $? -ne 0 ]; then
-        echo -e "${YELLOW}⚠${NC}  Konnte SWAP nicht erstellen (nicht kritisch)"
+        echo -e "${YELLOW}Warnung:${NC}  Konnte SWAP nicht erstellen (nicht kritisch)"
         log "WARNUNG: SWAP-Erstellung fehlgeschlagen"
         return 1
     fi
@@ -57,7 +60,7 @@ setup_swap() {
     # SWAP formatieren
     mkswap /swapfile >> "${LOG_FILE:-/tmp/pterodactyl_install.log}" 2>&1
     if [ $? -ne 0 ]; then
-        echo -e "${YELLOW}⚠${NC}  Konnte SWAP nicht formatieren"
+        echo -e "${YELLOW}Warnung:${NC}  Konnte SWAP nicht formatieren"
         log "WARNUNG: SWAP-Formatierung fehlgeschlagen"
         rm -f /swapfile
         return 1
@@ -66,7 +69,7 @@ setup_swap() {
     # SWAP aktivieren
     swapon /swapfile
     if [ $? -ne 0 ]; then
-        echo -e "${YELLOW}⚠${NC}  Konnte SWAP nicht aktivieren"
+        echo -e "${YELLOW}Warnung:${NC}  Konnte SWAP nicht aktivieren"
         log "WARNUNG: SWAP-Aktivierung fehlgeschlagen"
         rm -f /swapfile
         return 1
@@ -84,12 +87,12 @@ setup_swap() {
         echo 'vm.swappiness=10' >> /etc/sysctl.conf
     fi
 
-    echo -e "${GREEN}✓${NC}  SWAP erfolgreich eingerichtet (${SWAP_SIZE} MB)"
+    echo -e "${GREEN}OK:${NC}  SWAP erfolgreich eingerichtet (${SWAP_SIZE} MB)"
     log "SWAP erfolgreich eingerichtet: ${SWAP_SIZE} MB"
 
     # SWAP-Status anzeigen
     SWAP_TOTAL=$(free -m | awk '/^Swap:/{print $2}')
-    echo -e "${BLUE}ℹ${NC}  Gesamt-SWAP: ${SWAP_TOTAL} MB"
+    echo -e "${BLUE}Info:${NC}  Gesamt-SWAP: ${SWAP_TOTAL} MB"
 
     return 0
 }

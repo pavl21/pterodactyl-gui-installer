@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 # Prüfen ob Panel installiert ist
 check_panel_installed() {
     if [ ! -d "$PANEL_DIR" ]; then
-        echo -e "${RED}❌ Fehler: Pterodactyl Panel ist nicht installiert.${NC}"
+        echo -e "${RED}Fehler: Pterodactyl Panel ist nicht installiert.${NC}"
         echo -e "Installiere es zuerst mit: curl -sSL ${SETUP_URL} | sudo bash"
         exit 1
     fi
@@ -39,6 +39,7 @@ show_help() {
     echo -e "${YELLOW}Zusätzliche Befehle:${NC}"
     echo ""
     echo -e "  ${GREEN}gds update${NC}        - Pterodactyl Panel aktualisieren"
+    echo -e "  ${GREEN}gds update-scripts${NC} - Alle Verwaltungs-Scripte aktualisieren"
     echo -e "  ${GREEN}gds cache${NC}         - Cache leeren (config, view, route)"
     echo -e "  ${GREEN}gds restart${NC}       - Alle Pterodactyl-Dienste neu starten"
     echo -e "  ${GREEN}gds status${NC}        - Status aller Pterodactyl-Dienste anzeigen"
@@ -52,7 +53,7 @@ show_help() {
 
 # Setup/Wartungsmenü öffnen
 cmd_setup() {
-    echo -e "${BLUE}🔧 Öffne Wartungs- und Verwaltungsmenü...${NC}"
+    echo -e "${BLUE}Öffne Wartungs- und Verwaltungsmenü...${NC}"
     curl -sSL "${SETUP_URL}" | sudo bash -s --
 }
 
@@ -60,39 +61,36 @@ cmd_setup() {
 cmd_maintenance() {
     check_panel_installed
 
-    if whiptail --title "⚙️  Wartungsmodus" --yesno "Möchtest du den Wartungsmodus aktivieren oder deaktivieren?\n\nAktivieren = Ja\nDeaktivieren = Nein" 12 60; then
+    if whiptail --title "Wartungsmodus" --yesno "Möchtest du den Wartungsmodus aktivieren oder deaktivieren?\n\nAktivieren = Ja\nDeaktivieren = Nein" 12 60; then
         # Aktivieren
         cd "$PANEL_DIR" || exit 1
         php artisan down
         if [ $? -eq 0 ]; then
-            whiptail --title "✅ Erfolgreich" --msgbox "Wartungsmodus wurde aktiviert.\n\nDas Panel ist nun für Besucher nicht erreichbar." 10 60
+            whiptail --title "Erfolgreich" --msgbox "Wartungsmodus wurde aktiviert.\n\nDas Panel ist nun für Besucher nicht erreichbar." 10 60
         else
-            whiptail --title "❌ Fehler" --msgbox "Fehler beim Aktivieren des Wartungsmodus." 8 60
+            whiptail --title "Fehler" --msgbox "Fehler beim Aktivieren des Wartungsmodus." 8 60
         fi
     else
         # Deaktivieren
         cd "$PANEL_DIR" || exit 1
         php artisan up
         if [ $? -eq 0 ]; then
-            whiptail --title "✅ Erfolgreich" --msgbox "Wartungsmodus wurde deaktiviert.\n\nDas Panel ist wieder erreichbar." 10 60
+            whiptail --title "Erfolgreich" --msgbox "Wartungsmodus wurde deaktiviert.\n\nDas Panel ist wieder erreichbar." 10 60
         else
-            whiptail --title "❌ Fehler" --msgbox "Fehler beim Deaktivieren des Wartungsmodus." 8 60
+            whiptail --title "Fehler" --msgbox "Fehler beim Deaktivieren des Wartungsmodus." 8 60
         fi
     fi
 }
 
 # Backup-Verwaltung
 cmd_backup() {
-    echo -e "${BLUE}💾 Öffne Backup-Verwaltung...${NC}"
+    echo -e "${BLUE}Öffne Backup-Verwaltung...${NC}"
 
-    # Prüfen ob backup-verwaltung.sh existiert
     if [ -f "/opt/pterodactyl/backup-verwaltung.sh" ]; then
         bash /opt/pterodactyl/backup-verwaltung.sh
-    elif [ -f "$(dirname "$0")/backup-verwaltung.sh" ]; then
-        bash "$(dirname "$0")/backup-verwaltung.sh"
     else
-        echo -e "${RED}❌ Backup-Verwaltung Script nicht gefunden.${NC}"
-        echo -e "Bitte stelle sicher, dass backup-verwaltung.sh installiert ist."
+        echo -e "${RED}Backup-Verwaltung Script nicht gefunden.${NC}"
+        echo -e "Führe aus: gds update-scripts"
         exit 1
     fi
 }
@@ -121,7 +119,7 @@ cmd_domain() {
             fi
         fi
     else
-        echo -e "${RED}❌ Fehler: .env Datei nicht gefunden.${NC}"
+        echo -e "${RED}Fehler: .env Datei nicht gefunden.${NC}"
         exit 1
     fi
 }
@@ -141,7 +139,7 @@ cmd_cert() {
 
         # Prüfen ob Certbot installiert ist
         if ! command -v certbot &> /dev/null; then
-            echo -e "${RED}❌ Certbot ist nicht installiert.${NC}"
+            echo -e "${RED}Certbot ist nicht installiert.${NC}"
             exit 1
         fi
 
@@ -161,11 +159,11 @@ cmd_cert() {
             echo ""
 
             if [ $DAYS_LEFT -lt 30 ]; then
-                echo -e "  ${RED}⚠️  Warnung: Zertifikat läuft bald ab!${NC}"
+                echo -e "  ${RED}Warnung: Zertifikat läuft bald ab!${NC}"
                 echo -e "  ${YELLOW}Führe 'certbot renew' aus um es zu erneuern.${NC}"
                 echo ""
             else
-                echo -e "  ${GREEN}✅ Zertifikat ist gültig.${NC}"
+                echo -e "  ${GREEN}Zertifikat ist gültig.${NC}"
                 echo ""
             fi
 
@@ -173,13 +171,13 @@ cmd_cert() {
             echo -e "${YELLOW}Alle Certbot-Zertifikate:${NC}"
             certbot certificates 2>/dev/null
         else
-            echo -e "${RED}❌ Kein SSL-Zertifikat für ${APP_URL} gefunden.${NC}"
+            echo -e "${RED}Kein SSL-Zertifikat für ${APP_URL} gefunden.${NC}"
             echo -e "${YELLOW}Installiere ein Zertifikat mit:${NC}"
             echo -e "  certbot --nginx -d ${APP_URL}"
             echo ""
         fi
     else
-        echo -e "${RED}❌ Fehler: .env Datei nicht gefunden.${NC}"
+        echo -e "${RED}Fehler: .env Datei nicht gefunden.${NC}"
         exit 1
     fi
 }
@@ -188,10 +186,10 @@ cmd_cert() {
 cmd_update() {
     check_panel_installed
 
-    echo -e "${YELLOW}⚠️  Panel-Update wird vorbereitet...${NC}"
+    echo -e "${YELLOW}Panel-Update wird vorbereitet...${NC}"
     echo ""
 
-    if whiptail --title "🔄 Panel aktualisieren" --yesno "Möchtest du das Pterodactyl Panel jetzt aktualisieren?\n\nDies wird:\n- Wartungsmodus aktivieren\n- Neueste Version herunterladen\n- Composer-Abhängigkeiten aktualisieren\n- Datenbank migrieren\n- Cache leeren\n\nFortfahren?" 18 70; then
+    if whiptail --title "Panel aktualisieren" --yesno "Möchtest du das Pterodactyl Panel jetzt aktualisieren?\n\nDies wird:\n- Wartungsmodus aktivieren\n- Neueste Version herunterladen\n- Composer-Abhängigkeiten aktualisieren\n- Datenbank migrieren\n- Cache leeren\n\nFortfahren?" 18 70; then
         cd "$PANEL_DIR" || exit 1
 
         # Wartungsmodus aktivieren
@@ -221,9 +219,93 @@ cmd_update() {
         # Wartungsmodus deaktivieren
         php artisan up
 
-        echo -e "${GREEN}✅ Panel wurde erfolgreich aktualisiert!${NC}"
+        echo -e "${GREEN}Panel wurde erfolgreich aktualisiert!${NC}"
     else
         echo -e "${YELLOW}Update abgebrochen.${NC}"
+    fi
+}
+
+# Verwaltungs-Scripte aktualisieren
+cmd_update_scripts() {
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}Script-Update${NC}                                          ${BLUE}║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    if ! whiptail --title "Scripte aktualisieren" --yesno "Möchtest du alle Verwaltungs-Scripte von GitHub aktualisieren?\n\nDies lädt die neuesten Versionen aller Scripte herunter:\n• backup-verwaltung.sh\n• database-host-config.sh\n• phpmyadmin-installer.sh\n• wings-installer.sh\n• problem-verwaltung.sh\n• und weitere...\n\nFortfahren?" 20 70; then
+        echo -e "${YELLOW}Update abgebrochen.${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}Aktualisiere Scripte...${NC}"
+    echo ""
+
+    # GitHub Repository Basis-URL
+    REPO_URL="https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main"
+
+    # Liste aller zu aktualisierenden Scripte
+    SCRIPTS=(
+        "backup-verwaltung.sh"
+        "database-host-config.sh"
+        "phpmyadmin-installer.sh"
+        "wings-installer.sh"
+        "problem-verwaltung.sh"
+        "custom-ssh-login-config.sh"
+        "swap-verwaltung.sh"
+        "theme-verwaltung.sh"
+        "whiptail-colors.sh"
+        "system-check.sh"
+        "swap-setup.sh"
+        "certbot-renew-verwaltung.sh"
+        "pelican-installer.sh"
+        "wings-pelican.sh"
+        "motd.sh"
+        "analyse.sh"
+    )
+
+    # Erstelle Verzeichnis falls nicht vorhanden
+    mkdir -p /opt/pterodactyl
+
+    # Zähler für erfolgreiche/fehlgeschlagene Updates
+    SUCCESS_COUNT=0
+    FAIL_COUNT=0
+
+    for script in "${SCRIPTS[@]}"; do
+        echo -n "  Aktualisiere $script... "
+
+        # Backup der aktuellen Version (falls vorhanden)
+        if [ -f "/opt/pterodactyl/$script" ]; then
+            cp "/opt/pterodactyl/$script" "/opt/pterodactyl/${script}.backup" 2>/dev/null
+        fi
+
+        # Download der neuen Version
+        if curl -sSL "$REPO_URL/$script" -o "/opt/pterodactyl/$script" 2>/dev/null; then
+            chmod +x "/opt/pterodactyl/$script"
+            echo -e "${GREEN}OK${NC}"
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            # Lösche Backup bei Erfolg
+            rm -f "/opt/pterodactyl/${script}.backup" 2>/dev/null
+        else
+            echo -e "${RED}FEHLER${NC}"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            # Stelle Backup wieder her bei Fehler
+            if [ -f "/opt/pterodactyl/${script}.backup" ]; then
+                mv "/opt/pterodactyl/${script}.backup" "/opt/pterodactyl/$script" 2>/dev/null
+            fi
+        fi
+    done
+
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}Update abgeschlossen${NC}                                   ${BLUE}║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${GREEN}Erfolgreich:${NC} $SUCCESS_COUNT Script(e)"
+    echo -e "  ${RED}Fehlgeschlagen:${NC} $FAIL_COUNT Script(e)"
+    echo ""
+
+    if [ $FAIL_COUNT -gt 0 ]; then
+        echo -e "${YELLOW}Hinweis: Bei Fehlern wurden die alten Versionen beibehalten.${NC}"
     fi
 }
 
@@ -231,7 +313,7 @@ cmd_update() {
 cmd_cache() {
     check_panel_installed
 
-    echo -e "${BLUE}🧹 Leere Cache...${NC}"
+    echo -e "${BLUE}Leere Cache...${NC}"
     cd "$PANEL_DIR" || exit 1
 
     php artisan config:clear
@@ -240,9 +322,9 @@ cmd_cache() {
     php artisan route:clear
 
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ Cache erfolgreich geleert!${NC}"
+        echo -e "${GREEN}Cache erfolgreich geleert!${NC}"
     else
-        echo -e "${RED}❌ Fehler beim Leeren des Cache.${NC}"
+        echo -e "${RED}Fehler beim Leeren des Cache.${NC}"
     fi
 }
 
@@ -250,7 +332,7 @@ cmd_cache() {
 cmd_restart() {
     check_panel_installed
 
-    echo -e "${BLUE}🔄 Starte Pterodactyl-Dienste neu...${NC}"
+    echo -e "${BLUE}Starte Pterodactyl-Dienste neu...${NC}"
 
     systemctl restart nginx
     systemctl restart redis-server
@@ -258,9 +340,9 @@ cmd_restart() {
     systemctl restart "php*-fpm"
 
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ Dienste erfolgreich neu gestartet!${NC}"
+        echo -e "${GREEN}Dienste erfolgreich neu gestartet!${NC}"
     else
-        echo -e "${RED}❌ Einige Dienste konnten nicht neu gestartet werden.${NC}"
+        echo -e "${RED}Einige Dienste konnten nicht neu gestartet werden.${NC}"
     fi
 }
 
@@ -293,7 +375,7 @@ cmd_status() {
 cmd_logs() {
     check_panel_installed
 
-    echo -e "${BLUE}📋 Letzte Panel-Logs:${NC}"
+    echo -e "${BLUE}Letzte Panel-Logs:${NC}"
     echo ""
 
     if [ -f "$PANEL_DIR/storage/logs/laravel.log" ]; then
@@ -344,7 +426,7 @@ cmd_info() {
 cmd_user() {
     check_panel_installed
 
-    echo -e "${BLUE}👤 Neuen Benutzer erstellen${NC}"
+    echo -e "${BLUE}Neuen Benutzer erstellen${NC}"
     echo ""
 
     # Interaktive Eingaben mit whiptail
@@ -396,9 +478,9 @@ cmd_user() {
         --admin="$ADMIN"
 
     if [ $? -eq 0 ]; then
-        whiptail --title "✅ Erfolgreich" --msgbox "Benutzer wurde erfolgreich erstellt!\n\nE-Mail: $EMAIL\nBenutzername: $USERNAME\nAdmin: $([ $ADMIN -eq 1 ] && echo 'Ja' || echo 'Nein')" 12 60
+        whiptail --title "Erfolgreich" --msgbox "Benutzer wurde erfolgreich erstellt!\n\nE-Mail: $EMAIL\nBenutzername: $USERNAME\nAdmin: $([ $ADMIN -eq 1 ] && echo 'Ja' || echo 'Nein')" 12 60
     else
-        whiptail --title "❌ Fehler" --msgbox "Fehler beim Erstellen des Benutzers." 8 60
+        whiptail --title "Fehler" --msgbox "Fehler beim Erstellen des Benutzers." 8 60
     fi
 }
 
@@ -422,6 +504,9 @@ case "$1" in
     update)
         cmd_update
         ;;
+    update-scripts)
+        cmd_update_scripts
+        ;;
     cache)
         cmd_cache
         ;;
@@ -444,7 +529,7 @@ case "$1" in
         show_help
         ;;
     *)
-        echo -e "${RED}❌ Unbekannter Befehl: $1${NC}"
+        echo -e "${RED}Unbekannter Befehl: $1${NC}"
         echo ""
         show_help
         exit 1

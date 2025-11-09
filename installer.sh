@@ -117,7 +117,11 @@ main_loop() {
 troubleshoot_issues() {
     clear
     echo "Weiterleitung zu Problembehandlung..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+    if [ -f "/opt/pterodactyl/problem-verwaltung.sh" ]; then
+        bash /opt/pterodactyl/problem-verwaltung.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+    fi
     exit 0
 }
 
@@ -141,7 +145,11 @@ install_wings() {
     fi
 
     # Wings-Installer mit Email-Variable aufrufen
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh | bash
+    if [ -f "/opt/pterodactyl/wings-installer.sh" ]; then
+        bash /opt/pterodactyl/wings-installer.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh | bash
+    fi
     exit 0
 }
 
@@ -255,7 +263,11 @@ EOFBLUEPRINT
 manage_swap_storage() {
     clear
     echo "Weiterleitung zu swap-config..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/swap-verwaltung.sh | bash
+    if [ -f "/opt/pterodactyl/swap-verwaltung.sh" ]; then
+        bash /opt/pterodactyl/swap-verwaltung.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/swap-verwaltung.sh | bash
+    fi
     exit 0
 }
 
@@ -362,7 +374,11 @@ EOF
 install_phpmyadmin() {
     clear
     echo "Weiterleitung zu PhpMyAdmin..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/phpmyadmin-installer.sh | bash
+    if [ -f "/opt/pterodactyl/phpmyadmin-installer.sh" ]; then
+        bash /opt/pterodactyl/phpmyadmin-installer.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/phpmyadmin-installer.sh | bash
+    fi
     exit 0
 }
 
@@ -371,7 +387,11 @@ install_phpmyadmin() {
 install_theme() {
     clear
     echo "Weiterleitung zu Theme-Verwaltung..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
+    if [ -f "/opt/pterodactyl/theme-verwaltung.sh" ]; then
+        bash /opt/pterodactyl/theme-verwaltung.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
+    fi
     exit 0
 }
 
@@ -381,20 +401,32 @@ install_theme() {
 setup_server_backups() {
     clear
     echo "Weiterleitung zu Backup-Script..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+    if [ -f "/opt/pterodactyl/backup-verwaltung.sh" ]; then
+        bash /opt/pterodactyl/backup-verwaltung.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+    fi
     exit 0
 }
 
 
 # Funktion zum Einrichten des Database-Hosts - OFFEN
 setup_database_host() {
-    curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/database-host-config.sh | bash
+    if [ -f "/opt/pterodactyl/database-host-config.sh" ]; then
+        bash /opt/pterodactyl/database-host-config.sh
+    else
+        curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/database-host-config.sh | bash
+    fi
     exit 0
 }
 
 # Funktion zum integrieren der eigenen SSH Login-Page
 setup_ssh_login() {
-    curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/custom-ssh-login-config.sh | bash
+    if [ -f "/opt/pterodactyl/custom-ssh-login-config.sh" ]; then
+        bash /opt/pterodactyl/custom-ssh-login-config.sh
+    else
+        curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/custom-ssh-login-config.sh | bash
+    fi
     exit 0
 }
 

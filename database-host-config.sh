@@ -1,7 +1,22 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
+# Prüfen ob bereits Database Hosts konfiguriert sind
+IP_ADDRESS_CHECK=$(hostname -I | awk '{print $1}')
+EXISTING_HOSTS=$(mysql -e "SELECT User, Host FROM mysql.user WHERE Host='$IP_ADDRESS_CHECK' AND User LIKE '%Admin%' OR User LIKE '%dbhost%';" 2>/dev/null | tail -n +2)
+
+if [ -n "$EXISTING_HOSTS" ]; then
+    if ! whiptail_warning --title "WARNUNG: Database Hosts gefunden" --yesno "Es wurden bereits Database Host-Benutzer auf diesem System gefunden:\n\n$EXISTING_HOSTS\n\nMöchtest du trotzdem einen weiteren Database Host erstellen?" 16 75; then
+        whiptail_info --title "Abgebrochen" --msgbox "Erstellung wurde abgebrochen." 8 50
+        curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
+        exit 0
+    fi
+fi
+
 # Sicherheitshinweis anzeigen
-if ! whiptail --title "⚠️ Sicherheitshinweis" --yesno "Dieses Script beinhaltet möglicherweise ein Sicherheitsrisiko, wofür du alleine verantwortlich bist wenn du keine weiteren Sicherheitsvorkehrungen triffst.\n\nDurch diesen Script wird ein Datenbank-Host angelegt, die für alle öffentlich erreichbar ist. Der direkte Zugriff verweigert nur das nötige Passwort.\n\nUm es unautorisierten Nutzern schwer zu machen, wird ein 256-stelliges Passwort verwendet. Das Passwort wirst du nach Abschluss der Konfiguration nicht mehr brauchen.\n\nDiese wird rein zufällig generiert.\n\nMöchtest du fortfahren?" 22 78; then
+if ! whiptail_warning --title "Sicherheitshinweis" --yesno "Dieses Script beinhaltet möglicherweise ein Sicherheitsrisiko, wofür du alleine verantwortlich bist wenn du keine weiteren Sicherheitsvorkehrungen triffst.\n\nDurch diesen Script wird ein Datenbank-Host angelegt, die für alle öffentlich erreichbar ist. Der direkte Zugriff verweigert nur das nötige Passwort.\n\nUm es unautorisierten Nutzern schwer zu machen, wird ein 256-stelliges Passwort verwendet. Das Passwort wirst du nach Abschluss der Konfiguration nicht mehr brauchen.\n\nDiese wird rein zufällig generiert.\n\nMöchtest du fortfahren?" 22 78; then
     echo "Benutzer hat abgebrochen."
     curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
     exit 1
@@ -33,7 +48,7 @@ show_progress() {
 
 {
     show_progress
-} | whiptail --title "🔑 Passwortgenerator läuft gerade" --gauge "Generiere Passwort..." 8 78 0
+} | whiptail_info --title "Passwortgenerator läuft gerade" --gauge "Generiere Passwort..." 8 78 0
 
 PASSWORD=$(generate_password)
 echo "Passwort wurde generiert: $PASSWORD"
@@ -65,7 +80,7 @@ fi
 
 # Validierung
 if [ -z "$IP_ADDRESS" ]; then
-    whiptail --title "❌ Fehler" --msgbox "IP-Adresse konnte nicht ermittelt werden.\n\nBitte prüfe deine Netzwerkverbindung." 10 60
+    whiptail_error --title "Fehler" --msgbox "IP-Adresse konnte nicht ermittelt werden.\n\nBitte prüfe deine Netzwerkverbindung." 10 60
     exit 1
 fi
 
@@ -75,7 +90,7 @@ sleep 0.5
 echo "### MySQL-Benutzer und Berechtigungen werden erstellt ###"
 # MySQL-Befehle mit Error-Handling
 if ! sudo mysql -e "CREATE USER IF NOT EXISTS '${USERNAME}'@'${IP_ADDRESS}' IDENTIFIED BY '${PASSWORD}';" 2>/dev/null; then
-    whiptail --title "❌ MySQL-Fehler" --msgbox "Konnte MySQL-Benutzer nicht erstellen.\n\nBitte prüfe ob MySQL läuft." 10 60
+    whiptail_error --title "MySQL-Fehler" --msgbox "Konnte MySQL-Benutzer nicht erstellen.\n\nBitte prüfe ob MySQL läuft." 10 60
     exit 1
 fi
 
@@ -91,7 +106,7 @@ if ! grep -q "^bind-address=0.0.0.0" /etc/mysql/my.cnf 2>/dev/null; then
 fi
 
 if ! sudo systemctl restart mysql; then
-    whiptail --title "⚠️  Warnung" --msgbox "MySQL konnte nicht neu gestartet werden.\n\nBitte starte MySQL manuell neu:\nsudo systemctl restart mysql" 12 65
+    whiptail_warning --title "Warnung" --msgbox "MySQL konnte nicht neu gestartet werden.\n\nBitte starte MySQL manuell neu:\nsudo systemctl restart mysql" 12 65
 fi
 
 echo "MySQL-Konfiguration angepasst und MySQL neu gestartet."
@@ -99,11 +114,11 @@ sleep 0.5
 
 # Zugangsdaten anzeigen
 clear
-whiptail --title "🎉 Database Host angelegt" --msgbox "Der Database Host wurde erfolgreich erstellt und steht nun zur Einrichtung zur Verfügung. Navigiere nun in deinem Admin Panel auf das Menü namens 'Alle Datenbanken'. Klicke auf Erstellen, wenn du soweit bist, bestätige es DANN ERST mit ENTER. Dir werden dann einmalig die angelegten Zugangsdaten angezeigt, die hinzugefügt werden können." 20 78
+whiptail_success --title "Database Host angelegt" --msgbox "Der Database Host wurde erfolgreich erstellt und steht nun zur Einrichtung zur Verfügung. Navigiere nun in deinem Admin Panel auf das Menü namens 'Alle Datenbanken'. Klicke auf Erstellen, wenn du soweit bist, bestätige es DANN ERST mit ENTER. Dir werden dann einmalig die angelegten Zugangsdaten angezeigt, die hinzugefügt werden können." 20 78
 
 # Zugangsdaten des Database Host
 clear
-whiptail --title "🔐 Zugangsdaten des Database Host" --msgbox "Hier sind die Zugangsdaten des MySQL Host:\n\nName: (Darfst du selbst benennen)\nHost: ${IP_ADDRESS}\nPort: 3306\nBenutzername: ${USERNAME}\n\n⚠️  WICHTIG: Das Passwort wird im nächsten Schritt in der Konsole angezeigt!\n\nUnter 'Linked Node' musst du nichts verändern.\n\nDrücke ENTER um fortzufahren und das Passwort zu sehen." 20 78
+whiptail_info --title "Zugangsdaten des Database Host" --msgbox "Hier sind die Zugangsdaten des MySQL Host:\n\nName: (Darfst du selbst benennen)\nHost: ${IP_ADDRESS}\nPort: 3306\nBenutzername: ${USERNAME}\n\nWICHTIG: Das Passwort wird im nächsten Schritt in der Konsole angezeigt!\n\nUnter 'Linked Node' musst du nichts verändern.\n\nDrücke ENTER um fortzufahren und das Passwort zu sehen." 20 78
 
 # Passwort in der Konsole ausgeben
 clear
@@ -120,7 +135,7 @@ while true; do
     if [ "$confirmation" = "Gespeichert" ]; then
         break
     else
-        echo "❌ Bitte schreibe genau 'Gespeichert' (Groß-/Kleinschreibung beachten)"
+        echo "Bitte schreibe genau 'Gespeichert' (Groß-/Kleinschreibung beachten)"
     fi
 done
 
@@ -129,8 +144,8 @@ echo -e "\n### Passwortgenerierung und Anzeige abgeschlossen ###\n"
 
 
 # Erfolgsmeldung und Datenlöschung bei Fehlschlag, wenn man sagt will nicht
-if ! whiptail --title "✅ Erreichbarkeit prüfen" --yesno "Hat die Einrichtung des Database Hosts geklappt?" 20 78; then
-    whiptail --title "❗ Fehler" --msgbox "Bitte überprüfe die Eingaben auf mögliche Schreibfehler und versuche es erneut. Die Daten werden dann aus Sicherheitsgründen gelöscht." 20 78
+if ! whiptail --title "Erreichbarkeit prüfen" --yesno "Hat die Einrichtung des Database Hosts geklappt?" 10 78; then
+    whiptail_error --title "Fehler" --msgbox "Bitte überprüfe die Eingaben auf mögliche Schreibfehler und versuche es erneut. Die Daten werden dann aus Sicherheitsgründen gelöscht." 12 78
 
     clear
     echo ""
@@ -144,9 +159,9 @@ if ! whiptail --title "✅ Erreichbarkeit prüfen" --yesno "Hat die Einrichtung 
     sudo mysql -e "FLUSH PRIVILEGES;"
 
     echo "Datenbankbenutzer $USERNAME wurde gelöscht."
-    whiptail --title "Vorgang zurückgesetzt" --msgbox "Da der Vorgang laut Eingabe nicht erfolgreich war, wurden sämtliche Änderungen rückgänig gemacht." 20 78
+    whiptail_info --title "Vorgang zurückgesetzt" --msgbox "Da der Vorgang laut Eingabe nicht erfolgreich war, wurden sämtliche Änderungen rückgänig gemacht." 10 78
 else
-    whiptail --title "🎊 Erfolg" --msgbox "Super! Nun ist der Database Host eingerichtet und du kannst deine eigenen Datenbanken erstellen." 20 78
+    whiptail_success --title "Erfolg" --msgbox "Super! Nun ist der Database Host eingerichtet und du kannst deine eigenen Datenbanken erstellen." 10 78
 fi
 
 clear

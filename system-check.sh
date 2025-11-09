@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
 # System-Voraussetzungs-Prüfung für Pterodactyl Installation
 # Prüft OS-Version, Architektur und System-Anforderungen
 
@@ -17,16 +20,16 @@ print_status() {
 
     case $status in
         "ok")
-            echo -e "${GREEN}✓${NC} $message"
+            echo -e "${GREEN}OK:${NC} $message"
             ;;
         "warn")
-            echo -e "${YELLOW}⚠${NC} $message"
+            echo -e "${YELLOW}Warnung:${NC} $message"
             ;;
         "error")
-            echo -e "${RED}✗${NC} $message"
+            echo -e "${RED}Fehler:${NC} $message"
             ;;
         "info")
-            echo -e "${BLUE}ℹ${NC} $message"
+            echo -e "${BLUE}Info:${NC} $message"
             ;;
     esac
 }
