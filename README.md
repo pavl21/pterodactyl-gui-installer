@@ -192,15 +192,6 @@ bash database-host-config.sh
 
 ---
 
-## 🐛 Bekannte Limitierungen
-
-- **UFW-Firewall:** Muss manuell konfiguriert werden
-- **Backup-Pfad:** Aktuell noch nicht anpassbar (geplant)
-- **Backup-Zeitplan:** Feature in Entwicklung
-- **Pelican Panel:** Installation eingestellt (nur Pterodactyl)
-
----
-
 ## 🆘 Support
 
 ### Fehler gefunden?
