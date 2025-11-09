@@ -453,11 +453,10 @@ fi
 
 
 # Panel + Wings, oder nur Wings? Das ist hier die Frage!
-CHOICE=$(whiptail --title "Dienste installieren" --menu "Möchtest du das Panel + Wings oder nur Wings installieren? Bei der ersten Auswahl kannst du immer noch entscheiden, ob du Wings nach der Panel-Installation noch installieren möchtest." 18 75 5 \
-"1" "Panel + Wings (Eigenständig - EMPFOHLEN)" \
-"2" "Panel + Wings (Original Script)" \
-"3" "Nur Wings installieren" \
-"4" "Pelican Panel + Wings installieren" 3>&1 1>&2 2>&3)
+CHOICE=$(whiptail --title "Dienste installieren" --menu "Was möchtest du installieren?" 15 70 3 \
+"1" "Panel + Wings installieren" \
+"2" "Nur Wings installieren" \
+"3" "Pelican Panel + Wings installieren" 3>&1 1>&2 2>&3)
 
 EXITSTATUS=$?
 
@@ -465,18 +464,14 @@ if [ $EXITSTATUS = 0 ]; then
   # Benutzer hat eine Option gewählt
   case $CHOICE in
     1)
-      echo "Panel wird eigenständig installiert..."
+      echo "Panel wird installiert..."
       USE_STANDALONE=true
       ;;
     2)
-      echo "Panel wird mit Original-Script installiert..."
-      USE_STANDALONE=false
-      ;;
-    3)
       install_wings
       exit 0
       ;;
-    4)
+    3)
       echo "Pelican Panel und Wings werden installiert..."
       install_pelican
       exit 0
@@ -745,85 +740,28 @@ monitor_progress() {
 }
 
 
-# Prüfe, welche Installationsmethode verwendet werden soll
-if [ "$USE_STANDALONE" = true ]; then
-    # Eigenständige Installation
-    clear
-    echo "Eigenständige Installation wird vorbereitet..."
+# Eigenständige Installation starten
+clear
+echo "Installation wird vorbereitet..."
 
-    # Lade die eigenständige Installationsfunktion
-    source <(curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/claude/review-script-parts-011CUxB2vXFZC4SE3gdGGWt1/standalone-panel-installer.sh)
+# Lade die eigenständige Installationsfunktion
+source <(curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/claude/review-script-parts-011CUxB2vXFZC4SE3gdGGWt1/standalone-panel-installer.sh)
 
-    # Fallback: Lokale Datei verwenden, falls GitHub nicht erreichbar
-    if [ $? -ne 0 ] && [ -f "$(dirname "$0")/standalone-panel-installer.sh" ]; then
-        source "$(dirname "$0")/standalone-panel-installer.sh"
-    fi
-
-    # Installationsfunktion aufrufen
-    install_pterodactyl_standalone "$panel_domain" "$admin_email" "$user_password" "$database_password"
-
-    # GermanDactyl nachinstallieren
-    echo "GermanDactyl wird installiert..."
-    cd /var/www/pterodactyl
-    curl -sSL https://install.germandactyl.de/ | sudo bash -s -- -v1.11.3 >> /tmp/germandactyl_install.log 2>&1
-
-    # Benutzer neu anlegen mit korrekten Daten
-    recreate_user
-
-else
-    # Original-Installation mit pterodactyl-installer.se
-    # Starte die Überwachungsfunktion
-    monitor_progress &
-    MONITOR_PID=$!
-
-    # Installationscode hier, leite Ausgaben in tmp.txt um für listening der Logs.... ist das deutsch?
-    {
-        bash <(curl -s https://pterodactyl-installer.se) <<EOF
-        0
-        $( [[ "$cpu_arch_conflict" == "true" ]] && echo "y" )
-        panel
-        pterodactyl
-        $database_password
-        Europe/Berlin
-        $admin_email
-        $admin_email
-        admin
-        Admin
-        User
-        $user_password
-        $panel_domain
-        N
-        N
-        N
-        y
-        yes
-EOF
-    } >> tmp.txt 2>&1
-
-    {
-        apt-get update && sudo apt-get install certbot python3-certbot-nginx -y
-        systemctl stop nginx
-        certbot --nginx -d $panel_domain --email $admin_email --agree-tos --non-interactive
-        fuser -k 80/tcp
-        fuser -k 443/tcp
-        systemctl restart nginx
-
-        # Crontab für automatische SSL-Zertifikat-Erneuerung einrichten (alle 4 Tage, 3 Uhr nachts)
-        CRON_CMD="0 3 */4 * * systemctl stop nginx && certbot renew --quiet && systemctl start nginx"
-        (crontab -l 2>/dev/null | grep -v "certbot renew"; echo "$CRON_CMD") | crontab -
-
-        curl -sSL https://install.germandactyl.de/ | sudo bash -s -- -v1.11.3
-    } >> tmp.txt 2>&1
-
-    # Am Ende des Skripts den Überwachungsprozess beenden
-    kill $MONITOR_PID
-    sleep 1
-
-    # Schließe das Fortschrittsbalken-Fenster
-    whiptail --clear
-    clear
-    recreate_user
+# Fallback: Lokale Datei verwenden, falls GitHub nicht erreichbar
+if [ $? -ne 0 ] && [ -f "$(dirname "$0")/standalone-panel-installer.sh" ]; then
+    source "$(dirname "$0")/standalone-panel-installer.sh"
 fi
+
+# Installationsfunktion aufrufen
+install_pterodactyl_standalone "$panel_domain" "$admin_email" "$user_password" "$database_password"
+
+# GermanDactyl nachinstallieren
+echo "GermanDactyl wird installiert..."
+cd /var/www/pterodactyl
+curl -sSL https://install.germandactyl.de/ | sudo bash -s -- -v1.11.3 >> /tmp/germandactyl_install.log 2>&1
+
+# Benutzer neu anlegen mit korrekten Daten
+recreate_user
 
 
 # Funktion, um die Zugangsdaten anzuzeigen
