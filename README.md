@@ -280,6 +280,25 @@ Dieses Projekt ist **inoffiziell** und wird nicht vom Pterodactyl-Team unterstü
 
 ---
 
+## 🔄 Updates & Roadmap
+
+### Geplante Features
+- [ ] Automatische Panel-Updates via Cronjob
+- [ ] Mehrsprachigkeit (EN/DE)
+- [ ] Docker-Installation optimieren
+- [ ] Backup-Verschlüsselung
+- [ ] Monitoring-Integration
+- [ ] Ansible-Playbooks
+
+### Letzte Updates
+- ✅ GDS Management Commands (v1.0)
+- ✅ Standalone Wings Installation
+- ✅ Blueprint/GermanDactyl Integration
+- ✅ Sichere Passwortbestätigung
+- ✅ Spenden-Integration
+
+---
+
 ## 🌟 Mehr Features gewünscht?
 
 **Du möchtest dich nicht selbst um das Panel kümmern und noch mehr Features haben?**
