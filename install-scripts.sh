@@ -1,24 +1,37 @@
 #!/bin/bash
 
 # Zentrale Script-Installation
-# Wird von allen Hauptscripten aufgerufen um sicherzustellen,
-# dass alle Verwaltungs-Scripte verfügbar sind
+# Lokale Scripte dienen nur als Offline-Fallback
+# Versucht IMMER die neueste Version von GitHub zu laden
 
 install_all_scripts() {
-    # Prüfen ob bereits installiert (skip wenn weniger als 5 Minuten alt)
+    # Erstelle Verzeichnis
+    mkdir -p /opt/pterodactyl
+
+    # Intelligenter Cache: Nicht öfter als alle 30 Minuten von GitHub laden
+    # (verhindert zu viele Downloads bei mehreren Script-Aufrufen)
     if [ -f "/opt/pterodactyl/.last_install" ]; then
         LAST_INSTALL=$(cat /opt/pterodactyl/.last_install 2>/dev/null || echo 0)
         CURRENT_TIME=$(date +%s)
         TIME_DIFF=$((CURRENT_TIME - LAST_INSTALL))
-        
-        # Wenn letzter Install weniger als 5 Minuten her, skip
-        if [ $TIME_DIFF -lt 300 ]; then
-            return 0
+
+        # Wenn letzter Install < 30 Minuten her: Nutze lokale Kopien
+        if [ $TIME_DIFF -lt 1800 ]; then
+            # Prüfe ob alle kritischen Scripte vorhanden sind
+            local all_present=true
+            for critical in "whiptail-colors.sh" "gds-command.sh" "installer.sh"; do
+                if [ ! -f "/opt/pterodactyl/$critical" ]; then
+                    all_present=false
+                    break
+                fi
+            done
+
+            # Wenn alle da sind: Skip (nutze Cache)
+            if [ "$all_present" = true ]; then
+                return 0
+            fi
         fi
     fi
-
-    # Erstelle Verzeichnis
-    mkdir -p /opt/pterodactyl
 
     # Branch-Erkennung
     # 1. Priorität: Umgebungsvariable GITHUB_BRANCH
@@ -62,20 +75,38 @@ install_all_scripts() {
         "analyse.sh"
     )
 
-    for script in "${SCRIPTS[@]}"; do
-        # Überspringen wenn bereits vorhanden
-        if [ -f "/opt/pterodactyl/$script" ]; then
-            continue
-        fi
+    # Zähler für Statistik
+    local updated=0
+    local cached=0
+    local failed=0
 
-        # Versuche lokale Kopie
-        if [ -f "$SCRIPT_DIR/$script" ]; then
-            cp "$SCRIPT_DIR/$script" "/opt/pterodactyl/$script" 2>/dev/null
-            chmod +x "/opt/pterodactyl/$script" 2>/dev/null
+    for script in "${SCRIPTS[@]}"; do
+        local target="/opt/pterodactyl/$script"
+        local success=false
+
+        # Strategie 1: Von GitHub laden (immer versuchen für aktuelle Version)
+        if curl -sSL "$REPO_URL/$script" -o "${target}.tmp" 2>/dev/null; then
+            # Download erfolgreich
+            mv "${target}.tmp" "$target" 2>/dev/null
+            chmod +x "$target" 2>/dev/null
+            updated=$((updated + 1))
+            success=true
         else
-            # Falls lokal nicht vorhanden, von GitHub holen
-            curl -sSL "$REPO_URL/$script" -o "/opt/pterodactyl/$script" 2>/dev/null
-            chmod +x "/opt/pterodactyl/$script" 2>/dev/null
+            # Strategie 2: Lokale Kopie aus Script-Verzeichnis (falls git clone)
+            if [ -f "$SCRIPT_DIR/$script" ]; then
+                cp "$SCRIPT_DIR/$script" "$target" 2>/dev/null
+                chmod +x "$target" 2>/dev/null
+                cached=$((cached + 1))
+                success=true
+            # Strategie 3: Bereits in /opt/pterodactyl vorhanden (Offline-Fallback)
+            elif [ -f "$target" ]; then
+                # Behalte alte Version als Fallback
+                cached=$((cached + 1))
+                success=true
+            else
+                # Komplett fehlgeschlagen
+                failed=$((failed + 1))
+            fi
         fi
     done
 
@@ -87,6 +118,11 @@ install_all_scripts() {
 
     # Timestamp speichern
     date +%s > /opt/pterodactyl/.last_install
+
+    # Debug-Info (nur wenn Fehler aufgetreten)
+    if [ $failed -gt 0 ]; then
+        echo "Script-Installation: $updated aktualisiert, $cached cached, $failed fehlgeschlagen" >> /opt/pterodactyl/install.log
+    fi
 
     return 0
 }
