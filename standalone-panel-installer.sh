@@ -1,16 +1,25 @@
 #!/bin/bash
 
 # Eigenständiger Pterodactyl Panel Installer
-# Komplett unabhängig von Drittanbieter-Scripts
-# Mit detailliertem Fortschritt und Fallbacks
+# Optimiert für Debian 12+ mit modernem Design
+# Vollständige Paket-Installation mit Fallbacks
 
 # Globale Variablen
 PTERODACTYL_VERSION="v1.11.5"
 PHP_VERSION="8.1"
 PANEL_DIR="/var/www/pterodactyl"
 LOG_FILE="/tmp/pterodactyl_install.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Fortschrittsanzeige-Funktion
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
+# SWAP-Setup laden
+if [ -f "$SCRIPT_DIR/swap-setup.sh" ]; then
+    source "$SCRIPT_DIR/swap-setup.sh"
+fi
+
+# Fortschrittsanzeige-Funktion (modernisiert)
 show_progress() {
     local percentage=$1
     local message=$2
@@ -25,15 +34,79 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
-# Fehlerbehandlung
+# Fehlerbehandlung mit verbessertem Feedback
 handle_error() {
     local exit_code=$1
     local step=$2
     if [ $exit_code -ne 0 ]; then
         log "FEHLER bei Schritt: $step (Exit-Code: $exit_code)"
-        whiptail --title "❌ Installationsfehler" --msgbox "Ein Fehler ist aufgetreten bei:\n$step\n\nBitte prüfe die Log-Datei: $LOG_FILE" 12 70
+        whiptail_error --title "Installationsfehler" --msgbox "Ein Fehler ist aufgetreten bei:\n$step\n\nFehlercode: $exit_code\nLog-Datei: $LOG_FILE\n\nBitte prüfe die Log-Datei für Details." 14 78
         exit 1
     fi
+}
+
+# Paket-Installation mit Fallback
+install_package() {
+    local package=$1
+    local retries=3
+    local attempt=1
+
+    while [ $attempt -le $retries ]; do
+        log "Installiere $package (Versuch $attempt/$retries)"
+
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y "$package" >> "$LOG_FILE" 2>&1; then
+            log "Paket $package erfolgreich installiert"
+            return 0
+        else
+            log "Fehler bei Installation von $package (Versuch $attempt)"
+
+            if [ $attempt -lt $retries ]; then
+                log "Aktualisiere Paketquellen und versuche erneut..."
+                apt-get update >> "$LOG_FILE" 2>&1
+                sleep 2
+            fi
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    log "WARNUNG: Konnte $package nicht installieren nach $retries Versuchen"
+    return 1
+}
+
+# System-Check durchführen
+perform_system_check() {
+    log "Starte System-Voraussetzungs-Prüfung"
+
+    # System-Check-Script ausführen wenn vorhanden
+    if [ -f "$SCRIPT_DIR/system-check.sh" ]; then
+        bash "$SCRIPT_DIR/system-check.sh"
+        if [ $? -ne 0 ]; then
+            log "System-Check fehlgeschlagen"
+            exit 1
+        fi
+    else
+        # Einfacher Inline-Check wenn Script nicht vorhanden
+        if [ ! -f /etc/os-release ]; then
+            echo "Fehler: Kann OS nicht identifizieren"
+            exit 1
+        fi
+
+        source /etc/os-release
+
+        if [ "$ID" != "debian" ]; then
+            whiptail_error --title "Nicht unterstützt" --msgbox "Dieses Script unterstützt nur Debian 12 und neuer.\n\nErkanntes System: ${NAME}" 10 60
+            exit 1
+        fi
+
+        DEBIAN_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+        if [ "$DEBIAN_VERSION" -lt 12 ]; then
+            whiptail_error --title "Veraltete Version" --msgbox "Dieses Script benötigt Debian 12 (Bookworm) oder neuer.\n\nAktuelle Version: Debian ${VERSION_ID}" 10 60
+            exit 1
+        fi
+    fi
+
+    log "System-Check erfolgreich"
 }
 
 # Hauptinstallationsfunktion
@@ -55,7 +128,12 @@ install_pterodactyl_standalone() {
         apt-get update >> "$LOG_FILE" 2>&1
         handle_error $? "Paketquellen aktualisieren"
 
-        # Schritt 2: Abhängigkeiten installieren (5-15%)
+        # Schritt 1.5: System-Check durchführen
+        show_progress 1 "🔍 System-Voraussetzungen werden geprüft..."
+        log "Führe System-Check durch"
+        perform_system_check
+
+        # Schritt 2: Basis-Abhängigkeiten installieren (5-15%)
         show_progress 3 "📦 Basis-Pakete werden installiert..."
         log "Installiere Basis-Pakete"
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -69,41 +147,77 @@ install_pterodactyl_standalone() {
             git \
             tar \
             unzip \
+            sudo \
             >> "$LOG_FILE" 2>&1
         handle_error $? "Basis-Pakete installieren"
 
-        show_progress 5 "📦 PHP-Repository wird hinzugefügt..."
-        log "Füge Sury PHP-Repository hinzu"
+        # Schritt 2.5: Utility-Pakete installieren (für Scripts)
+        show_progress 4 "🛠️  Zusätzliche Tools werden installiert..."
+        log "Installiere Utility-Pakete"
 
-        # Prüfe OS-Version
-        OS_VERSION=$(lsb_release -cs)
-        if [ "$OS_VERSION" = "focal" ] || [ "$OS_VERSION" = "jammy" ]; then
-            # Ubuntu
-            LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >> "$LOG_FILE" 2>&1
-        else
-            # Debian
-            curl -sSL https://packages.sury.org/php/README.txt | bash -x >> "$LOG_FILE" 2>&1
+        # Diese Pakete werden von verschiedenen Scripts benötigt
+        for pkg in lolcat pv jq dnsutils net-tools cron; do
+            install_package "$pkg"
+        done
+
+        show_progress 5 "📦 PHP-Repository wird hinzugefügt..."
+        log "Füge Sury PHP-Repository hinzu (Debian)"
+
+        # Nur Debian wird unterstützt (System-Check garantiert das bereits)
+        # Sury PHP-Repository für Debian hinzufügen
+        curl -sSL https://packages.sury.org/php/README.txt | bash -x >> "$LOG_FILE" 2>&1
+        if [ $? -ne 0 ]; then
+            log "WARNUNG: Automatisches PHP-Repository-Setup fehlgeschlagen, versuche manuell..."
+
+            # Fallback: Manuelles Setup
+            wget -qO /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg >> "$LOG_FILE" 2>&1
+            echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list
         fi
-        handle_error $? "PHP-Repository hinzufügen"
 
         show_progress 7 "📦 Paketquellen werden erneut aktualisiert..."
         apt-get update >> "$LOG_FILE" 2>&1
         handle_error $? "Paketquellen nach Repository-Hinzufügung aktualisieren"
 
         # Schritt 3: PHP installieren (15-30%)
-        show_progress 10 "🐘 PHP ${PHP_VERSION} und Extensions werden installiert..."
-        log "Installiere PHP ${PHP_VERSION} und alle benötigten Extensions"
+        show_progress 10 "🐘 PHP ${PHP_VERSION} wird installiert..."
+        log "Installiere PHP ${PHP_VERSION} Basis-Paket"
 
+        DEBIAN_FRONTEND=noninteractive apt-get install -y php${PHP_VERSION} php${PHP_VERSION}-common >> "$LOG_FILE" 2>&1
+        handle_error $? "PHP ${PHP_VERSION} Basis installieren"
+
+        # Pterodactyl-erforderliche PHP-Extensions
+        show_progress 13 "🐘 Erforderliche PHP-Extensions werden installiert..."
+        log "Installiere erforderliche PHP-Extensions"
+
+        # Kritische Extensions (Pterodactyl-Anforderungen)
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            php${PHP_VERSION} \
-            php${PHP_VERSION}-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip,intl,sqlite3,redis,opcache} \
+            php${PHP_VERSION}-cli \
+            php${PHP_VERSION}-openssl \
+            php${PHP_VERSION}-gd \
+            php${PHP_VERSION}-mysql \
+            php${PHP_VERSION}-mbstring \
+            php${PHP_VERSION}-tokenizer \
+            php${PHP_VERSION}-bcmath \
+            php${PHP_VERSION}-xml \
+            php${PHP_VERSION}-dom \
+            php${PHP_VERSION}-curl \
+            php${PHP_VERSION}-zip \
+            php${PHP_VERSION}-fpm \
             >> "$LOG_FILE" 2>&1
-        handle_error $? "PHP ${PHP_VERSION} installieren"
+        handle_error $? "Erforderliche PHP-Extensions installieren"
 
-        # Zusätzliche PHP-Extensions für erweiterte Funktionalität
-        show_progress 15 "🐘 Zusätzliche PHP-Extensions werden installiert..."
+        # Zusätzliche empfohlene Extensions
+        show_progress 16 "🐘 Empfohlene PHP-Extensions werden installiert..."
+        log "Installiere empfohlene PHP-Extensions"
+
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            php${PHP_VERSION}-{dom,fileinfo,pdo,tokenizer,xmlwriter} \
+            php${PHP_VERSION}-intl \
+            php${PHP_VERSION}-sqlite3 \
+            php${PHP_VERSION}-redis \
+            php${PHP_VERSION}-opcache \
+            php${PHP_VERSION}-fileinfo \
+            php${PHP_VERSION}-pdo \
+            php${PHP_VERSION}-xmlwriter \
             >> "$LOG_FILE" 2>&1
         # Kein Error-Handle hier, da manche Extensions optional sind
 
@@ -118,15 +232,23 @@ install_pterodactyl_standalone() {
         show_progress 22 "🗄️  MariaDB-Repository wird eingerichtet..."
         log "Füge MariaDB-Repository hinzu"
 
-        # MariaDB 10.11 Repository
+        # MariaDB 10.11+ Repository hinzufügen
         curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash >> "$LOG_FILE" 2>&1
-        handle_error $? "MariaDB-Repository einrichten"
+        if [ $? -ne 0 ]; then
+            log "WARNUNG: MariaDB-Repository-Setup fehlgeschlagen, verwende Debian-Standardversion..."
+
+            # Fallback: Apt-Paketquellen aktualisieren
+            apt-get update >> "$LOG_FILE" 2>&1
+        fi
 
         show_progress 25 "🗄️  MariaDB-Server wird installiert..."
         log "Installiere MariaDB"
 
-        DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server mariadb-client >> "$LOG_FILE" 2>&1
-        handle_error $? "MariaDB installieren"
+        # Versuche MariaDB-Installation mit Fallback
+        if ! install_package "mariadb-server" || ! install_package "mariadb-client"; then
+            log "FEHLER: MariaDB-Installation fehlgeschlagen"
+            handle_error 1 "MariaDB installieren"
+        fi
 
         # MariaDB starten und aktivieren
         systemctl start mariadb
@@ -512,8 +634,69 @@ EOFFALLBACK
         show_progress 98 "✅ Installation wird finalisiert..."
         log "Installation abgeschlossen"
 
+        # GDS Management Commands installieren
+        show_progress 99 "📦 Management-Tools werden installiert..."
+        log "Installiere GDS Commands"
+
+        # Alle Verwaltungs-Scripte nach /opt/pterodactyl/ kopieren
+        mkdir -p /opt/pterodactyl
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+        # Liste aller zu kopierenden Scripte
+        SCRIPTS_TO_INSTALL=(
+            "installer.sh"
+            "gds-command.sh"
+            "backup-verwaltung.sh"
+            "database-host-config.sh"
+            "phpmyadmin-installer.sh"
+            "wings-installer.sh"
+            "problem-verwaltung.sh"
+            "custom-ssh-login-config.sh"
+            "swap-verwaltung.sh"
+            "theme-verwaltung.sh"
+            "whiptail-colors.sh"
+            "system-check.sh"
+            "swap-setup.sh"
+            "certbot-renew-verwaltung.sh"
+            "pelican-installer.sh"
+            "wings-pelican.sh"
+            "motd.sh"
+            "analyse.sh"
+            "install-scripts.sh"
+        )
+
+        for script in "${SCRIPTS_TO_INSTALL[@]}"; do
+            if [ -f "$SCRIPT_DIR/$script" ]; then
+                cp "$SCRIPT_DIR/$script" "/opt/pterodactyl/$script"
+                chmod +x "/opt/pterodactyl/$script"
+                log "Installed: $script"
+            else
+                # Falls lokal nicht vorhanden, von GitHub holen
+                curl -sSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/$script" -o "/opt/pterodactyl/$script" 2>> "$LOG_FILE"
+                if [ $? -eq 0 ]; then
+                    chmod +x "/opt/pterodactyl/$script"
+                    log "Downloaded from GitHub: $script"
+                else
+                    log "WARNING: Could not install $script"
+                fi
+            fi
+        done
+
+        # gds-command.sh als 'gds' Befehl verfügbar machen
+        if [ -f "/opt/pterodactyl/gds-command.sh" ]; then
+            cp "/opt/pterodactyl/gds-command.sh" /usr/local/bin/gds
+            chmod +x /usr/local/bin/gds
+            log "GDS command installed as 'gds'"
+        fi
+
+        # installer.sh als 'pterodactyl-installer' verfügbar machen (optional)
+        if [ -f "/opt/pterodactyl/installer.sh" ]; then
+            chmod +x /opt/pterodactyl/installer.sh
+            log "Installer available at /opt/pterodactyl/installer.sh"
+        fi
+
         sleep 1
-        show_progress 100 "🎉 Installation erfolgreich abgeschlossen!"
+        show_progress 100 "Installation erfolgreich abgeschlossen!"
         sleep 2
 
     } | whiptail --title "Pterodactyl Panel Installation" --gauge "Bitte warten..." 10 80 0 3>&1 1>&2 2>&3
@@ -521,7 +704,13 @@ EOFFALLBACK
     exec 3>&-
 
     # Erfolgsmeldung
-    whiptail --title "✅ Installation erfolgreich" --msgbox "Pterodactyl Panel wurde erfolgreich installiert!\n\n🌐 Domain: https://${panel_domain}\n👤 Benutzer: admin\n📧 E-Mail: ${admin_email}\n🔑 Passwort: ${user_password}\n\n📋 Log-Datei: ${LOG_FILE}" 16 80
+    whiptail_success --title "Installation erfolgreich" --msgbox "Pterodactyl Panel wurde erfolgreich installiert!\n\nDomain: https://${panel_domain}\nBenutzer: admin\nE-Mail: ${admin_email}\nPasswort: ${user_password}\n\nLog-Datei: ${LOG_FILE}" 16 80
+
+    # Info über Management Commands
+    whiptail_info --title "GDS Management Commands installiert" --msgbox "Es stehen dir jetzt praktische Verwaltungsbefehle zur Verfügung!\n\nVerfügbare Befehle:\n\n• gds setup       - Wartungs- und Verwaltungsmenü\n• gds maintenance - Wartungsmodus aktivieren/deaktivieren\n• gds backup      - Backup-Verwaltung\n• gds domain      - Panel-Domain anzeigen\n• gds cert        - SSL-Zertifikat-Status\n• gds update      - Panel aktualisieren\n• gds status      - Dienste-Status anzeigen\n• gds user        - Benutzer erstellen\n\nUnd weitere! Verwende 'gds help' für die vollständige Liste." 24 78
+
+    # Spenden-Info
+    whiptail_info --title "Projekt unterstützen" --msgbox "Wenn dir dieses Projekt weitergeholfen hat und du es unterstützen möchtest, würde ich mich über eine Spende freuen!\n\nSpenden-Link:\nhttps://spenden.24fire.de/pavl\n\nVielen Dank für deine Unterstützung!\n\n- GermanDactyl Setup Team" 16 78
 }
 
 # Export der Funktion für Verwendung in anderen Scripts
