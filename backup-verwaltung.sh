@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Hinweis für dieses Script:
-# Hier wurden die Funktionen Backup-Ort anpassen, Zeitplan erstellen und Backuplimit aus dem Menü entfernt,
-# da sie nicht einwandfrei mit dem gesamten Script funktionieren. Die Funktionen bleiben vorerst im Code,
-# weil ich das gerne noch beheben möchte, irgendwann...
+# Die Funktionen Backup-Ort anpassen und Zeitplan erstellen wurden aus dem Menü entfernt,
+# da sie nicht einwandfrei mit dem gesamten Script funktionieren. Die Funktionen bleiben vorerst im Code.
+# Die Backuplimit-Funktion wurde wieder aktiviert und sollte einwandfrei funktionieren.
 
 # Hauptkonfigurationsdatei
 settings_file="/opt/pterodactyl/.settings"
@@ -86,14 +86,16 @@ question_menu() {
 
 main_menu_panel() {
     while true; do
-        choice=$(whiptail --title "Panel Backup-Menü" --menu "Wähle eine Option:" 15 60 3 \
+        choice=$(whiptail --title "Panel Backup-Menü" --menu "Wähle eine Option:" 15 60 4 \
         "1" "Backup erstellen" \
         "2" "Backup wiederherstellen" \
+        "3" "Backuplimit festlegen" \
         "5" "Backups löschen" 3>&1 1>&2 2>&3)
 
         case $choice in
             1) create_backup "$default_backup_source_panel" "$backup_storage_panel" "$max_backups_panel";;
             2) restore_backup_panel;;
+            3) limit_backup 'panel';;
             5) remove_backup 'panel';;
             *) break;;
         esac
@@ -102,14 +104,16 @@ main_menu_panel() {
 
 main_menu_server() {
     while true; do
-        choice=$(whiptail --title "Server Backup-Menü" --menu "Wähle eine Option:" 15 60 3 \
+        choice=$(whiptail --title "Server Backup-Menü" --menu "Wähle eine Option:" 15 60 4 \
         "1" "Backup erstellen" \
         "2" "Backup wiederherstellen" \
+        "3" "Backuplimit festlegen" \
         "5" "Backups löschen" 3>&1 1>&2 2>&3)
 
         case $choice in
             1) create_backup "$default_backup_source_server" "$backup_storage_server" "$max_backups_server";;
             2) restore_backup_server;;
+            3) limit_backup 'server';;
             5) remove_backup 'server';;
             *) break;;
         esac
@@ -229,7 +233,7 @@ remove_backup() {
     question_menu
 }
 
-# Limits für Anzahl an Backups - WURDE ERSTMAL AUSSORTIERT, FUNKTIONIERT NICHT.
+# Limits für Anzahl an Backups
 limit_backup() {
     local type=$1
     local current_limit=$([ "$type" == "panel" ] && echo "$max_backups_panel" || echo "$max_backups_server")
