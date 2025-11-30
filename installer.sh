@@ -1,12 +1,33 @@
 #!/bin/bash
 
-# Überprüfen, ob das System apt als Paketmanager verwendet
-if ! command -v apt-get &> /dev/null; then
-    echo "Abbruch: Für dein System ist dieses Script nicht vorgesehen. Derzeit wird nur Ubuntu, Debian und ähnliche Systeme unterstützt."
-    exit 1
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
+# Alle Verwaltungs-Scripte installieren (falls noch nicht vorhanden)
+if [ -f "$(dirname "$0")/install-scripts.sh" ]; then
+    source "$(dirname "$0")/install-scripts.sh"
+    install_all_scripts 2>/dev/null
+elif [ -f "/opt/pterodactyl/install-scripts.sh" ]; then
+    source /opt/pterodactyl/install-scripts.sh
+    install_all_scripts 2>/dev/null
 fi
 
-# BEGINN VON Vorbereitung ODER existiert bereits ODER Reperatur
+# GermanDactyl Setup - Hauptinstaller
+# Einstiegspunkt für Panel/Wings Installation und Verwaltung
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# System-Check durchführen (nur bei Neuinstallation)
+if [ ! -d "/var/www/pterodactyl" ]; then
+    if [ -f "$SCRIPT_DIR/system-check.sh" ]; then
+        bash "$SCRIPT_DIR/system-check.sh"
+        if [ $? -ne 0 ]; then
+            exit 1
+        fi
+    fi
+fi
+
+# BEGINN VON Vorbereitung ODER existiert bereits ODER Reparatur
 
 # Funktion zur Überprüfung der E-Mail-Adresse
 validate_email() {
@@ -35,7 +56,6 @@ export LANGUAGE=de_DE.UTF-8
 # Globale Konfigurationsvariablen
 DOMAIN_REGEX="^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
 LOG_FILE="wlog.txt"
-INSTALLER_URL="https://pterodactyl-installer.se"
 
 # Funktion zur Generierung einer zufälligen dreistelligen Zahl
 generate_random_number() {
@@ -45,7 +65,7 @@ generate_random_number() {
 main_loop() {
     while true; do
         if [ -d "/var/www/pterodactyl" ]; then
-            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 30 90 13 \
+            MAIN_MENU=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert.\nWähle eine Aktion:" 32 90 14 \
                 "1" "🔍 Problembehandlung" \
                 "2" "📦 PhpMyAdmin installieren" \
                 "3" "🐦 Wings nachinstallieren" \
@@ -54,8 +74,9 @@ main_loop() {
                 "6" "🖌️  SSH-Loginseite integrieren" \
                 "7" "🔄 SWAP-Verwaltung öffnen" \
                 "8" "🎨 Theme-Verwaltung öffnen" \
-                "9" "🗑️  Pterodactyl deinstallieren" \
-                "10" "🚪 Skript beenden" 3>&1 1>&2 2>&3)
+                "9" "🧩 Blueprint-Verwaltung öffnen" \
+                "10" "🗑️  Pterodactyl deinstallieren" \
+                "11" "🚪 Skript beenden" 3>&1 1>&2 2>&3)
             exitstatus=$?
 
             # Überprüft, ob der Benutzer 'Cancel' gewählt hat oder das Fenster geschlossen hat
@@ -78,8 +99,9 @@ main_loop() {
                 6) setup_ssh_login ;;
                 7) manage_swap_storage ;;
                 8) install_theme ;;
-                9) uninstall_pterodactyl ;;
-                10)
+                9) manage_blueprint ;;
+                10) uninstall_pterodactyl ;;
+                11)
                    clear
                    echo ""
                    echo "INFO - - - - - - - - - -"
@@ -101,7 +123,11 @@ main_loop() {
 troubleshoot_issues() {
     clear
     echo "Weiterleitung zu Problembehandlung..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+    if [ -f "/opt/pterodactyl/problem-verwaltung.sh" ]; then
+        bash /opt/pterodactyl/problem-verwaltung.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+    fi
     exit 0
 }
 
@@ -110,16 +136,132 @@ troubleshoot_issues() {
 install_wings() {
     clear
     echo "Weiterleitung zu Wings..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh | bash
+
+    # Email aus Panel-Konfiguration auslesen, falls vorhanden
+    if [ -f "/var/www/pterodactyl/.env" ]; then
+        PANEL_EMAIL=$(grep "^MAIL_FROM_ADDRESS=" /var/www/pterodactyl/.env 2>/dev/null | cut -d'=' -f2)
+        if [ -z "$PANEL_EMAIL" ]; then
+            # Fallback: Admin-Email aus Datenbank holen
+            DB_PASSWORD=$(grep "^DB_PASSWORD=" /var/www/pterodactyl/.env | cut -d'=' -f2)
+            DB_USERNAME=$(grep "^DB_USERNAME=" /var/www/pterodactyl/.env | cut -d'=' -f2)
+            DB_DATABASE=$(grep "^DB_DATABASE=" /var/www/pterodactyl/.env | cut -d'=' -f2)
+            PANEL_EMAIL=$(mysql -u"$DB_USERNAME" -p"$DB_PASSWORD" -D"$DB_DATABASE" -se "SELECT email FROM users WHERE root_admin = 1 LIMIT 1" 2>/dev/null)
+        fi
+        export PANEL_EMAIL
+    fi
+
+    # Wings-Installer mit Email-Variable aufrufen
+    if [ -f "/opt/pterodactyl/wings-installer.sh" ]; then
+        bash /opt/pterodactyl/wings-installer.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-installer.sh | bash
+    fi
     exit 0
 }
 
-# Pelican Panel + Wings installieren
+# Pelican Panel + Wings installieren (EINGESTELLT)
 install_pelican() {
-    clear
-    echo "Weiterleitung zu PP + W..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/pelican-installer.sh | bash
+    whiptail_warning --title "⚠️  Feature eingestellt" --msgbox "Die Pelican Panel Installation wurde eingestellt.\n\nDieses Script konzentriert sich ausschließlich auf Pterodactyl Panel.\n\nPelican Panel ist ein Fork von Pterodactyl und wird von diesem Script nicht mehr unterstützt.\n\nBitte verwende stattdessen:\n• Option 1: Panel + Wings installieren (Pterodactyl)\n• Option 2: Nur Panel installieren (Pterodactyl)\n\nFür Pelican Panel nutze bitte die offizielle Pelican Dokumentation." 18 75
     exit 0
+
+    # Original-Code auskommentiert:
+    # clear
+    # echo "Weiterleitung zu PP + W..."
+    # curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/pelican-installer.sh | bash
+    # exit 0
+}
+
+# Blueprint Installation
+install_blueprint() {
+    clear
+    echo "Blueprint wird installiert..."
+
+    PTERODACTYL_DIRECTORY="/var/www/pterodactyl"
+
+    {
+        echo "10"
+        echo "XXX"
+        echo "📦 Abhängigkeiten werden installiert..."
+        echo "XXX"
+
+        # Dependencies installieren
+        apt-get install -y ca-certificates curl git gnupg unzip wget zip >> /tmp/blueprint_install.log 2>&1
+
+        echo "25"
+        echo "XXX"
+        echo "📦 Node.js Repository wird hinzugefügt..."
+        echo "XXX"
+
+        # Node.js 20.x Repository hinzufügen
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>&1
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list >> /tmp/blueprint_install.log 2>&1
+        apt-get update >> /tmp/blueprint_install.log 2>&1
+
+        echo "40"
+        echo "XXX"
+        echo "📦 Node.js wird installiert..."
+        echo "XXX"
+
+        apt-get install -y nodejs >> /tmp/blueprint_install.log 2>&1
+
+        echo "50"
+        echo "XXX"
+        echo "🧶 Yarn wird installiert..."
+        echo "XXX"
+
+        cd "$PTERODACTYL_DIRECTORY"
+        npm i -g yarn >> /tmp/blueprint_install.log 2>&1
+        yarn install >> /tmp/blueprint_install.log 2>&1
+
+        echo "65"
+        echo "XXX"
+        echo "📥 Blueprint wird heruntergeladen..."
+        echo "XXX"
+
+        # Blueprint herunterladen
+        wget "$(curl -s https://api.github.com/repos/BlueprintFramework/framework/releases/latest | grep 'browser_download_url' | cut -d '"' -f 4)" -O "$PTERODACTYL_DIRECTORY/release.zip" >> /tmp/blueprint_install.log 2>&1
+
+        echo "75"
+        echo "XXX"
+        echo "📦 Blueprint wird entpackt..."
+        echo "XXX"
+
+        unzip -o release.zip >> /tmp/blueprint_install.log 2>&1
+        rm release.zip
+
+        echo "85"
+        echo "XXX"
+        echo "⚙️  Blueprint wird konfiguriert..."
+        echo "XXX"
+
+        # .blueprintrc erstellen
+        cat > "$PTERODACTYL_DIRECTORY/.blueprintrc" << 'EOFBLUEPRINT'
+WEBUSER="www-data";
+OWNERSHIP="www-data:www-data";
+USERSHELL="/bin/bash";
+EOFBLUEPRINT
+
+        echo "90"
+        echo "XXX"
+        echo "🔧 Blueprint wird initialisiert..."
+        echo "XXX"
+
+        # blueprint.sh ausführbar machen und ausführen
+        chmod +x "$PTERODACTYL_DIRECTORY/blueprint.sh"
+        cd "$PTERODACTYL_DIRECTORY"
+        bash blueprint.sh >> /tmp/blueprint_install.log 2>&1
+
+        echo "100"
+        echo "XXX"
+        echo "✅ Blueprint wurde erfolgreich installiert!"
+        echo "XXX"
+
+        sleep 2
+
+    } | whiptail --title "Blueprint Installation" --gauge "Blueprint wird installiert..." 10 70 0
+
+    whiptail_success --title "Blueprint installiert" --msgbox "Blueprint wurde erfolgreich installiert!\n\nDu kannst jetzt Extensions über das Blueprint-System installieren.\n\nNützliche Befehle:\n• blueprint -install <extension.blueprint>\n• blueprint -remove <extension>\n• blueprint -list\n\nLog-Datei: /tmp/blueprint_install.log" 18 75
 }
 
 
@@ -127,7 +269,11 @@ install_pelican() {
 manage_swap_storage() {
     clear
     echo "Weiterleitung zu swap-config..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/swap-verwaltung.sh | bash
+    if [ -f "/opt/pterodactyl/swap-verwaltung.sh" ]; then
+        bash /opt/pterodactyl/swap-verwaltung.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/swap-verwaltung.sh | bash
+    fi
     exit 0
 }
 
@@ -146,86 +292,163 @@ validate_domain() {
 
 # Deinstallationsscript von Pterodactyl
 uninstall_pterodactyl() {
-    log_file="uninstall_pterodactyl.txt"
+    log_file="/var/log/pterodactyl-uninstall.log"
     : > "$log_file" # Leere die Log-Datei zu Beginn
 
     # Warnung vor der Deinstallation
-    if ! whiptail --title "⚠️  WARNUNG" --yesno "Du bist dabei, das Panel und die dazugehörigen Server zu löschen. Fortfahren?" 10 50; then
+    if ! whiptail_warning --title "WARNUNG" --yesno "Du bist dabei, Pterodactyl Panel vollständig zu deinstallieren.\n\nDies umfasst:\n- Panel Files\n- Datenbank\n- Wings (falls installiert)\n- Server-Daten\n- Cron Jobs\n- Services\n\nFortfahren?" 18 60; then
         echo "Deinstallation abgebrochen."
         return
     fi
 
-    # Entscheidung, ob Server behalten werden sollen
-    if whiptail --title "💾  Server behalten?" --yesno "Möchtest du die angelegten Server behalten?" 10 50; then
-        total_size=$(du -sb /var/lib/pterodactyl/volumes/ | cut -f1)
-        (cd /var/lib/pterodactyl/volumes/ && tar -cf - . | pv -n -s "$total_size" | gzip > /Backup_von_allen_Pterodactyl-Servern.tar.gz) 2>&1 | whiptail --gauge "Backup wird erstellt..." 6 50 0
-        if ! whiptail --title "🔍  Backup Überprüfung" --yesno "Backup erstellt. Fortfahren?" 10 50; then
-            echo "Deinstallation abgebrochen."
+    # Frage nach vollständigem Backup
+    if whiptail --title "Backup erstellen?" --yesno "Möchtest du vor der Deinstallation ein vollständiges Backup erstellen?\n\nDies wird empfohlen und sichert:\n- Panel-Daten\n- Datenbank\n- Konfigurationen" 14 60; then
+        whiptail_info --title "Backup wird erstellt" --msgbox "Das Backup-Script wird nun gestartet.\n\nBitte wähle dort 'Vollständiges Backup' aus." 10 60
+        call_script "backup-verwaltung.sh"
+
+        if ! whiptail --title "Backup abgeschlossen?" --yesno "Wurde das Backup erfolgreich erstellt?\n\nJa = Deinstallation fortsetzen\nNein = Abbrechen" 12 60; then
+            whiptail_info --title "Abgebrochen" --msgbox "Deinstallation wurde abgebrochen." 8 50
             return
+        fi
+    fi
+
+    # Entscheidung, ob Server-Daten separat gesichert werden sollen
+    if [ -d "/var/lib/pterodactyl/volumes" ]; then
+        if whiptail --title "Server-Daten sichern?" --yesno "Möchtest du die Server-Daten zusätzlich separat sichern?\n\nPfad: /var/lib/pterodactyl/volumes/\nBackup-Ziel: /Backup_Pterodactyl_Server_Daten.tar.gz" 14 65; then
+            if [ -n "$(ls -A /var/lib/pterodactyl/volumes/ 2>/dev/null)" ]; then
+                total_size=$(du -sb /var/lib/pterodactyl/volumes/ 2>/dev/null | cut -f1)
+                (cd /var/lib/pterodactyl/volumes/ && tar -czf /Backup_Pterodactyl_Server_Daten.tar.gz . 2>&1 | tee -a "$log_file") 2>&1 | \
+                    whiptail --gauge "Erstelle Server-Daten Backup..." 6 60 0
+
+                if [ -f "/Backup_Pterodactyl_Server_Daten.tar.gz" ]; then
+                    whiptail_success --title "Backup erstellt" --msgbox "Server-Daten gesichert:\n/Backup_Pterodactyl_Server_Daten.tar.gz" 10 60
+                else
+                    whiptail_error --title "Backup fehlgeschlagen" --msgbox "Server-Daten konnten nicht gesichert werden!" 8 60
+                    return
+                fi
+            fi
+        fi
+    fi
+
+    # Datenbank-Backup anbieten
+    if systemctl is-active --quiet mariadb || systemctl is-active --quiet mysql; then
+        if whiptail --title "Datenbank-Backup?" --yesno "Möchtest du ein separates Datenbank-Backup erstellen?\n\nDatenbank: panel\nBackup-Ziel: /Backup_Pterodactyl_Database.sql" 12 65; then
+            mysqldump -u root panel > /Backup_Pterodactyl_Database.sql 2>>"$log_file"
+            if [ -f "/Backup_Pterodactyl_Database.sql" ] && [ -s "/Backup_Pterodactyl_Database.sql" ]; then
+                whiptail_success --title "Datenbank gesichert" --msgbox "Datenbank-Backup erstellt:\n/Backup_Pterodactyl_Database.sql" 10 60
+            else
+                whiptail_warning --title "Backup-Warnung" --msgbox "Datenbank-Backup konnte nicht erstellt werden.\n\nFortfahren auf eigene Gefahr!" 10 60
+            fi
         fi
     fi
 
     # Bestätigung zur kompletten Löschung
     while true; do
-        CONFIRMATION=$(whiptail --title "🗑️  Bestätigung" --inputbox "Gib 'Ich bestätige die komplette Löschung von Pterodactyl' ein." 10 50 3>&1 1>&2 2>&3)
-        if [ "$CONFIRMATION" = "Ich bestätige die komplette Löschung von Pterodactyl" ]; then
+        CONFIRMATION=$(whiptail --title "Finale Bestätigung" --inputbox "Gib zur finalen Bestätigung ein:\n\nLÖSCHEN BESTÄTIGT" 12 60 3>&1 1>&2 2>&3)
+        if [ "$CONFIRMATION" = "LÖSCHEN BESTÄTIGT" ]; then
             break
         else
-            whiptail --title "❌  Falsche Eingabe" --msgbox "Falsche Bestätigung, versuche es erneut." 10 50
+            whiptail_error --title "Falsche Eingabe" --msgbox "Falsche Bestätigung. Versuche es erneut oder drücke Abbrechen." 10 60
         fi
     done
 
-    # Fortschritt der Deinstallation überwachen und aktualisieren
-    progress=0
+    # Deinstallation durchführen mit Fortschrittsanzeige
     {
-        # Führe das Deinstallationsskript aus und lese die Ausgabe
-        bash <(curl -s https://pterodactyl-installer.se) <<EOF 2>&1 | while IFS= read -r line; do
-6
-y
-y
-y
-y
-y
-EOF
-            echo "$line" >> "$log_file"
-            case "$line" in
-                *SUCCESS:\ Removed\ panel\ files.*)
-                    progress=5 ;;
-                *Removing\ cron\ jobs...*)
-                    progress=10 ;;
-                *SUCCESS:\ Removed\ cron\ jobs.*)
-                    progress=20 ;;
-                *Removing\ database...*)
-                    progress=30 ;;
-                *SUCCESS:\ Removed\ database\ and\ database\ user.*)
-                    progress=40 ;;
-                *Removing\ services...*)
-                    progress=50 ;;
-                *SUCCESS:\ Removed\ services.*)
-                    progress=60 ;;
-                *Removing\ docker\ containers\ and\ images...*)
-                    progress=70 ;;
-                *SUCCESS:\ Removed\ docker\ containers\ and\ images.*)
-                    progress=80 ;;
-                *Removing\ wings\ files...*)
-                    progress=90 ;;
-                *SUCCESS:\ Removed\ wings\ files.*)
-                    progress=95 ;;
-                *Thank\ you\ for\ using\ this\ script.*)
-                    progress=100 ;;
-            esac
+        echo "0" ; echo "XXX" ; echo "Starte Deinstallation..." ; echo "XXX"
+        sleep 1
 
-            # Aktualisiere den Fortschritt
-            echo "XXX"
-            echo "Die Deinstallation wird durchgeführt..."
-            echo "XXX"
-            echo $progress
-        done
-    } | whiptail --title "🗑️  Deinstallation" --gauge "Die Deinstallation wird durchgeführt..." 6 50 0
+        # 1. Panel Services stoppen
+        echo "5" ; echo "XXX" ; echo "Stoppe Panel Services..." ; echo "XXX"
+        systemctl stop pteroq 2>>"$log_file" || true
+        systemctl disable pteroq 2>>"$log_file" || true
+        echo "[$(date)] Panel Services gestoppt" >> "$log_file"
 
-    # Abschlussmeldung
-    whiptail --title "✅  Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde erfolgreich entfernt. Der Webserver nginx bleibt aktiv, damit andere Dienste weiterhin online bleiben können." 10 50
+        # 2. Wings stoppen (falls vorhanden)
+        echo "10" ; echo "XXX" ; echo "Stoppe Wings (falls vorhanden)..." ; echo "XXX"
+        if systemctl is-active --quiet wings; then
+            systemctl stop wings 2>>"$log_file"
+            systemctl disable wings 2>>"$log_file"
+            echo "[$(date)] Wings Service gestoppt" >> "$log_file"
+        fi
+
+        # 3. Cron Jobs entfernen
+        echo "15" ; echo "XXX" ; echo "Entferne Cron Jobs..." ; echo "XXX"
+        crontab -u www-data -l 2>/dev/null | grep -v "artisan schedule:run" | crontab -u www-data - 2>>"$log_file" || true
+        crontab -l 2>/dev/null | grep -v "certbot renew" | crontab - 2>>"$log_file" || true
+        echo "[$(date)] Cron Jobs entfernt" >> "$log_file"
+
+        # 4. Panel Files löschen
+        echo "25" ; echo "XXX" ; echo "Lösche Panel Files..." ; echo "XXX"
+        rm -rf /var/www/pterodactyl 2>>"$log_file"
+        echo "[$(date)] Panel Files gelöscht" >> "$log_file"
+
+        # 5. Server-Daten löschen
+        echo "35" ; echo "XXX" ; echo "Lösche Server-Daten..." ; echo "XXX"
+        rm -rf /var/lib/pterodactyl 2>>"$log_file"
+        echo "[$(date)] Server-Daten gelöscht" >> "$log_file"
+
+        # 6. Datenbank löschen
+        echo "45" ; echo "XXX" ; echo "Lösche Datenbank..." ; echo "XXX"
+        if systemctl is-active --quiet mariadb || systemctl is-active --quiet mysql; then
+            mysql -e "DROP DATABASE IF EXISTS panel;" 2>>"$log_file" || true
+            mysql -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';" 2>>"$log_file" || true
+            mysql -e "FLUSH PRIVILEGES;" 2>>"$log_file" || true
+            echo "[$(date)] Datenbank gelöscht" >> "$log_file"
+        fi
+
+        # 7. Systemd Services entfernen
+        echo "55" ; echo "XXX" ; echo "Entferne Systemd Services..." ; echo "XXX"
+        rm -f /etc/systemd/system/pteroq.service 2>>"$log_file"
+        rm -f /etc/systemd/system/wings.service 2>>"$log_file"
+        systemctl daemon-reload 2>>"$log_file"
+        echo "[$(date)] Systemd Services entfernt" >> "$log_file"
+
+        # 8. Nginx Konfiguration entfernen
+        echo "65" ; echo "XXX" ; echo "Entferne Nginx Konfiguration..." ; echo "XXX"
+        rm -f /etc/nginx/sites-enabled/pterodactyl.conf 2>>"$log_file"
+        rm -f /etc/nginx/sites-available/pterodactyl.conf 2>>"$log_file"
+        systemctl reload nginx 2>>"$log_file" || true
+        echo "[$(date)] Nginx Config entfernt" >> "$log_file"
+
+        # 9. Wings Files löschen
+        echo "75" ; echo "XXX" ; echo "Lösche Wings Files..." ; echo "XXX"
+        rm -rf /etc/pterodactyl 2>>"$log_file"
+        rm -f /usr/local/bin/wings 2>>"$log_file"
+        echo "[$(date)] Wings Files gelöscht" >> "$log_file"
+
+        # 10. Docker Container/Images entfernen (optional)
+        echo "85" ; echo "XXX" ; echo "Entferne Docker Container..." ; echo "XXX"
+        if command -v docker &> /dev/null; then
+            # Stoppe alle Pterodactyl Container
+            docker stop $(docker ps -a -q --filter "label=Service=Pterodactyl" 2>/dev/null) 2>>"$log_file" || true
+            docker rm $(docker ps -a -q --filter "label=Service=Pterodactyl" 2>/dev/null) 2>>"$log_file" || true
+
+            # Pterodactyl Images entfernen
+            docker rmi $(docker images -q "ghcr.io/pterodactyl/*" 2>/dev/null) 2>>"$log_file" || true
+            echo "[$(date)] Docker Container/Images entfernt" >> "$log_file"
+        fi
+
+        # 11. Verwaltungs-Scripts entfernen (optional)
+        echo "92" ; echo "XXX" ; echo "Bereinige Scripts..." ; echo "XXX"
+        # /opt/pterodactyl bleibt erhalten für zukünftige Neuinstallationen
+        rm -f /usr/local/bin/gds 2>>"$log_file"
+        echo "[$(date)] GDS-Befehl entfernt" >> "$log_file"
+
+        # 12. Logs bereinigen (alte Panel-Logs)
+        echo "96" ; echo "XXX" ; echo "Bereinige Logs..." ; echo "XXX"
+        rm -rf /var/log/pterodactyl 2>>"$log_file" || true
+        echo "[$(date)] Logs bereinigt" >> "$log_file"
+
+        echo "100" ; echo "XXX" ; echo "Deinstallation abgeschlossen!" ; echo "XXX"
+        sleep 1
+
+    } | whiptail --title "Deinstallation läuft..." --gauge "Initialisiere..." 8 70 0
+
+    # Abschlussmeldung mit Zusammenfassung
+    whiptail_success --title "Deinstallation abgeschlossen" --msgbox "Pterodactyl wurde erfolgreich deinstalliert!\n\nEntfernt wurden:\n✓ Panel Files\n✓ Datenbank (panel)\n✓ Wings (falls vorhanden)\n✓ Server-Daten\n✓ Cron Jobs\n✓ Services\n✓ Nginx Konfiguration\n\nNoch vorhanden:\n• MariaDB, Nginx, Redis (für andere Dienste)\n• Backups (falls erstellt)\n• Scripts in /opt/pterodactyl\n\nLog: /var/log/pterodactyl-uninstall.log" 24 65
+
     clear
+    echo "Deinstallation abgeschlossen. Log verfügbar unter: $log_file"
 }
 
 
@@ -234,7 +457,11 @@ EOF
 install_phpmyadmin() {
     clear
     echo "Weiterleitung zu PhpMyAdmin..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/phpmyadmin-installer.sh | bash
+    if [ -f "/opt/pterodactyl/phpmyadmin-installer.sh" ]; then
+        bash /opt/pterodactyl/phpmyadmin-installer.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/phpmyadmin-installer.sh | bash
+    fi
     exit 0
 }
 
@@ -243,7 +470,11 @@ install_phpmyadmin() {
 install_theme() {
     clear
     echo "Weiterleitung zu Theme-Verwaltung..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
+    if [ -f "/opt/pterodactyl/theme-verwaltung.sh" ]; then
+        bash /opt/pterodactyl/theme-verwaltung.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/theme-verwaltung.sh | bash
+    fi
     exit 0
 }
 
@@ -253,21 +484,218 @@ install_theme() {
 setup_server_backups() {
     clear
     echo "Weiterleitung zu Backup-Script..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+    if [ -f "/opt/pterodactyl/backup-verwaltung.sh" ]; then
+        bash /opt/pterodactyl/backup-verwaltung.sh
+    else
+        curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/backup-verwaltung.sh | bash
+    fi
     exit 0
 }
 
 
 # Funktion zum Einrichten des Database-Hosts - OFFEN
 setup_database_host() {
-    curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/database-host-config.sh | bash
+    if [ -f "/opt/pterodactyl/database-host-config.sh" ]; then
+        bash /opt/pterodactyl/database-host-config.sh
+    else
+        curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/database-host-config.sh | bash
+    fi
     exit 0
 }
 
 # Funktion zum integrieren der eigenen SSH Login-Page
 setup_ssh_login() {
-    curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/custom-ssh-login-config.sh | bash
+    if [ -f "/opt/pterodactyl/custom-ssh-login-config.sh" ]; then
+        bash /opt/pterodactyl/custom-ssh-login-config.sh
+    else
+        curl -sSL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/custom-ssh-login-config.sh | bash
+    fi
     exit 0
+}
+
+# Blueprint-Verwaltung
+manage_blueprint() {
+    clear
+
+    PTERODACTYL_DIR="/var/www/pterodactyl"
+
+    # Prüfe ob Blueprint installiert ist
+    if [ ! -f "$PTERODACTYL_DIR/blueprint.sh" ]; then
+        if whiptail --title "Blueprint nicht installiert" --yesno "Blueprint ist nicht installiert.\n\nMöchtest du Blueprint jetzt installieren?" 10 60; then
+            install_blueprint
+            return
+        else
+            return
+        fi
+    fi
+
+    while true; do
+        BLUEPRINT_MENU=$(whiptail --title "Blueprint Verwaltung" --menu "Was möchtest du tun?" 20 75 8 \
+            "1" "📋 Installierte Extensions anzeigen" \
+            "2" "📥 Extension installieren" \
+            "3" "🗑️  Extension entfernen" \
+            "4" "🔄 Blueprint aktualisieren" \
+            "5" "ℹ️  Blueprint Info anzeigen" \
+            "6" "🚪 Zurück zum Hauptmenü" 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+
+        if [ $exitstatus != 0 ]; then
+            return
+        fi
+
+        case $BLUEPRINT_MENU in
+            1) list_blueprint_extensions ;;
+            2) install_blueprint_extension ;;
+            3) remove_blueprint_extension ;;
+            4) upgrade_blueprint ;;
+            5) show_blueprint_info ;;
+            6) return ;;
+        esac
+    done
+}
+
+# Installierte Blueprint Extensions anzeigen
+list_blueprint_extensions() {
+    clear
+    echo "Installierte Extensions werden gesucht..."
+
+    cd /var/www/pterodactyl
+
+    # Extensions-Verzeichnis prüfen
+    if [ -d ".blueprint/extensions" ]; then
+        extensions_list=$(ls -1 .blueprint/extensions 2>/dev/null)
+
+        if [ -z "$extensions_list" ]; then
+            whiptail_info --title "Keine Extensions" --msgbox "Es sind keine Blueprint-Extensions installiert." 10 60
+        else
+            # Extensions zählen und anzeigen
+            ext_count=$(echo "$extensions_list" | wc -l)
+            ext_display="Installierte Extensions ($ext_count):\n\n"
+
+            while IFS= read -r ext; do
+                ext_display="${ext_display}📦 $ext\n"
+            done <<< "$extensions_list"
+
+            whiptail_info --title "Installierte Extensions" --msgbox "$ext_display" 20 70
+        fi
+    else
+        whiptail_error --title "Keine Extensions" --msgbox "Das Extensions-Verzeichnis wurde nicht gefunden.\n\nMöglicherweise ist Blueprint nicht korrekt installiert." 10 60
+    fi
+}
+
+# Blueprint Extension installieren
+install_blueprint_extension() {
+    EXT_PATH=$(whiptail --title "Extension installieren" --inputbox "Gib den Pfad zur .blueprint Datei ein:\n\nBeispiel: /root/meine-extension.blueprint\n\nOder lade die Extension vorher in /var/www/pterodactyl hoch." 14 75 3>&1 1>&2 2>&3)
+
+    if [ $? -ne 0 ] || [ -z "$EXT_PATH" ]; then
+        return
+    fi
+
+    if [ ! -f "$EXT_PATH" ]; then
+        whiptail_error --title "Datei nicht gefunden" --msgbox "Die Datei '$EXT_PATH' wurde nicht gefunden.\n\nBitte prüfe den Pfad und versuche es erneut." 10 70
+        return
+    fi
+
+    clear
+    echo "Extension wird installiert..."
+    cd /var/www/pterodactyl
+
+    bash blueprint.sh -install "$EXT_PATH" 2>&1 | tee /tmp/blueprint_install_ext.log
+
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        whiptail_success --title "Extension installiert" --msgbox "Die Extension wurde erfolgreich installiert!\n\nLog: /tmp/blueprint_install_ext.log" 10 60
+    else
+        whiptail_error --title "Fehler" --msgbox "Bei der Installation ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_install_ext.log" 10 70
+    fi
+}
+
+# Blueprint Extension entfernen
+remove_blueprint_extension() {
+    # Liste der installierten Extensions holen
+    if [ ! -d "/var/www/pterodactyl/.blueprint/extensions" ]; then
+        whiptail_info --title "Keine Extensions" --msgbox "Keine Extensions gefunden." 10 60
+        return
+    fi
+
+    cd /var/www/pterodactyl/.blueprint/extensions
+    extensions=$(ls -1 2>/dev/null)
+
+    if [ -z "$extensions" ]; then
+        whiptail_info --title "Keine Extensions" --msgbox "Es sind keine Extensions installiert." 10 60
+        return
+    fi
+
+    # Whiptail-Menü aus Extensions erstellen
+    menu_items=""
+    counter=1
+    while IFS= read -r ext; do
+        menu_items="$menu_items $counter \"$ext\""
+        counter=$((counter + 1))
+    done <<< "$extensions"
+
+    EXT_CHOICE=$(eval whiptail --title \"Extension entfernen\" --menu \"Welche Extension möchtest du entfernen?\" 20 70 10 $menu_items 3>&1 1>&2 2>&3)
+
+    if [ $? -ne 0 ]; then
+        return
+    fi
+
+    # Extension-Name aus Auswahl holen
+    EXT_NAME=$(echo "$extensions" | sed -n "${EXT_CHOICE}p")
+
+    if whiptail --title "Extension entfernen" --yesno "Möchtest du die Extension '$EXT_NAME' wirklich entfernen?" 10 70; then
+        clear
+        echo "Extension '$EXT_NAME' wird entfernt..."
+        cd /var/www/pterodactyl
+
+        bash blueprint.sh -remove "$EXT_NAME" 2>&1 | tee /tmp/blueprint_remove_ext.log
+
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+            whiptail_success --title "Extension entfernt" --msgbox "Die Extension '$EXT_NAME' wurde erfolgreich entfernt!\n\nLog: /tmp/blueprint_remove_ext.log" 10 70
+        else
+            whiptail_error --title "Fehler" --msgbox "Beim Entfernen ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_remove_ext.log" 10 70
+        fi
+    fi
+}
+
+# Blueprint aktualisieren
+upgrade_blueprint() {
+    if whiptail --title "Blueprint aktualisieren" --yesno "Möchtest du Blueprint auf die neueste Version aktualisieren?\n\nAlle installierten Extensions bleiben erhalten." 12 70; then
+        clear
+        echo "Blueprint wird aktualisiert..."
+        cd /var/www/pterodactyl
+
+        bash blueprint.sh -upgrade 2>&1 | tee /tmp/blueprint_upgrade.log
+
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+            whiptail_success --title "Blueprint aktualisiert" --msgbox "Blueprint wurde erfolgreich aktualisiert!\n\nLog: /tmp/blueprint_upgrade.log" 10 70
+        else
+            whiptail_error --title "Fehler" --msgbox "Beim Update ist ein Fehler aufgetreten.\n\nPrüfe die Log-Datei: /tmp/blueprint_upgrade.log" 10 70
+        fi
+    fi
+}
+
+# Blueprint Info anzeigen
+show_blueprint_info() {
+    if [ -f "/var/www/pterodactyl/.blueprint/extensions/.version" ]; then
+        BLUEPRINT_VERSION=$(cat /var/www/pterodactyl/.blueprint/extensions/.version 2>/dev/null || echo "Unbekannt")
+    else
+        BLUEPRINT_VERSION="Unbekannt"
+    fi
+
+    EXT_COUNT=$(ls -1 /var/www/pterodactyl/.blueprint/extensions 2>/dev/null | wc -l)
+
+    INFO_TEXT="Blueprint Information\n\n"
+    INFO_TEXT="${INFO_TEXT}📦 Blueprint Version: $BLUEPRINT_VERSION\n"
+    INFO_TEXT="${INFO_TEXT}📋 Installierte Extensions: $EXT_COUNT\n"
+    INFO_TEXT="${INFO_TEXT}📂 Installations-Verzeichnis: /var/www/pterodactyl\n\n"
+    INFO_TEXT="${INFO_TEXT}Nützliche Befehle:\n"
+    INFO_TEXT="${INFO_TEXT}• blueprint -install <file.blueprint>\n"
+    INFO_TEXT="${INFO_TEXT}• blueprint -remove <extension>\n"
+    INFO_TEXT="${INFO_TEXT}• blueprint -list\n"
+    INFO_TEXT="${INFO_TEXT}• blueprint -upgrade"
+
+    whiptail_info --title "Blueprint Information" --msgbox "$INFO_TEXT" 20 75
 }
 
 
@@ -277,7 +705,7 @@ setup_ssh_login() {
 main_loop
 
 
-# ENDE VON Vorbereitung ODER existiert bereits ODER Reperatur
+# ENDE VON Vorbereitung ODER existiert bereits ODER Reparatur
 # BEGINN DER TATSÄCHLICHEN INSTALLATION
 
 # Funktion, um den Benutzer neu anzulegen
@@ -309,7 +737,7 @@ clear
 clear
 echo "----------------------------------"
 echo "GermanDactyl Setup"
-echo "Vereinfacht von Pavl21, Script von https://pterodactyl-installer.se/ wird zur Installation vom Panel und Wings verwendet. "
+echo "Vereinfacht von Pavl21 - Automatisierte Installation von Pterodactyl Panel und Wings"
 echo "----------------------------------"
 sleep 3  # 3 Sekunden warten, bevor das Skript fortgesetzt wird
 
@@ -418,7 +846,7 @@ fi
 # Begrüßung im Script, ganz am Anfang wenn Pterodactyl noch nicht installiert ist.
 if whiptail --title "Willkommen!" --yesno "Dieses Script hilft dir dabei, das Pterodactyl Panel zu installieren. Beachte hierbei, dass du eine Domain benötigst (bzw. 2 Subdomains von einer bestehenden Domain).
 
-Das Script zur Installation basiert auf dem Github-Projekt 'pterodactyl-installer.se' von Vilhelm Prytz. Durch Bestätigung stimmst du zu, dass:
+Durch Bestätigung stimmst du zu, dass:
 - Abhängigkeiten, die benötigt werden, installiert werden dürfen
 - Du den TOS von Let's Encrypt zustimmst
 - Mit der Installation von GermanDactyl einverstanden bist
@@ -438,10 +866,11 @@ fi
 
 
 # Panel + Wings, oder nur Wings? Das ist hier die Frage!
-CHOICE=$(whiptail --title "Dienste installieren" --menu "Möchtest du das Panel + Wings oder nur Wings installieren? Bei der ersten Auswahl kannst du immernoch entscheiden, ob du Wings nach der Panel-Installation noch installieren möchtest." 15 60 4 \
+CHOICE=$(whiptail --title "Dienste installieren" --menu "Was möchtest du installieren?" 18 75 4 \
 "1" "Panel + Wings installieren" \
-"2" "Nur Wings installieren" \
-"3" "Pelican Panel + Wings installieren" 3>&1 1>&2 2>&3)
+"2" "Nur Panel installieren" \
+"3" "Nur Wings installieren" \
+"4" "Pelican Panel + Wings installieren" 3>&1 1>&2 2>&3)
 
 EXITSTATUS=$?
 
@@ -449,13 +878,20 @@ if [ $EXITSTATUS = 0 ]; then
   # Benutzer hat eine Option gewählt
   case $CHOICE in
     1)
-      echo "Panel und Wings werden installiert..."
+      echo "Panel + Wings werden installiert..."
+      USE_STANDALONE=true
+      INSTALL_WINGS_AFTER=true
       ;;
     2)
+      echo "Nur Panel wird installiert..."
+      USE_STANDALONE=true
+      INSTALL_WINGS_AFTER=false
+      ;;
+    3)
       install_wings
       exit 0
       ;;
-    3)
+    4)
       echo "Pelican Panel und Wings werden installiert..."
       install_pelican
       exit 0
@@ -536,7 +972,7 @@ while true; do
     if [[ $panel_domain =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
         break
     else
-        whiptail --title "Domain ist ungültig" --msgbox "Bitte gib eine gültige Domain ein und prüfe auf Schreibfehler." 10 50
+        whiptail_error --title "Domain ist ungültig" --msgbox "Bitte gib eine gültige Domain ein und prüfe auf Schreibfehler." 10 50
     fi
 done
 
@@ -548,9 +984,9 @@ dns_ip=$(dig +short $panel_domain)
 
 # Überprüfung, ob die Domain korrekt verknüpft ist
 if [ "$dns_ip" == "$server_ip" ]; then
-    whiptail --title "Domain-Überprüfung" --msgbox "✅ Die Domain $panel_domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft. Die Installation wird fortgesetzt." 8 78
+    whiptail_success --title "Domain-Überprüfung" --msgbox "Die Domain $panel_domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft. Die Installation wird fortgesetzt." 8 78
 else
-    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 15 80
+    whiptail_error --title "Domain-Überprüfung" --msgbox "Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 15 80
     exit 1
 fi
 
@@ -579,7 +1015,7 @@ while true; do
     if validate_email "$admin_email"; then
         break
     else
-        whiptail --title "E-Mail Adresse ungültig" --msgbox  "Prüfe bitte die E-Mail und versuche es erneut." 10 50
+        whiptail_error --title "E-Mail Adresse ungültig" --msgbox  "Prüfe bitte die E-Mail und versuche es erneut." 10 50
     fi
 done
 
@@ -592,7 +1028,7 @@ user_password=$(generate_userpassword)
 
 
 
-# Funktion zum Generieren eines 64 Zeichen langen zufälligen Passworts ohne Sonderzeichen für Datenbank - Braucht keiner wisssen, weil die Datenbank sowieso nicht angerührt werden muss.
+# Funktion zum Generieren eines 64 Zeichen langen zufälligen Passworts ohne Sonderzeichen für Datenbank - Braucht keiner wissen, weil die Datenbank sowieso nicht angerührt werden muss.
 generate_dbpassword() {
     tr -dc 'A-Za-z0-9' </dev/urandom | head -c64
 }
@@ -618,121 +1054,171 @@ update_progress() {
     echo -e "XXX\n$percentage\n$message\nXXX"
 }
 
-# Überwachungsfunktion für tmp.txt - Fortschritte müssen noch angepasst werden, Wert des Fortschritts springt dauernd hin und her.
+# Überwachungsfunktion für tmp.txt mit detaillierten Fortschrittsanzeigen
 monitor_progress() {
     highest_progress=0
     {
         while read line; do
-            current_progress=0
+            current_progress=$highest_progress
             case "$line" in
                 *"* Assume SSL? false"*)
-                    update_progress 5 "Die Einstellungen werden festgelegt..." ;;
+                    current_progress=3
+                    update_progress $current_progress "📋 Konfiguration wird vorbereitet..." ;;
+                *"* Configuring panel environment.."*)
+                    current_progress=5
+                    update_progress $current_progress "⚙️  Umgebungsvariablen werden gesetzt..." ;;
                 *"Selecting previously unselected package apt-transport-https."*)
-                    update_progress 10 "Der Installationsprozess beginnt in Kürze..." ;;
+                    current_progress=8
+                    update_progress $current_progress "📦 Basis-Pakete werden installiert..." ;;
                 *"Selecting previously unselected package mysql-common."*)
-                    update_progress 15 "MariaDB wird jetzt installiert..." ;;
-                *"Unpacking php8.1-zip"*)
-                    update_progress 20 "Das Paket PHP 8.1 Common wird eingerichtet..." ;;
-                *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service → /lib/systemd/system/mariadb.service."*)
-                    update_progress 25 "MariaDB wird eingerichtet..." ;;
-                *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service → /lib/systemd/system/php8.1-fpm.service."*)
-                    update_progress 30 "Das Paket PHP 8.1 FPM wird aktiviert..." ;;
-                *"Executing: /lib/systemd/systemd-sysv-install enable mariadb"*)
-                    update_progress 35 "MariaDB wird aktiviert..." ;;
+                    current_progress=12
+                    update_progress $current_progress "🗄️  MariaDB-Abhängigkeiten werden heruntergeladen..." ;;
+                *"Setting up mysql-common"*)
+                    current_progress=15
+                    update_progress $current_progress "🗄️  MariaDB wird konfiguriert..." ;;
+                *"Unpacking php8.1"*)
+                    current_progress=18
+                    update_progress $current_progress "🐘 PHP 8.1 wird installiert..." ;;
+                *"Setting up php8.1-common"*)
+                    current_progress=22
+                    update_progress $current_progress "🐘 PHP 8.1 Common wird konfiguriert..." ;;
+                *"Setting up php8.1-cli"*)
+                    current_progress=25
+                    update_progress $current_progress "🐘 PHP CLI wird eingerichtet..." ;;
+                *"Created symlink /etc/systemd/system/multi-user.target.wants/mariadb.service"*)
+                    current_progress=28
+                    update_progress $current_progress "🗄️  MariaDB-Service wird aktiviert..." ;;
+                *"Created symlink /etc/systemd/system/multi-user.target.wants/php8.1-fpm.service"*)
+                    current_progress=32
+                    update_progress $current_progress "🐘 PHP-FPM Service wird aktiviert..." ;;
+                *"Setting up mariadb-server"*)
+                    current_progress=35
+                    update_progress $current_progress "🗄️  MariaDB-Server wird gestartet..." ;;
+                *"Setting up nginx"*)
+                    current_progress=38
+                    update_progress $current_progress "🌐 Nginx Webserver wird installiert..." ;;
                 *"* Installing composer.."*)
-                    update_progress 40 "Composer wird installiert..." ;;
-                *"* Downloading pterodactyl panel files .. "*)
-                    update_progress 45 "Pterodactyl Panel Code wird heruntergeladen..." ;;
+                    current_progress=42
+                    update_progress $current_progress "🎼 Composer wird heruntergeladen und installiert..." ;;
+                *"* Downloading pterodactyl panel files"*)
+                    current_progress=48
+                    update_progress $current_progress "📥 Pterodactyl Panel-Dateien werden heruntergeladen..." ;;
                 *"database/.gitignore"*)
-                    update_progress 50 "Datenbank-Migrations werden integriert..." ;;
+                    current_progress=52
+                    update_progress $current_progress "📂 Datenbank-Struktur wird vorbereitet..." ;;
                 *"database/Seeders/eggs/"*)
-                    update_progress 55 "Eggs werden vorbereitet..." ;;
+                    current_progress=55
+                    update_progress $current_progress "🥚 Standard-Eggs werden geladen..." ;;
                 *"* Installing composer dependencies.."*)
-                    update_progress 60 "Composer-Abhängigkeiten werden installiert..." ;;
+                    current_progress=58
+                    update_progress $current_progress "📦 Composer-Abhängigkeiten werden installiert (kann dauern)..." ;;
+                *"Generating optimized autoload files"*)
+                    current_progress=62
+                    update_progress $current_progress "⚡ Autoloader wird optimiert..." ;;
                 *"* Creating database user pterodactyl..."*)
-                    update_progress 65 "Datenbank für Panel wird bereitgestellt..." ;;
+                    current_progress=65
+                    update_progress $current_progress "👤 Datenbank-Benutzer wird erstellt..." ;;
+                *"* Creating database pterodactyl..."*)
+                    current_progress=68
+                    update_progress $current_progress "🗄️  Panel-Datenbank wird angelegt..." ;;
                 *"INFO  Running migrations."*)
-                    update_progress 70 "Migrations werden gestartet..." ;;
-                *"* Installing cronjob.. "*)
-                    update_progress 75 "Cronjob wird bereitgestellt..." ;;
+                    current_progress=72
+                    update_progress $current_progress "🔄 Datenbank-Migrationen werden ausgeführt..." ;;
+                *"INFO  Seeding database."*)
+                    current_progress=75
+                    update_progress $current_progress "🌱 Datenbank wird mit Basisdaten befüllt..." ;;
+                *"* Installing cronjob.."*)
+                    current_progress=78
+                    update_progress $current_progress "⏰ Cronjob für automatische Aufgaben wird eingerichtet..." ;;
                 *"* Installing pteroq service.."*)
-                    update_progress 80 "Hintergrunddienste werden integriert..." ;;
+                    current_progress=82
+                    update_progress $current_progress "🔧 Queue-Worker-Service wird installiert..." ;;
+                *"* Configuring nginx.."*)
+                    current_progress=85
+                    update_progress $current_progress "🌐 Nginx-Konfiguration wird erstellt..." ;;
                 *"Saving debug log to /var/log/letsencrypt/letsencrypt.log"*)
-                    update_progress 85 "SSL-Zertifikat wird bereitgestellt..." ;;
+                    current_progress=88
+                    update_progress $current_progress "🔐 SSL-Zertifikat wird von Let's Encrypt angefordert..." ;;
+                *"Requesting a certificate for"*)
+                    current_progress=91
+                    update_progress $current_progress "🔐 Zertifikat-Validierung läuft..." ;;
                 *"Congratulations! You have successfully enabled"*)
-                    update_progress 90 "Zertifikat erfolgreich erstellt. GermanDactyl wird vorbereitet..." ;;
-                *"Es wurde kein Instanzort angegeben. Deine Pterodactyl-Instanz wird im default-Ordner gesucht."*)
-                    update_progress 95 "Installiere GermanDactyl, das kann etwas dauern..." ;;
+                    current_progress=94
+                    update_progress $current_progress "✅ SSL-Zertifikat erfolgreich installiert..." ;;
+                *"Es wurde kein Instanzort angegeben"*)
+                    current_progress=96
+                    update_progress $current_progress "🇩🇪 GermanDactyl wird installiert..." ;;
                 *"Der Patch wurde angewendet."*)
-                    update_progress 100 "Prozesse werden beendet..." ;;
+                    current_progress=99
+                    update_progress $current_progress "🎉 Installation wird abgeschlossen..." ;;
             esac
             if [ "$current_progress" -gt "$highest_progress" ]; then
                 highest_progress=$current_progress
-                update_progress $highest_progress "Aktueller Status..."
             fi
         done < <(tail -n 0 -f tmp.txt)
-    } | whiptail --title "Pterodactyl Panel wird installiert" --gauge "Pterodactyl Panel - Installation" 10 70 0
+    } | whiptail --title "Pterodactyl Panel Installation" --gauge "Installation läuft..." 10 80 0
 }
 
 
-# Starte die Überwachungsfunktion
-monitor_progress &
-MONITOR_PID=$!
-
-
-# Installationscode hier, leite Ausgaben in tmp.txt um für listening der Logs.... ist das deutsch?
-{
-    bash <(curl -s https://pterodactyl-installer.se) <<EOF
-    0
-    $( [[ "$cpu_arch_conflict" == "true" ]] && echo "y" )
-    panel
-    pterodactyl
-    $database_password
-    Europe/Berlin
-    $admin_email
-    $admin_email
-    admin
-    Admin
-    User
-    $user_password
-    $panel_domain
-    N
-    N
-    N
-    y
-    yes
-EOF
-} >> tmp.txt 2>&1
-
-
-{
-    apt-get update && sudo apt-get install certbot python3-certbot-nginx -y
-    systemctl stop nginx
-    certbot --nginx -d $panel_domain --email $admin_email --agree-tos --non-interactive
-    fuser -k 80/tcp
-    fuser -k 443/tcp
-    systemctl restart nginx
-    curl -sSL https://install.germandactyl.de/ | sudo bash -s -- -v1.11.3
-} >> tmp.txt 2>&1
-
-# Am Ende des Skripts den Überwachungsprozess beenden
-kill $MONITOR_PID
-sleep 1
-
-# Schließe das Fortschrittsbalken-Fenster
-whiptail --clear
+# Eigenständige Installation starten
 clear
+echo "Installation wird vorbereitet..."
+
+# Branch-Erkennung für standalone-panel-installer.sh
+INSTALL_BRANCH="${GITHUB_BRANCH:-main}"
+
+# Versuche Branch aus git zu erkennen (falls wir in einem git repo sind)
+if [ -z "$GITHUB_BRANCH" ] && [ -d "$(dirname "$0")/.git" ]; then
+    GIT_BRANCH=$(cd "$(dirname "$0")" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ -n "$GIT_BRANCH" ] && [ "$GIT_BRANCH" != "HEAD" ]; then
+        INSTALL_BRANCH="$GIT_BRANCH"
+    fi
+fi
+
+# Lade die eigenständige Installationsfunktion
+# Fallback 1: Lokale Datei (bevorzugt)
+if [ -f "/opt/pterodactyl/standalone-panel-installer.sh" ]; then
+    source /opt/pterodactyl/standalone-panel-installer.sh
+elif [ -f "$(dirname "$0")/standalone-panel-installer.sh" ]; then
+    source "$(dirname "$0")/standalone-panel-installer.sh"
+else
+    # Fallback 2: Von GitHub mit erkanntem Branch
+    source <(curl -sSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${INSTALL_BRANCH}/standalone-panel-installer.sh")
+fi
+
+# Installationsfunktion aufrufen
+install_pterodactyl_standalone "$panel_domain" "$admin_email" "$user_password" "$database_password"
+
+# Frage nach Blueprint Installation (ZUERST Blueprint, DANN GermanDactyl!)
+if whiptail --title "Blueprint Installation" --yesno "Möchtest du Blueprint installieren?\n\nBlueprint ist ein Extension Manager für Pterodactyl, der es ermöglicht:\n\n✅ Themes einfach zu installieren\n✅ Addons/Plugins mit einem Klick hinzuzufügen\n✅ Gekaufte Extensions benutzerfreundlich zu verwalten\n✅ Anpassungen ohne manuelle Code-Änderungen\n\nBlueprint macht die Installation von gekauften Themes oder Addons deutlich einfacher!\n\nMöchtest du Blueprint jetzt installieren?" 20 80; then
+    install_blueprint
+    BLUEPRINT_INSTALLED=true
+else
+    BLUEPRINT_INSTALLED=false
+fi
+
+# Frage nach GermanDactyl Installation (NACH Blueprint!)
+if whiptail --title "GermanDactyl Installation" --yesno "Möchtest du GermanDactyl installieren?\n\nGermanDactyl ist eine deutsche Übersetzung des Pterodactyl Panels mit zusätzlichen Anpassungen.\n\nVorteile:\n✅ Vollständig auf Deutsch\n✅ Benutzerfreundlicher für deutsche Nutzer\n✅ Regelmäßige Updates\n\nMöchtest du GermanDactyl jetzt installieren?" 18 75; then
+    echo "GermanDactyl wird installiert..."
+    cd /var/www/pterodactyl
+    curl -sSL https://install.germandactyl.de/ | sudo bash -s -- -v1.11.3 >> /tmp/germandactyl_install.log 2>&1
+    GERMANDACTYL_INSTALLED=true
+else
+    GERMANDACTYL_INSTALLED=false
+fi
+
+# Benutzer neu anlegen mit korrekten Daten
 recreate_user
 
 
 # Funktion, um die Zugangsdaten anzuzeigen
 show_access_data() {
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (32 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
+    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (32 Zeichen): $user_password \n\nDieses Fenster wird sich nicht noch einmal öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
 }
 
 # Info: Installation abgeschlossen
 clear
-whiptail --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 22 80
+whiptail_success --title "Installation erfolgreich" --msgbox "Das Pterodactyl Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pterodactyl ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 22 80
 
 # Hauptlogik für die Zugangsdaten und die Entscheidung zur Installation von Wings
 while true; do
@@ -740,12 +1226,19 @@ while true; do
 
     if whiptail --title "Noch ne Frage" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
         if whiptail --title "Zugang geht?" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
-            if whiptail --title "Bereit für den nächsten Schritt" --yesno "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können. Möchtest du Wings jetzt installieren?" 10 60; then
-                clear
-                install_wings
-                exit 0
+            # Prüfe ob Wings installiert werden soll
+            if [ "$INSTALL_WINGS_AFTER" = true ]; then
+                if whiptail --title "Bereit für den nächsten Schritt" --yesno "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können. Möchtest du Wings jetzt installieren?" 10 60; then
+                    clear
+                    install_wings
+                    exit 0
+                else
+                    whiptail --title "Installation abgebrochen" --msgbox "Wings-Installation wurde abgebrochen. Du kannst das Skript später erneut ausführen, um Wings zu installieren." 10 60
+                    exit 0
+                fi
             else
-                whiptail --title "Installation abgebrochen" --msgbox "Wings-Installation wurde abgebrochen. Du kannst das Skript später erneut ausführen, um Wings zu installieren." 10 60
+                # Nur Panel installiert - kein Wings
+                whiptail_success --title "Installation abgeschlossen" --msgbox "Das Panel wurde erfolgreich installiert!\n\nDu kannst dich jetzt einloggen.\n\nHinweis: Um Server zu erstellen, musst du noch Wings installieren. Das kannst du später über die Wartung/Verwaltung machen." 14 75
                 exit 0
             fi
         else

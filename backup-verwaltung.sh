@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
 # Hinweis für dieses Script:
 # Hier wurden die Funktionen Backup-Ort anpassen, Zeitplan erstellen und Backuplimit aus dem Menü entfernt,
 # da sie nicht einwandfrei mit dem gesamten Script funktionieren. Die Funktionen bleiben vorerst im Code,
@@ -15,7 +18,7 @@ default_backup_source_server="/var/lib/pterodactyl/volumes/"
 default_backup_storage_server="/opt/pterodactyl/backups/server"
 
 # Haftungsausschluss
-whiptail --msgbox "Dies ist die Backup-Verwaltung von GermanDactyl Setup. Dieses Script könnte noch an einigen Stellen fehlerhaft sein, zumindest läuft es unter einer normalen Pterodactyl Installation und einem Debian 11 System einwandfrei. Die Backups werden in '/opt/pterodactyl/' abgelegt, den Pfad kann man aktuell leider noch nicht anpassen. Die Verwendung unterliegt deiner Verantwortung und GermanDactyl haftet nicht bei Datenverlust!" 14 70 --title "Backup-Verwaltung"
+whiptail_info --msgbox "Dies ist die Backup-Verwaltung von GermanDactyl Setup. Dieses Script könnte noch an einigen Stellen fehlerhaft sein, zumindest läuft es unter einer normalen Pterodactyl Installation und einem Debian 11 System einwandfrei. Die Backups werden in '/opt/pterodactyl/' abgelegt, den Pfad kann man aktuell leider noch nicht anpassen. Die Verwendung unterliegt deiner Verantwortung und GermanDactyl haftet nicht bei Datenverlust!" 14 70 --title "Backup-Verwaltung"
 
 
 
@@ -139,7 +142,7 @@ create_backup() {
     elif [ "$source" == "/var/lib/pterodactyl/volumes/" ]; then
         storage=$default_backup_storage_server
     else
-        whiptail --title "Fehler" --msgbox "Ungültiger Quellpfad." 8 78
+        whiptail_error --title "Fehler" --msgbox "Ungültiger Quellpfad." 8 78
         return
     fi
 
@@ -149,12 +152,12 @@ create_backup() {
     backup_file_name="Backup_${current_time}_Uhr.tar.gz"
     total_size=$(du -sb "$source" | awk '{print $1}')
 
-    (tar -cf - "$source" | pv -n -s "$total_size" | gzip > "$storage/$backup_file_name") 2>&1 | whiptail --title "Backup erstellen" --gauge "Das Backup wird angelegt..." 6 50 0
+    (tar -cf - "$source" | pv -n -s "$total_size" | gzip > "$storage/$backup_file_name") 2>&1 | whiptail_info --title "Backup erstellen" --gauge "Das Backup wird angelegt..." 6 50 0
     if [ $? -eq 0 ]; then
-        whiptail --title "Erfolg" --msgbox "Backup erfolgreich erstellt: $backup_file_name" 8 78
+        whiptail_success --title "Erfolg" --msgbox "Backup erfolgreich erstellt: $backup_file_name" 8 78
         manage_backup_rotation "$storage" "$max_backups"
     else
-        whiptail --title "Fehler" --msgbox "Es ist ein Fehler beim erstellen des Backups aufgetreten. Ist genug Speicher frei? Ist der Pfad auch wirklich vorhanden? Hast du genügend Berechtigungen?." 8 78
+        whiptail_error --title "Fehler" --msgbox "Es ist ein Fehler beim erstellen des Backups aufgetreten. Ist genug Speicher frei? Ist der Pfad auch wirklich vorhanden? Hast du genügend Berechtigungen?." 8 78
     fi
 }
 
@@ -173,13 +176,13 @@ restore_backup_server() {
 
 restore_backup() {
     local storage=$1
-    ensure_backup_storage_exists $storage
+    ensure_backup_storage_exists "$storage"
 
-    # Erstelle eine Liste von Backup-Dateien aus dem spezifizierten Verzeichnis
-    backups=($(ls $storage | grep 'Backup_.*_Uhr.tar.gz'))
+    # Backup-Dateien sicher mit find auflisten (kein ls Parsing!)
+    mapfile -t backups < <(find "$storage" -maxdepth 1 -name 'Backup_*_Uhr.tar.gz' -type f -printf '%f\n' | sort)
 
     if [ ${#backups[@]} -eq 0 ]; then
-        whiptail --title "Fehler" --msgbox "Keine Backups gefunden im Verzeichnis: $storage" 8 78
+        whiptail_error --title "Fehler" --msgbox "Keine Backups gefunden im Verzeichnis:\n$storage" 9 78
         return
     fi
 
@@ -199,14 +202,14 @@ restore_backup() {
         total_size=$(du -sb $backup_file | awk '{print $1}')
 
         # Verwende pv und tar, um das Backup wiederherzustellen
-        (pv -n -s "$total_size" "$backup_file" | tar -xzf - -C /) 2>&1 | whiptail --title "Backup wiederherstellen" --gauge "Backup wird wiederhergestellt..." 6 50 0
+        (pv -n -s "$total_size" "$backup_file" | tar -xzf - -C /) 2>&1 | whiptail_info --title "Backup wiederherstellen" --gauge "Backup wird wiederhergestellt..." 6 50 0
         if [ $? -eq 0 ]; then
-            whiptail --title "Erfolg" --msgbox "Backup erfolgreich wiederhergestellt: $selected_backup" 8 78
+            whiptail_success --title "Erfolg" --msgbox "Backup erfolgreich wiederhergestellt: $selected_backup" 8 78
         else
-            whiptail --title "Fehler" --msgbox "Fehler bei der Wiederherstellung des Backups." 8 78
+            whiptail_error --title "Fehler" --msgbox "Fehler bei der Wiederherstellung des Backups." 8 78
         fi
     else
-        whiptail --title "Abgebrochen" --msgbox "Wiederherstellung abgebrochen." 8 78
+        whiptail_info --title "Abgebrochen" --msgbox "Wiederherstellung abgebrochen." 8 78
     fi
 }
 
@@ -215,15 +218,15 @@ remove_backup() {
     local type=$1
     local storage=$([ "$type" == "panel" ] && echo "$backup_storage_panel" || echo "$backup_storage_server")
 
-    if whiptail --title "Warnung" --yesno "Alle Backups im Verzeichnis $storage werden gelöscht. Fortfahren?" 10 60; then
+    if whiptail_warning --title "Warnung" --yesno "Alle Backups im Verzeichnis $storage werden gelöscht. Fortfahren?" 10 60; then
         find "$storage" -type f -name '*.tar.gz' -print0 | pv -n0 | xargs -0 rm
         if [ $? -eq 0 ]; then
-            whiptail --title "Erfolg" --msgbox "Alle Backups wurden erfolgreich gelöscht." 8 78
+            whiptail_success --title "Erfolg" --msgbox "Alle Backups wurden erfolgreich gelöscht." 8 78
         else
-            whiptail --title "Fehler" --msgbox "Es gab einen Fehler beim Löschen der Backups. Möglicherweise existiert der Pfad bereits nicht mehr?" 8 78
+            whiptail_error --title "Fehler" --msgbox "Es gab einen Fehler beim Löschen der Backups. Möglicherweise existiert der Pfad bereits nicht mehr?" 8 78
         fi
     else
-        whiptail --title "Abgebrochen" --msgbox "Löschvorgang abgebrochen." 8 78
+        whiptail_info --title "Abgebrochen" --msgbox "Löschvorgang abgebrochen." 8 78
     fi
 
     question_menu
@@ -243,9 +246,9 @@ limit_backup() {
             max_backups_server=$new_limit
             update_or_add_setting "$settings_file" "max_backups_server" "$max_backups_server"
         fi
-        whiptail --title "Erfolg" --msgbox "Das Backuplimit für $type wurde auf $new_limit gesetzt." 8 78
+        whiptail_success --title "Erfolg" --msgbox "Das Backuplimit für $type wurde auf $new_limit gesetzt." 8 78
     else
-        whiptail --title "Fehler" --msgbox "Ungültige Eingabe. Bitte gib eine gültige Zahl ein." 8 78
+        whiptail_error --title "Fehler" --msgbox "Ungültige Eingabe. Bitte gib eine gültige Zahl ein." 8 78
     fi
 }
 
@@ -272,32 +275,33 @@ set_backup_location() {
             backup_storage_server=$new_location
             update_or_add_setting "$settings_file" "backup_storage_server" "$backup_storage_server"
         fi
-        whiptail --title "Erfolg" --msgbox "Backup-Ort wurde festgelegt auf: $new_location" 8 78
+        whiptail_success --title "Erfolg" --msgbox "Backup-Ort wurde festgelegt auf: $new_location" 8 78
     elif [ -z "$new_location" ]; then
-        whiptail --title "Fehler" --msgbox "Kein Pfad angegeben oder Pfad entspricht dem aktuellen. Bitte gib einen gültigen Pfad ein." 8 78
+        whiptail_error --title "Fehler" --msgbox "Kein Pfad angegeben oder Pfad entspricht dem aktuellen. Bitte gib einen gültigen Pfad ein." 8 78
     fi
 }
 
 
-# Backup-Zeitpläne - WURDE ERSTMAL AUSSORTIERT, FUNKTIONIERT NICHT.
+# Backup-Rotation - Löscht alte Backups wenn Limit überschritten
 manage_backup_rotation() {
     local storage=$1
     local max_backups=$2
 
-    # Erstelle eine Liste der Backups, sortiert nach Erstellungsdatum (älteste zuerst)
-    backup_files=($(ls -t $storage/Backup_*.tar.gz))
-
-    # Überprüfe, ob $max_backups ein gültiger numerischer Wert ist
+    # Validierung: max_backups muss numerisch sein
     if [[ ! "$max_backups" =~ ^[0-9]+$ ]]; then
         echo "Ungültiger Wert für max_backups: $max_backups"
         return 1
     fi
 
+    # Backups mit find auflisten, nach Änderungszeit sortiert (älteste zuerst)
+    mapfile -t backup_files < <(find "$storage" -maxdepth 1 -name 'Backup_*.tar.gz' -type f -printf '%T+ %p\n' | sort | cut -d' ' -f2-)
+
     # Überprüfe, ob die Anzahl der Backups größer als das Maximum ist
-    while [ ${#backup_files[@]} -gt $max_backups ]; do
-        oldest_backup=${backup_files[-1]}
+    while [ ${#backup_files[@]} -gt "$max_backups" ]; do
+        oldest_backup="${backup_files[0]}"
         rm -f "$oldest_backup"
-        backup_files=("${backup_files[@]:0:${#backup_files[@]}-1}")
+        # Array neu aufbauen ohne das erste Element
+        backup_files=("${backup_files[@]:1}")
     done
 }
 
@@ -330,7 +334,7 @@ set_backup_schedule() {
         9) cron_job="0 4 * * 6";;
         10) # Deaktiviere den Backup-Zeitplan
             (crontab -l 2>/dev/null | grep -v "/opt/pterodactyl/backup-plan.sh") | crontab -
-            whiptail --title "Erfolg" --msgbox "Backup-Zeitplan wurde deaktiviert." 8 78
+            whiptail_success --title "Erfolg" --msgbox "Backup-Zeitplan wurde deaktiviert." 8 78
             return 0;;
         *) return 1;;
     esac
@@ -338,7 +342,7 @@ set_backup_schedule() {
     # Ersetze vorhandene crontab-Einträge
     (crontab -l 2>/dev/null | grep -v "/opt/pterodactyl/backup-plan.sh"; echo "$cron_job /opt/pterodactyl/backup-plan.sh") | crontab -
 
-    whiptail --title "Erfolg" --msgbox "Backup-Zeitplan erfolgreich angepasst." 8 78
+    whiptail_success --title "Erfolg" --msgbox "Backup-Zeitplan erfolgreich angepasst." 8 78
 }
 
 

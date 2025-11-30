@@ -1,7 +1,13 @@
 #!/bin/bash
 
+# Lade Whiptail-Farben
+source "$(dirname "$0")/whiptail-colors.sh" 2>/dev/null || source /opt/pterodactyl/whiptail-colors.sh 2>/dev/null || true
+
+# Lade install-scripts.sh für Logging und call_script()
+source "$(dirname "$0")/install-scripts.sh" 2>/dev/null || source /opt/pterodactyl/install-scripts.sh 2>/dev/null || true
+
 # Info-Box, dass das Panel während des Prozesses nicht erreichbar ist
-whiptail --title "Info zum Panel" --msgbox "Hier werden die SSL-Zertifikate erneuert. Sämtliche Websites, auch das Panel, die über diesen Server laufen, werden während des Vorgangs offline sein. Das dauert in der Regel nur 1 Minute." 15 50
+whiptail_info --title "Info zum Panel" --msgbox "Hier werden die SSL-Zertifikate erneuert. Sämtliche Websites, auch das Panel, die über diesen Server laufen, werden während des Vorgangs offline sein. Das dauert in der Regel nur 1 Minute." 15 50
 
 # Fortschrittsanzeige in Whiptail starten
 {
@@ -44,10 +50,10 @@ if echo "$renew_output" | grep -q "Failed to renew"; then
     while IFS= read -r line; do
         if echo "$line" | grep -q "Could not bind to IPv4 or IPv6"; then
             domain=$(echo "$line" | grep -oP '(?<=certificate ).*(?= with error)')
-            text+="⚠ $domain war nicht erfolgreich: Anderer Webserver blockiert die Ports (Port 80 blockiert)\n"
+            text+="Warnung: $domain war nicht erfolgreich: Anderer Webserver blockiert die Ports (Port 80 blockiert)\n"
         elif echo "$line" | grep -q "rateLimited"; then
             domain=$(echo "$line" | grep -oP '(?<=certificate ).*(?= with error)')
-            text+="⚠ $domain war nicht erfolgreich: Validierungslimit überschritten, Domain temporär gesperrt.\n"
+            text+="Warnung: $domain war nicht erfolgreich: Validierungslimit überschritten, Domain temporär gesperrt.\n"
         fi
     done <<< "$(echo "$renew_output" | grep "Failed to renew")"
 
@@ -58,9 +64,13 @@ else
 fi
 
 clear
-# Whiptail-Box anzeigen
-whiptail --title "$title" --msgbox "$text" 23 84
+# Whiptail-Box anzeigen (context-based)
+if [ "$title" = "Erneuerung abgeschlossen" ]; then
+    whiptail_success --title "$title" --msgbox "$text" 23 84
+else
+    whiptail_warning --title "$title" --msgbox "$text" 23 84
+fi
 
-# Zurück zur Oberfläche
-curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+# Zurück zur Problembehandlung
+call_script "problem-verwaltung.sh"
 

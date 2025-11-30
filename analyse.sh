@@ -32,49 +32,49 @@ kill $!  # $! enthält die Prozess-ID des zuletzt gestarteten Hintergrundprozess
 disk_usage=$(df -h / | awk 'NR==2{print $5}')
 free_space=$(df -h / | awk 'NR==2{print $4}')
 if [[ ${disk_usage%?} -lt 70 ]]; then
-  disk_status="✔ Speicherplatz prüfen - OK ($disk_usage - $free_space frei)"
+  disk_status="OK: Speicherplatz prüfen - OK ($disk_usage - $free_space frei)"
 else
-  disk_status="⚠ Speicherplatz prüfen - WARNUNG ($disk_usage - $free_space frei)"
+  disk_status="Warnung: Speicherplatz prüfen - WARNUNG ($disk_usage - $free_space frei)"
 fi
 
 # Prüfen, ob Updates verfügbar sind
 update_count=$(apt list --upgradable 2>/dev/null | grep -c -v 'Listing...')
 if [[ $update_count -gt 0 ]]; then
-  update_status="⚠ Offene Updates - Es liegen $update_count Updates vor"
+  update_status="Warnung: Offene Updates - Es liegen $update_count Updates vor"
 else
-  update_status="✔ Offene Updates - Auf den neuesten Stand"
+  update_status="OK: Offene Updates - Auf den neuesten Stand"
 fi
 
 # Prüfen, ob Nginx einwandfrei funktioniert
 nginx_check=$(nginx -t 2>&1)
 if [[ $nginx_check == *"successful"* ]]; then
-  nginx_status="✔ Nginx Einstellungen prüfen - Alles in Ordnung"
+  nginx_status="OK: Nginx Einstellungen prüfen - Alles in Ordnung"
 else
-  nginx_status="⚠ Nginx Einstellungen prüfen - FEHLER"
+  nginx_status="Warnung: Nginx Einstellungen prüfen - FEHLER"
 fi
 
 # Prüfen, ob DNS-Einstellungen in Ordnung sind und Zeit anzeigen
 dns_check=$(ping -c 1 google.com | grep -o -P 'time=\K[^ ]+')
 if [[ -n $dns_check ]]; then
-  dns_status="✔ DNS-Einstellungen - Auflösung erfolgreich ($dns_check ms)"
+  dns_status="OK: DNS-Einstellungen - Auflösung erfolgreich ($dns_check ms)"
 else
-  dns_status="⚠ DNS-Einstellungen - DNS-Auflösung fehlgeschlagen"
+  dns_status="Warnung: DNS-Einstellungen - DNS-Auflösung fehlgeschlagen"
 fi
 
 # Prüfen, ob das Pterodactyl Panel ein Update hat
 installed_version=$(cat "/var/www/pterodactyl/config/app.php" 2> /dev/null | grep "'version' =>" | cut -d\' -f4 | sed 's/^/v/') # Ersetze /path/to/installed/version.txt durch den tatsächlichen Pfad
 latest_version=$(curl -s https://api.github.com/repos/pterodactyl/panel/releases/latest | jq -r '.tag_name')
 if [[ "$installed_version" == "$latest_version" ]]; then
-  panel_update_status="✔ Pterodactyl Panel - Auf den neuesten Stand"
+  panel_update_status="OK: Pterodactyl Panel - Auf den neuesten Stand"
 else
-  panel_update_status="⚠ Pterodactyl Panel - Ein Update ist verfügbar ($latest_version)"
+  panel_update_status="Warnung: Pterodactyl Panel - Ein Update ist verfügbar ($latest_version)"
 fi
 
 # Überprüfe die Berechtigungen von /var/www/pterodactyl
 if [ "$(stat -c %U:%G /var/www/pterodactyl/public)" = "www-data:www-data" ]; then
-    permissions_status="✔ Verzeichnisrechte - Die Berechtigungen sind korrekt"
+    permissions_status="OK: Verzeichnisrechte - Die Berechtigungen sind korrekt"
 else
-    permissions_status="⚠ Verzeichnisrechte - Die Berechtigungen sind nicht korrekt"
+    permissions_status="Warnung: Verzeichnisrechte - Die Berechtigungen sind nicht korrekt"
 fi
 
 # Funktion zur Überprüfung der Gültigkeit von Certbot-Zertifikaten und Speicherung der Ergebnisse in einer Variable
@@ -87,12 +87,12 @@ check_cert_expiry() {
         local domain=$(echo $line | awk '{print $1}')
         local days_left=$(echo $line | grep -Eo '[0-9]+ days' | grep -Eo '[0-9]+')
         if [ "$days_left" -lt 14 ]; then
-            cert_warnings+="- ⚠ Zertifikat für $domain noch $days_left Tage gültig!\n"
+            cert_warnings+="- Warnung: Zertifikat für $domain noch $days_left Tage gültig!\n"
             all_valid=false
         fi
     done
     if [ "$all_valid" = true ]; then
-        cert_warnings="- ✔ Alle SSL-Zertifikate sind mehr als 14 Tage gültig."
+        cert_warnings="- OK: Alle SSL-Zertifikate sind mehr als 14 Tage gültig."
     fi
     echo -e "$cert_warnings"
 }
