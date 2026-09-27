@@ -370,7 +370,8 @@ run_fixes() {
 # ---------------------------------------------------------------------------
 SPEEDTEST=false
 if ! $TEXT_MODE; then
-    if gd_whip --title "✚ Analyse" --defaultno --yesno "Die Analyse prüft System, Updates, nginx, SSL-Zertifikate (auch die tatsächlich ausgelieferten), Dienste, Panel, Wings, DNS und Backups.\n\nSoll zusätzlich die Geschwindigkeit der Internetverbindung gemessen werden? (ca. 30 Sekunden)" 14 76; then
+    # Beim erneuten Lauf nach einer Behebung nicht noch einmal nach dem Geschwindigkeitstest fragen
+    if [ -z "${GD_ANALYSE_RERUN:-}" ] && gd_whip --title "✚ Analyse" --defaultno --yesno "Die Analyse prüft System, Updates, nginx, SSL-Zertifikate (auch die tatsächlich ausgelieferten), Dienste, Panel, Wings, DNS und Backups.\n\nSoll zusätzlich die Geschwindigkeit der Internetverbindung gemessen werden? (ca. 30 Sekunden)" 14 76; then
         SPEEDTEST=true
     fi
     gd_gauge_open "✚ Analyse läuft" "Analyse wird vorbereitet..."
@@ -420,7 +421,7 @@ else
     gd_whip --title "✚ Ergebnis der Analyse" --scrolltext --textbox "$REPORT" 30 110
     if [ ${#FIX_DESC[@]} -gt 0 ] && gd_yesno "⚙ Probleme beheben?" "$( [ ${#FIX_DESC[@]} -eq 1 ] && echo "1 gefundenes Problem kann" || echo "${#FIX_DESC[@]} gefundene Probleme können") automatisch behoben werden. Möchtest du das jetzt tun?" 10 70; then
         if run_fixes; then
-            exec bash "$0" "$@"   # Analyse erneut ausführen
+            GD_ANALYSE_RERUN=1 exec bash "$0" "$@"   # Analyse erneut ausführen (ohne erneute Rückfrage)
         fi
     fi
 fi

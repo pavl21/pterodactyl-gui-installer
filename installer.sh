@@ -21,7 +21,7 @@ fi
 # ---------------------------------------------------------------------------
 # Bibliotheken laden: aus einem lokalen Checkout oder aus dem Repository
 # ---------------------------------------------------------------------------
-GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup uninstall)
+GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup uninstall manage)
 _gd_self="${BASH_SOURCE[0]:-}"
 if [ -n "$_gd_self" ] && [ -f "$_gd_self" ] && [ -f "$(dirname "$_gd_self")/lib/common.sh" ]; then
     GD_LOCAL_DIR="$(cd "$(dirname "$_gd_self")" && pwd)"
@@ -213,6 +213,7 @@ gd_fresh_install() {
     gd_progress 100 "Installation abgeschlossen."
     gd_gauge_close
     gd_conf_set INSTALL_STATE fertig
+    gd_shortcut_install >> "$GD_LOG" 2>&1
 
     # --- Abschluss ------------------------------------------------------------
     gd_show_credentials
@@ -229,13 +230,15 @@ gd_fresh_install() {
     else
         done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dieses Skript dazu einfach erneut und wähle 'Wings installieren'."
     fi
-    [ "$GD_SEC_UFW" = true ] && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du mit 'ufw allow <port>' frei."
+    [ "$GD_SEC_UFW" = true ] && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
+    done_text+="\n\nDie Verwaltung startest du künftig einfach mit dem Befehl: $(gd_shortcut_hint)"
     gd_msg "✔ Installation erfolgreich" "$done_text" 20 78
     clear
     echo ""
     echo "FERTIG - - - - - - - - - - - - - - -"
     echo "Panel: https://${GD_DOMAIN}"
     echo "Log:   $GD_LOG"
+    echo "Verwaltung: $(gd_shortcut_hint)"
     echo ""
 }
 
@@ -260,49 +263,6 @@ gd_install_menu() {
 }
 
 # ---------------------------------------------------------------------------
-# Verwaltung einer bestehenden Installation
-# ---------------------------------------------------------------------------
-gd_manage_menu() {
-    local choice version
-    while true; do
-        version="$(gd_panel_installed_version)"
-        choice=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert (v${version:-?}).\nWähle eine Aktion:" 24 78 14 \
-            "1"  "✚ Problembehandlung" \
-            "2"  "↑ Panel aktualisieren" \
-            "3"  "⇄ Wings installieren/verwalten" \
-            "4"  "❖ Blueprint (Erweiterungen) verwalten" \
-            "5"  "▤ phpMyAdmin installieren" \
-            "6"  "↺ Backup-Verwaltung" \
-            "7"  "▦ Database-Host einrichten" \
-            "8"  "▸ SSH-Loginseite einrichten/entfernen" \
-            "9"  "⇅ SWAP-Verwaltung" \
-            "10" "✎ Theme-Verwaltung" \
-            "11" "✖ Pterodactyl deinstallieren" \
-            "12" "⊗ Skript beenden" 3>&1 1>&2 2>&3) || choice=12
-
-        case "$choice" in
-            1)  gd_run problem-verwaltung.sh ;;
-            2)  gd_panel_update ;;
-            3)  gd_run wings-installer.sh ;;
-            4)  gd_blueprint_menu ;;
-            5)  gd_run phpmyadmin-installer.sh ;;
-            6)  gd_run backup-verwaltung.sh ;;
-            7)  gd_run database-host-config.sh ;;
-            8)  gd_run custom-ssh-login-config.sh ;;
-            9)  gd_run swap-verwaltung.sh ;;
-            10) gd_run theme-verwaltung.sh ;;
-            11) gd_uninstall && { clear; echo "Pterodactyl wurde entfernt."; exit 0; } ;;
-            12)
-                clear
-                echo ""
-                echo "INFO - - - - - - - - - -"
-                echo "Die Verwaltung wurde beendet. Starte das Skript erneut, wenn du zurückkehren möchtest."
-                exit 0 ;;
-        esac
-    done
-}
-
-# ---------------------------------------------------------------------------
 # Start
 # ---------------------------------------------------------------------------
 clear
@@ -312,7 +272,8 @@ echo "Pterodactyl Panel + Wings mit deutscher Übersetzung – von Pavl21"
 echo "----------------------------------"
 gd_log "GermanDactyl Setup gestartet (Branch: $GD_BRANCH, lokal: ${GD_LOCAL_DIR:-nein})"
 
-if ! command -v whiptail >/dev/null 2>&1 || ! command -v dig >/dev/null 2>&1 || [ ! -d "$PTERO_DIR" ]; then
+if ! command -v whiptail >/dev/null 2>&1 || ! command -v dig >/dev/null 2>&1 \
+    || { [ ! -d "$PTERO_DIR" ] && [ ! -f /etc/pterodactyl/config.yml ]; }; then
     gd_prepare_system
 fi
 
@@ -332,8 +293,8 @@ if [ -d "$PTERO_DIR" ] && [ "$(gd_conf_get INSTALL_STATE)" = "laeuft" ]; then
     gd_warn_colors_off
 fi
 
-if [ -d "$PTERO_DIR" ]; then
-    gd_manage_menu
+if [ -d "$PTERO_DIR" ] || [ -f /etc/pterodactyl/config.yml ]; then
+    gd_main_menu
 else
     gd_check_environment
     gd_install_menu

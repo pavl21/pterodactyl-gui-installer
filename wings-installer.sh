@@ -18,6 +18,11 @@ gd_require_root
 gd_source_lib security
 gd_source_lib panel
 gd_source_lib wings
+gd_source_lib blueprint
+gd_source_lib backup
+gd_source_lib autobackup
+gd_source_lib uninstall
+gd_source_lib manage
 
 # ---------------------------------------------------------------------------
 # Wings ist bereits installiert: Status, Neustart, Aktualisierung
@@ -150,3 +155,6 @@ elif [ -f "$PTERO_DIR/artisan" ]; then
 else
     gd_wings_install_remote
 fi
+# Kurzbefehl für die Verwaltung (auch auf reinen Wings-Servern)
+[ -f "$WINGS_CONFIG" ] && gd_shortcut_install >> "$GD_LOG" 2>&1
+exit 0

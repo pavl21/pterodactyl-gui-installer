@@ -129,4 +129,10 @@ trouble_menu() {
     done
 }
 
-trouble_menu
+# Direktaufruf einzelner Aktionen aus dem Hauptmenü (Hilfe & Analyse), sonst das Menü anzeigen
+case "${1:-}" in
+    admin)  create_admin_account ;;
+    repair) repair_panel ;;
+    nginx)  check_nginx_config ;;
+    *)      trouble_menu ;;
+esac

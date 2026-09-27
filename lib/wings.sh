@@ -192,31 +192,39 @@ gd_wings_config_write() {
     install -m 600 "$GD_TMP/config.yml" "$WINGS_CONFIG"
 }
 
-gd_wings_allocations() {
-    # gd_wings_allocations <portbereich> – Ports für Gameserver im Panel freigeben
-    local range="$1" ip alias_ip="" a b port values=""
-    ip="$(gd_local_ip)"
-    if [ -n "$ip" ] && gd_is_private_ip "$ip"; then
+gd_allocation_ip() {
+    # Setzt GD_ALLOC_IP und GD_ALLOC_ALIAS: lokale IP (bei NAT mit öffentlicher IP als Alias)
+    GD_ALLOC_IP="$(gd_local_ip)"; GD_ALLOC_ALIAS=""
+    if [ -n "$GD_ALLOC_IP" ] && gd_is_private_ip "$GD_ALLOC_IP"; then
         # Server hinter NAT: Docker bindet an die lokale IP, Spieler verbinden sich über die öffentliche
-        alias_ip="$(gd_public_ip)"
+        GD_ALLOC_ALIAS="$(gd_public_ip)"
     fi
-    [ -z "$ip" ] && ip="$(gd_public_ip)"
-    [ -z "$ip" ] && { echo "IP-Adresse konnte nicht ermittelt werden."; return 1; }
+    [ -z "$GD_ALLOC_IP" ] && GD_ALLOC_IP="$(gd_public_ip)"
+    [ -n "$GD_ALLOC_IP" ]
+}
 
-    local alias_php="null"
+gd_allocations_add() {
+    # gd_allocations_add <node-id> <ip> <alias oder leer> <port oder bereich> – Ports im Panel anlegen
+    local node="$1" ip="$2" alias_ip="$3" range="$4" a b port values="" alias_php="null"
     [ -n "$alias_ip" ] && alias_php="'${alias_ip}'"
-    if gd_artisan_www tinker --execute="app(\\Pterodactyl\\Services\\Allocations\\AssignmentService::class)->handle(\\Pterodactyl\\Models\\Node::findOrFail(${GD_NODE_ID}), ['allocation_ip' => '${ip}', 'allocation_alias' => ${alias_php}, 'allocation_ports' => ['${range}']]); echo 'OK';" | grep -q 'OK'; then
+    if gd_artisan_www tinker --execute="app(\\Pterodactyl\\Services\\Allocations\\AssignmentService::class)->handle(\\Pterodactyl\\Models\\Node::findOrFail(${node}), ['allocation_ip' => '${ip}', 'allocation_alias' => ${alias_php}, 'allocation_ports' => ['${range}']]); echo 'OK';" | grep -q 'OK'; then
         echo "Ports ${range} für ${ip} angelegt (über das Panel)."
     else
         # Rückfallebene: direkt in die Datenbank schreiben (doppelte Einträge werden ignoriert)
         a="${range%-*}"; b="${range#*-}"
         for port in $(seq "$a" "$b"); do
-            values+="(${GD_NODE_ID},'${ip}',$( [ -n "$alias_ip" ] && echo "'${alias_ip}'" || echo NULL ),${port},NOW(),NOW()),"
+            values+="(${node},'${ip}',$( [ -n "$alias_ip" ] && echo "'${alias_ip}'" || echo NULL ),${port},NOW(),NOW()),"
         done
         gd_panel_sql "INSERT IGNORE INTO allocations (node_id, ip, ip_alias, port, created_at, updated_at) VALUES ${values%,};" || return 1
         echo "Ports ${range} für ${ip} angelegt (direkt in der Datenbank)."
     fi
-    gd_conf_set WINGS_PORT_RANGE "$range"
+}
+
+gd_wings_allocations() {
+    # gd_wings_allocations <portbereich> – Ports der neu angelegten Node freigeben (Installation)
+    gd_allocation_ip || { echo "IP-Adresse konnte nicht ermittelt werden."; return 1; }
+    gd_allocations_add "$GD_NODE_ID" "$GD_ALLOC_IP" "$GD_ALLOC_ALIAS" "$1" || return 1
+    gd_conf_set WINGS_PORT_RANGE "$1"
 }
 
 # ---------------------------------------------------------------------------
