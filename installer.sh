@@ -21,7 +21,7 @@ fi
 # ---------------------------------------------------------------------------
 # Bibliotheken laden: aus einem lokalen Checkout oder aus dem Repository
 # ---------------------------------------------------------------------------
-GD_LIBS=(common germandactyl security panel wings blueprint backup uninstall)
+GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup uninstall)
 _gd_self="${BASH_SOURCE[0]:-}"
 if [ -n "$_gd_self" ] && [ -f "$_gd_self" ] && [ -f "$(dirname "$_gd_self")/lib/common.sh" ]; then
     GD_LOCAL_DIR="$(cd "$(dirname "$_gd_self")" && pwd)"
@@ -127,6 +127,7 @@ Panel:          https://${GD_DOMAIN}
 Benutzername:   ${GD_ADMIN_USER}
 E-Mail-Adresse: ${GD_EMAIL}
 Passwort:       ${GD_ADMIN_PASSWORD}
+$( [ "$GD_SEC_BACKUP" = true ] && [ -s "$GD_AB_PASS" ] && echo "Backup-Passwort: $(cat "$GD_AB_PASS")")
 
 Lösche diese Datei, sobald du die Zugangsdaten sicher abgelegt hast:
 rm ${file}
@@ -192,6 +193,7 @@ gd_fresh_install() {
         summary+="Wings:         https://${GD_WINGS_FQDN}:8080 (automatisch verbunden)\nGameserver:    Ports ${GD_PORT_RANGE}\n"
     fi
     summary+="Firewall:      $( [ "$GD_SEC_UFW" = true ] && echo an || echo aus)   fail2ban: $( [ "$GD_SEC_FAIL2BAN" = true ] && echo an || echo aus)   Auto-Updates: $( [ "$GD_SEC_UPDATES" = true ] && echo an || echo aus)\n"
+    summary+="Backups:       $( [ "$GD_SEC_BACKUP" = true ] && echo 'täglich 04:00 Uhr, inkrementell' || echo aus)\n"
     summary+="Blueprint:     $( [ "${GD_BLUEPRINT:-false}" = true ] && echo 'wird installiert' || echo 'nein')"
     if ! whiptail --title "📋 Zusammenfassung" --yesno "Bitte prüfe deine Angaben:\n\n${summary}\n\nDie Installation dauert je nach Server 5 bis 20 Minuten. Soll sie jetzt starten?" 22 80; then
         clear; echo "Die Installation wurde abgebrochen."; exit 0
@@ -210,9 +212,13 @@ gd_fresh_install() {
     gd_security_steps 91 "$with_wings" "${GD_PORT_RANGE:-}"
     gd_progress 100 "Installation abgeschlossen."
     gd_gauge_close
+    gd_conf_set INSTALL_STATE fertig
 
     # --- Abschluss ------------------------------------------------------------
     gd_show_credentials
+    if [ "$GD_SEC_BACKUP" = true ] && [ -s "$GD_AB_PASS" ]; then
+        gd_msg "🔑 Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+    fi
     if gd_yesno "💾 Zugangsdaten speichern?" "Sollen die Zugangsdaten zusätzlich in einer Datei gespeichert werden, die nur root lesen kann?\n\n/root/germandactyl-zugangsdaten.txt" 11 70; then
         gd_save_credentials
     fi
@@ -314,6 +320,16 @@ fi
 if [ -f /etc/motd.sh ]; then
     chown root:root /etc/motd.sh
     chmod 755 /etc/motd.sh
+fi
+
+# Abgebrochene Installation? Dann nicht die Verwaltung eines halbfertigen Panels öffnen, sondern neu installieren.
+if [ -d "$PTERO_DIR" ] && [ "$(gd_conf_get INSTALL_STATE)" = "laeuft" ]; then
+    gd_warn_colors_on
+    if gd_yesno "Unvollständige Installation" "Die letzte Installation wurde nicht abgeschlossen (Details im Log unter $GD_LOG_DIR).\n\nSoll die unvollständige Installation entfernt und neu gestartet werden?\n\nBereits installierte Pakete bleiben erhalten, der Neustart geht deshalb schneller." 14 76; then
+        rm -rf "$PTERO_DIR"
+        gd_conf_set INSTALL_STATE neu
+    fi
+    gd_warn_colors_off
 fi
 
 if [ -d "$PTERO_DIR" ]; then

@@ -139,11 +139,19 @@ gd_backup_server_names() {
 
 gd_backup_panel_restore() {
     # gd_backup_panel_restore <backupdatei> – setzt GD_RESTORE_INFO mit einer Beschreibung des Ergebnisses
-    local file="$1" work stamp old db current_db safety
+    local file="$1" work
     GD_RESTORE_INFO=""
     work="$(gd_backup_workdir)"
-    stamp="$(date +%Y%m%d-%H%M%S)"
     tar -xzf "$file" -C "$work" 2>>"$GD_LOG" || { rm -rf "$work"; GD_RESTORE_INFO="Das Backup konnte nicht entpackt werden."; return 1; }
+    gd_backup_panel_apply "$work"
+}
+
+gd_backup_panel_apply() {
+    # gd_backup_panel_apply <arbeitsordner> – spielt einen entpackten Stand ein:
+    #   <arbeitsordner>/var/www/pterodactyl und optional <arbeitsordner>/germandactyl-backup/panel-db.sql.gz
+    # Bei Fehlern wird automatisch der vorherige Stand wiederhergestellt. Der Arbeitsordner wird entfernt.
+    local work="$1" stamp old db current_db safety
+    stamp="$(date +%Y%m%d-%H%M%S)"
     if [ ! -f "$work/${PTERO_DIR#/}/artisan" ]; then
         rm -rf "$work"; GD_RESTORE_INFO="Das Backup enthält keine Panel-Dateien."; return 1
     fi
@@ -190,6 +198,31 @@ gd_backup_panel_restore() {
     (cd "$PTERO_DIR" && php artisan optimize:clear && php artisan queue:restart && php artisan up) >> "$GD_LOG" 2>&1
     systemctl restart pteroq 2>/dev/null
     rm -rf "$work" "$old"
+    return 0
+}
+
+gd_backup_db_import() {
+    # gd_backup_db_import <datenbank> <dump.sql oder dump.sql.gz> – ersetzt eine Datenbank,
+    # vorher wird der aktuelle Stand gesichert und bei einem Fehler zurückgespielt.
+    local db="$1" dump="$2" safety cat_cmd=cat
+    [[ "$dump" == *.gz ]] && cat_cmd="gunzip -c"
+    $cat_cmd "$dump" | tail -n 3 | grep -q "Dump completed" || { echo "Dump unvollständig: $dump"; return 1; }
+    safety="$(mktemp -p "$GD_BACKUP_ROOT" .db-sicherung.XXXXXX)"
+    if gd_mysql -N -e "SHOW DATABASES LIKE '$db';" | grep -qx "$db"; then
+        gd_backup_dump_db "$db" "$safety" || { rm -f "$safety"; return 1; }
+    else
+        rm -f "$safety"; safety=""
+    fi
+    gd_mysql -e "DROP DATABASE IF EXISTS \`$db\`; CREATE DATABASE \`$db\`;" || return 1
+    if ! $cat_cmd "$dump" | gd_mysql "$db"; then
+        if [ -n "$safety" ]; then
+            gd_mysql -e "DROP DATABASE IF EXISTS \`$db\`; CREATE DATABASE \`$db\`;"
+            gunzip -c "$safety" | gd_mysql "$db"
+        fi
+        rm -f "$safety"
+        return 1
+    fi
+    rm -f "$safety"
     return 0
 }
 

@@ -18,7 +18,7 @@ gd_source_lib wings
 
 create_swap() {
     local size ram
-    ram="$(free -m | awk '/^Mem:/{print $2}')"
+    ram="$(LC_ALL=C free -m | awk '/^Mem:/{print $2}')"
     while true; do
         size="$(gd_input "Swap-Speicher erstellen" "Gib die gewünschte Swap-Größe in MB ein.\n\nArbeitsspeicher dieses Servers: ${ram} MB\nEmpfehlung: 2048 MB, bei wenig RAM etwa gleich viel wie der RAM." "2048" 13 70)" || return 0
         [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -ge 256 ] && break

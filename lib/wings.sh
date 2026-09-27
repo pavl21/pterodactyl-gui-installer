@@ -98,7 +98,7 @@ gd_wings_verify() {
     port="$(awk '/^api:/{a=1} a && $1=="port:"{print $2; exit}' "$WINGS_CONFIG")"
     port="${port:-8080}"
     for i in $(seq 1 10); do
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${fqdn}:${port}:127.0.0.1" \
+        code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${fqdn}:${port}:127.0.0.1" \
             -H "Authorization: Bearer ${token}" "https://${fqdn}:${port}/api/system")"
         echo "Wings-API antwortet mit HTTP $code"
         [ "$code" = "200" ] && return 0
@@ -135,7 +135,7 @@ gd_wings_location() {
 gd_wings_node_resources() {
     # Setzt GD_NODE_MEMORY und GD_NODE_DISK (MB) anhand der Serverausstattung
     local mem disk
-    mem="$(free -m | awk '/^Mem:/{print $2}')"
+    mem="$(LC_ALL=C free -m | awk '/^Mem:/{print $2}')"
     [ -d "$PTERO_DIR" ] && mem=$((mem - 1024))   # Reserve für Panel, Datenbank und System
     [ "$mem" -lt 1024 ] && mem=1024
     mkdir -p /var/lib/pterodactyl

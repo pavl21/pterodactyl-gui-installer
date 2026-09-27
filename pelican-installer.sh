@@ -18,6 +18,8 @@ gd_source_lib security
 gd_source_lib panel
 gd_source_lib wings
 gd_source_lib pelican
+gd_source_lib backup
+gd_source_lib autobackup
 GD_PHP_VERSION="$PELICAN_PHP"
 
 # ---------------------------------------------------------------------------

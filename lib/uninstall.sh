@@ -24,6 +24,8 @@ gd_uninstall_panel() {
     db="$(gd_panel_env DB_DATABASE)"
     dbuser="$(gd_panel_env DB_USERNAME)"
     systemctl disable --now pteroq 2>/dev/null
+    # Automatische Backups abschalten – vorhandene Backups und das Passwort bleiben erhalten
+    systemctl disable --now germandactyl-backup.timer 2>/dev/null
     rm -f /etc/systemd/system/pteroq.service
     systemctl daemon-reload
     crontab -l 2>/dev/null | grep -vF "${PTERO_DIR}/artisan schedule:run" | crontab -

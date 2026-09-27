@@ -29,10 +29,21 @@ gd_php_packages() {
     systemctl enable --now "php${v}-fpm"
 }
 
+gd_nginx_disable_default() {
+    # Die Standardseite von nginx nur entfernen, wenn es die unveränderte Vorgabe ist. Sie lauscht auch auf
+    # [::]:80 – auf Servern ohne IPv6 startet nginx deshalb direkt nach der Installation nicht.
+    if [ -L /etc/nginx/sites-enabled/default ] && [ "$(readlink -f /etc/nginx/sites-enabled/default)" = "/etc/nginx/sites-available/default" ]; then
+        rm -f /etc/nginx/sites-enabled/default
+    fi
+    return 0
+}
+
 gd_panel_packages() {
     gd_apt_install mariadb-server mariadb-client nginx redis-server tar unzip git cron \
         certbot python3-certbot-nginx || return 1
-    systemctl enable --now mariadb redis-server nginx cron
+    gd_nginx_disable_default
+    systemctl enable --now mariadb redis-server cron || return 1
+    systemctl enable nginx && systemctl restart nginx
 }
 
 gd_composer_install() {
@@ -76,10 +87,7 @@ server {
 }
 EOF
     ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
-    # Die Standardseite von nginx nur entfernen, wenn es die unveränderte Vorgabe ist
-    if [ -L /etc/nginx/sites-enabled/default ] && [ "$(readlink -f /etc/nginx/sites-enabled/default)" = "/etc/nginx/sites-available/default" ]; then
-        rm -f /etc/nginx/sites-enabled/default
-    fi
+    gd_nginx_disable_default
     nginx -t && systemctl reload nginx
 }
 
@@ -286,7 +294,7 @@ gd_panel_healthcheck() {
     # Prüft lokal (ohne Umweg über den Router), ob das Panel per HTTPS antwortet
     local domain="$1" code i
     for i in 1 2 3 4 5; do
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "${domain}:443:127.0.0.1" "https://${domain}/auth/login")"
+        code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 15 --resolve "${domain}:443:127.0.0.1" "https://${domain}/auth/login")"
         echo "HTTP-Status der Anmeldeseite: $code"
         case "$code" in 200|302) return 0 ;; esac
         sleep 3
@@ -306,6 +314,8 @@ gd_artisan_www() {
 gd_panel_install_steps() {
     # Erwartet: GD_DOMAIN, GD_EMAIL, GD_ADMIN_USER, GD_ADMIN_PASSWORD, GD_DB_PASSWORD, GD_TELEMETRY,
     #           GD_PANEL_VERSION, GD_APPLY_PATCH (aus gd_choose_panel_version)
+    # Markierung: Bricht die Installation ab, erkennt der nächste Start die unvollständige Installation
+    gd_conf_set INSTALL_STATE laeuft
     gd_step 2  "Paketquellen werden aktualisiert..." gd_apt update
     gd_step 5  "PHP ${GD_PHP_VERSION}-Paketquelle wird eingerichtet..." gd_php_repo
     gd_step 10 "PHP ${GD_PHP_VERSION} wird installiert..." gd_php_packages

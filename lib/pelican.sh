@@ -15,7 +15,9 @@ gd_pelican_packages() {
         "php${v}-bcmath" "php${v}-xml" "php${v}-fpm" "php${v}-curl" "php${v}-zip" "php${v}-intl" "php${v}-sqlite3" \
         nginx sqlite3 tar unzip git cron certbot python3-certbot-nginx || return 1
     update-alternatives --set php "/usr/bin/php${v}" 2>/dev/null
-    systemctl enable --now "php${v}-fpm" nginx cron
+    gd_nginx_disable_default
+    systemctl enable --now "php${v}-fpm" cron || return 1
+    systemctl enable nginx && systemctl restart nginx
 }
 
 gd_pelican_download() {
@@ -106,9 +108,7 @@ server {
 EOF
     fi
     ln -sf /etc/nginx/sites-available/pelican.conf /etc/nginx/sites-enabled/pelican.conf
-    if [ -L /etc/nginx/sites-enabled/default ] && [ "$(readlink -f /etc/nginx/sites-enabled/default)" = "/etc/nginx/sites-available/default" ]; then
-        rm -f /etc/nginx/sites-enabled/default
-    fi
+    gd_nginx_disable_default
     nginx -t && systemctl reload nginx
 }
 
@@ -161,7 +161,7 @@ gd_pelican_artisan_www() {
 gd_pelican_healthcheck() {
     local domain="$1" code i
     for i in 1 2 3 4 5; do
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "${domain}:443:127.0.0.1" "https://${domain}/login")"
+        code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 15 --resolve "${domain}:443:127.0.0.1" "https://${domain}/login")"
         echo "HTTP-Status der Anmeldeseite: $code"
         case "$code" in 200|302) return 0 ;; esac
         sleep 3
@@ -211,7 +211,7 @@ EOF
 gd_pelican_node() {
     # gd_pelican_node <fqdn> – Node anlegen und Konfiguration schreiben
     local fqdn="$1" out mem disk
-    mem="$(free -m | awk '/^Mem:/{print $2}')"; mem=$((mem - 1024)); [ "$mem" -lt 1024 ] && mem=1024
+    mem="$(LC_ALL=C free -m | awk '/^Mem:/{print $2}')"; mem=$((mem - 1024)); [ "$mem" -lt 1024 ] && mem=1024
     disk="$(df -Pm /var/lib/pelican | awk 'NR==2{print $4}')"; disk=$((disk * 90 / 100))
     out="$(gd_pelican_artisan_www p:node:make --no-interaction --name="Node-$(hostname -s)" \
         --description="Automatisch eingerichtet von GermanDactyl Setup" --fqdn="$fqdn" --scheme=https \

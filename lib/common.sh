@@ -26,8 +26,6 @@ case "${LC_ALL:-${LANG:-}}" in
     *UTF-8*|*utf8*) ;;
     *) export LC_ALL=C.UTF-8 LANG=C.UTF-8 ;;
 esac
-# Deutsche Beschriftung der whiptail-Buttons, soweit vorhanden
-export TEXTDOMAIN=newt LANGUAGE=de_DE.UTF-8:de
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
 
 # Temporäres Arbeitsverzeichnis, wird beim Beenden automatisch entfernt
@@ -74,6 +72,12 @@ gd_die() {
 # ---------------------------------------------------------------------------
 # whiptail-Helfer
 # ---------------------------------------------------------------------------
+whiptail() {
+    # Deutsche Beschriftung der Buttons nur für whiptail setzen – global würde es die Ausgabe von
+    # Programmen wie "free" übersetzen ("Speicher:" statt "Mem:") und deren Auswertung zerstören.
+    LANGUAGE=de_DE.UTF-8:de command whiptail "$@"
+}
+
 gd_whip() {
     # whiptail zeichnet auf die Standardausgabe. Wird ein Dialog innerhalb von $(...) aufgerufen
     # (z. B. in gd_ask_domain), wäre er unsichtbar und das Skript würde hängen – daher dann direkt aufs Terminal.
@@ -245,6 +249,32 @@ gd_mysql() {
     else
         mysql "$@"
     fi
+}
+
+gd_cert_days_left() {
+    # gd_cert_days_left <zertifikatsdatei> -> verbleibende Tage (negativ = abgelaufen), Rückgabe 1 bei Fehler
+    local end
+    end="$(openssl x509 -enddate -noout -in "$1" 2>/dev/null | cut -d= -f2)" || return 1
+    [ -n "$end" ] || return 1
+    echo $(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+}
+
+gd_served_cert() {
+    # gd_served_cert <host> <port> <sni-domain> -> gibt das tatsächlich ausgelieferte Zertifikat (PEM) aus
+    timeout 10 openssl s_client -connect "$1:$2" -servername "$3" </dev/null 2>/dev/null \
+        | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' | sed '/-----END CERTIFICATE-----/q'
+}
+
+gd_cert_matches_domain() {
+    # gd_cert_matches_domain <zertifikatsdatei> <domain> – berücksichtigt auch Wildcards (*.domain.de)
+    local names n
+    names="$(openssl x509 -noout -ext subjectAltName -in "$1" 2>/dev/null | grep -oE 'DNS:[^, ]+' | cut -d: -f2)"
+    [ -z "$names" ] && names="$(openssl x509 -noout -subject -in "$1" 2>/dev/null | sed -n 's/.*CN *= *//p')"
+    for n in $names; do
+        [ "$n" = "$2" ] && return 0
+        [[ "$n" == \*.* ]] && [ "${2#*.}" = "${n#\*.}" ] && return 0
+    done
+    return 1
 }
 
 gd_mysqldump() {

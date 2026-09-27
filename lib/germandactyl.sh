@@ -83,7 +83,7 @@ gd_build_swap_on() {
     # Der Frontend-Build braucht viel Arbeitsspeicher. Bei weniger als 3 GB RAM+Swap
     # wird für die Dauer des Builds eine temporäre Swap-Datei angelegt.
     local total
-    total="$(free -m | awk '/^Mem:/{m=$2} /^Swap:/{s=$2} END{print m+s}')"
+    total="$(LC_ALL=C free -m | awk '/^Mem:/{m=$2} /^Swap:/{s=$2} END{print m+s}')"
     GD_BUILD_SWAP=""
     if [ "${total:-0}" -lt 3072 ]; then
         GD_BUILD_SWAP="/swapfile-germandactyl-build"

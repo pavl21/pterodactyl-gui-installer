@@ -95,14 +95,16 @@ gd_unattended_upgrades_setup() {
 gd_security_ask() {
     # Fragt die optionalen Sicherheitsfunktionen ab. Setzt GD_SEC_UFW, GD_SEC_FAIL2BAN, GD_SEC_UPDATES (true/false)
     local sel
-    sel=$(whiptail --title "🛡️ Absicherung des Servers" --checklist "Welche Schutzmaßnahmen sollen eingerichtet werden? (Leertaste = an/aus)\n\nDie Firewall gibt automatisch deinen SSH-Port frei, damit du dich nicht aussperrst." 18 78 3 \
+    sel=$(whiptail --title "🛡️ Absicherung des Servers" --checklist "Welche Schutzmaßnahmen sollen eingerichtet werden? (Leertaste = an/aus)\n\nDie Firewall gibt automatisch deinen SSH-Port frei, damit du dich nicht aussperrst." 19 80 4 \
         "UFW" "Firewall aktivieren und benötigte Ports freigeben" ON \
         "FAIL2BAN" "Angriffe auf SSH automatisch sperren" ON \
-        "UPDATES" "Sicherheitsupdates automatisch installieren" ON 3>&1 1>&2 2>&3) || sel=""
-    GD_SEC_UFW=false; GD_SEC_FAIL2BAN=false; GD_SEC_UPDATES=false
+        "UPDATES" "Sicherheitsupdates automatisch installieren" ON \
+        "BACKUP" "Tägliche Backups (inkrementell, inkl. Datenbanken)" ON 3>&1 1>&2 2>&3) || sel=""
+    GD_SEC_UFW=false; GD_SEC_FAIL2BAN=false; GD_SEC_UPDATES=false; GD_SEC_BACKUP=false
     [[ "$sel" == *'"UFW"'* ]] && GD_SEC_UFW=true
     [[ "$sel" == *'"FAIL2BAN"'* ]] && GD_SEC_FAIL2BAN=true
     [[ "$sel" == *'"UPDATES"'* ]] && GD_SEC_UPDATES=true
+    [[ "$sel" == *'"BACKUP"'* ]] && GD_SEC_BACKUP=true
     return 0
 }
 
@@ -119,5 +121,10 @@ gd_security_steps() {
     fi
     if [ "${GD_SEC_UPDATES:-false}" = "true" ]; then
         gd_step $((p + 3)) "Sicherheit: Automatische Sicherheitsupdates werden aktiviert..." gd_unattended_upgrades_setup
+    fi
+    if [ "${GD_SEC_BACKUP:-false}" = "true" ] && declare -F gd_ab_setup >/dev/null; then
+        # Täglich 04:00 Uhr, lokal, Gameserver nur mit Wings auf diesem Server
+        gd_step $((p + 4)) "Automatische Backups werden eingerichtet..." gd_ab_setup "$GD_BACKUP_ROOT/restic" "$with_wings" "04:00"
+        gd_step $((p + 4)) "jq wird installiert..." gd_apt_install jq
     fi
 }
