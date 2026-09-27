@@ -268,16 +268,16 @@ gd_manage_menu() {
         version="$(gd_panel_installed_version)"
         choice=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert (v${version:-?}).\nWähle eine Aktion:" 24 78 14 \
             "1"  "🔍 Problembehandlung" \
-            "2"  "⬆️  Panel aktualisieren" \
+            "2"  "🔼 Panel aktualisieren" \
             "3"  "🐦 Wings installieren/verwalten" \
             "4"  "🧩 Blueprint (Erweiterungen) verwalten" \
             "5"  "📦 phpMyAdmin installieren" \
             "6"  "📂 Backup-Verwaltung" \
             "7"  "🏢 Database-Host einrichten" \
-            "8"  "🖌️  SSH-Loginseite einrichten/entfernen" \
+            "8"  "💻 SSH-Loginseite einrichten/entfernen" \
             "9"  "🔄 SWAP-Verwaltung" \
             "10" "🎨 Theme-Verwaltung" \
-            "11" "🗑️  Pterodactyl deinstallieren" \
+            "11" "🧹 Pterodactyl deinstallieren" \
             "12" "🚪 Skript beenden" 3>&1 1>&2 2>&3) || choice=12
 
         case "$choice" in

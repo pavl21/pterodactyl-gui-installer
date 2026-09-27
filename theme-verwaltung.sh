@@ -25,7 +25,7 @@ while true; do
     choice=$(whiptail --title "🎨 Theme-Verwaltung" --menu "Themes und Erweiterungen werden über Blueprint installiert. Passende Themes findest du unter https://blueprint.zip/browse.\n\nHinweis: Die früheren Farbthemes (DarkNRed usw.) basieren auf Pterodactyl 1.10 und würden aktuelle Panels beschädigen. Sie werden deshalb nicht mehr angeboten." 18 78 3 \
         "1" "🧩 Blueprint öffnen (Themes/Erweiterungen installieren)" \
         "2" "🔧 Original-Oberfläche wiederherstellen (altes Theme entfernen)" \
-        "3" "↩️  Zurück" 3>&1 1>&2 2>&3) || exit 0
+        "3" "🔙 Zurück" 3>&1 1>&2 2>&3) || exit 0
     case "$choice" in
         1) gd_blueprint_menu ;;
         2)

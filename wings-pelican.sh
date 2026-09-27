@@ -45,6 +45,7 @@ if [ -f "$PELICAN_DIR/artisan" ]; then
     gd_step 60 "Node wird angelegt und Wings konfiguriert..." gd_pelican_node "$domain"
     gd_progress 75 "Ports werden freigegeben..."
     gd_pelican_allocations "$GD_PORT_RANGE" >> "$GD_LOG" 2>&1 || ALLOC_FAIL=true
+    gd_step 82 "Docker-Netzwerk für Gameserver wird vorbereitet..." gd_wings_network_prepare "$PELICAN_WINGS_CONFIG" pelican_nw pelican0
     gd_step 85 "Wings wird gestartet..." gd_wings_start
     if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
         gd_step 95 "Firewall wird angepasst..." gd_firewall_setup true "$GD_PORT_RANGE"
@@ -74,6 +75,7 @@ while true; do
     nano "$PELICAN_WINGS_CONFIG" < /dev/tty > /dev/tty
     if [ -s "$PELICAN_WINGS_CONFIG" ] && grep -q '^token:' "$PELICAN_WINGS_CONFIG"; then
         chmod 600 "$PELICAN_WINGS_CONFIG"
+        gd_wings_network_prepare "$PELICAN_WINGS_CONFIG" pelican_nw pelican0 >> "$GD_LOG" 2>&1
         if gd_wings_start >> "$GD_LOG" 2>&1; then
             gd_msg "🟢 Wings läuft" "Wings ist gestartet und sollte im Panel als verbunden angezeigt werden." 9 70
         else

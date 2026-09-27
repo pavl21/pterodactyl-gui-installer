@@ -258,7 +258,7 @@ check_panel() {
 check_wings() {
     [ -x /usr/local/bin/wings ] || return
     local installed latest token port domain code
-    installed="$(/usr/local/bin/wings --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+    installed="$(/usr/local/bin/wings version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
     latest="$(gd_latest_release pterodactyl/wings)"
     if [ -z "$latest" ]; then warn "Wings v$installed – die neueste Version konnte nicht abgefragt werden"
     elif [ "$installed" = "$latest" ] || gd_version_ge "$installed" "$latest"; then ok "Wings v$installed ist aktuell"

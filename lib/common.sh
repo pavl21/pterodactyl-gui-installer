@@ -73,9 +73,35 @@ gd_die() {
 # whiptail-Helfer
 # ---------------------------------------------------------------------------
 whiptail() {
-    # Deutsche Beschriftung der Buttons nur für whiptail setzen – global würde es die Ausgabe von
-    # Programmen wie "free" übersetzen ("Speicher:" statt "Mem:") und deren Auswertung zerstören.
-    LANGUAGE=de_DE.UTF-8:de command whiptail "$@"
+    # Deutsche Beschriftung der Buttons direkt setzen: Übersetzungen über die Spracheinstellung greifen
+    # nur, wenn eine deutsche Locale installiert ist (auf VPS-Images meist nicht). Eigene Angaben des
+    # Aufrufers (z. B. --ok-button) stehen danach und haben Vorrang.
+    # Größe an das Terminal anpassen: Zu große Dialoge schneidet whiptail sonst einfach ab
+    # (z. B. in kleinen SSH-Fenstern mit 80x24). Wird gekürzt, wird der Text scrollbar.
+    local args=("$@") i rows=24 cols=80 size extra=()
+    size="$(stty size < /dev/tty 2>/dev/null)" && read -r rows cols <<< "$size"
+    [ "${rows:-0}" -ge 10 ] 2>/dev/null || rows=24
+    [ "${cols:-0}" -ge 40 ] 2>/dev/null || cols=80
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        case "${args[i]}" in
+            --msgbox|--yesno|--inputbox|--passwordbox|--textbox|--gauge|--menu|--checklist|--radiolist|--infobox)
+                local h="${args[i+2]:-0}" w="${args[i+3]:-0}"
+                if [[ "$h" =~ ^[0-9]+$ ]] && [ "$h" -gt $((rows - 1)) ]; then
+                    args[i+2]=$((rows - 1))
+                    case "${args[i]}" in --msgbox|--yesno) extra=(--scrolltext) ;; esac
+                    # Listenhöhe von Menüs mitverkleinern
+                    if [[ "${args[i]}" =~ ^--(menu|checklist|radiolist)$ ]] && [[ "${args[i+4]:-}" =~ ^[0-9]+$ ]] \
+                        && [ "${args[i+4]}" -gt $((rows - 9)) ]; then
+                        args[i+4]=$((rows - 9))
+                    fi
+                fi
+                if [[ "$w" =~ ^[0-9]+$ ]] && [ "$w" -gt $((cols - 2)) ]; then
+                    args[i+3]=$((cols - 2))
+                fi
+                break ;;
+        esac
+    done
+    command whiptail --yes-button "Ja" --no-button "Nein" --ok-button "OK" --cancel-button "Abbrechen" "${extra[@]}" "${args[@]}"
 }
 
 gd_whip() {

@@ -102,6 +102,7 @@ if $WITH_WINGS; then
     else
         ALLOC_OK=false
     fi
+    gd_step 85 "Docker-Netzwerk für Gameserver wird vorbereitet..." gd_wings_network_prepare "$PELICAN_WINGS_CONFIG" pelican_nw pelican0
     gd_step 86 "Wings wird gestartet..." gd_wings_start
 fi
 gd_security_steps 90 "$WITH_WINGS" "${GD_PORT_RANGE:-}"

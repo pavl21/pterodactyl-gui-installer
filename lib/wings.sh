@@ -37,7 +37,7 @@ gd_wings_binary() {
     curl -fL "https://github.com/pterodactyl/wings/releases/download/v${version}/wings_linux_${arch}" -o "$GD_TMP/wings" || return 1
     install -m 0755 "$GD_TMP/wings" "$WINGS_BIN" || return 1
     gd_conf_set WINGS_VERSION "$version"
-    "$WINGS_BIN" --version
+    "$WINGS_BIN" version
 }
 
 gd_wings_service() {
@@ -78,6 +78,22 @@ gd_wings_certificate() {
         # Ohne Webserver: Certbot startet kurzzeitig einen eigenen auf Port 80
         certbot certonly --standalone -d "$fqdn" --email "$email" --agree-tos --no-eff-email --non-interactive
     fi
+}
+
+gd_wings_network_prepare() {
+    # Wings legt sein Docker-Netzwerk immer mit IPv6 an. Auf Servern ohne IPv6 (z. B. ipv6.disable=1)
+    # scheitert das ("Cannot read IPv6 setup for bridge"), und Wings startet nicht. Ein vorhandenes
+    # Netzwerk gleichen Namens verwendet Wings weiter – deshalb hier vorab ein reines IPv4-Netzwerk anlegen.
+    # gd_wings_network_prepare [config.yml] [netzwerkname] [bridge-name]
+    local cfg="${1:-$WINGS_CONFIG}" name="${2:-pterodactyl_nw}" bridge="${3:-pterodactyl0}" subnet gateway
+    [ -e /proc/net/if_inet6 ] && return 0
+    command -v docker >/dev/null 2>&1 || return 0
+    docker network inspect "$name" >/dev/null 2>&1 && return 0
+    subnet="$(awk '/v4:/{f=1} f && $1=="subnet:" {print $2; exit}' "$cfg" 2>/dev/null | tr -d "'\"")"
+    gateway="$(awk '/v4:/{f=1} f && $1=="gateway:" {print $2; exit}' "$cfg" 2>/dev/null | tr -d "'\"")"
+    echo "Server ohne IPv6: Docker-Netzwerk $name wird ohne IPv6 angelegt."
+    docker network create --driver bridge --subnet "${subnet:-172.18.0.0/16}" --gateway "${gateway:-172.18.0.1}" \
+        -o "com.docker.network.bridge.name=${bridge}" "$name"
 }
 
 gd_wings_start() {
@@ -217,6 +233,7 @@ gd_wings_local_steps() {
     gd_step $((p + 10)) "Node wird im Panel angelegt..." gd_wings_node_create "$GD_WINGS_FQDN"
     gd_step $((p + 12)) "Wings-Konfiguration wird geschrieben..." gd_wings_config_write
     gd_step $((p + 13)) "Ports ${GD_PORT_RANGE} werden für Gameserver freigegeben..." gd_wings_allocations "$GD_PORT_RANGE"
+    gd_step $((p + 14)) "Docker-Netzwerk für Gameserver wird vorbereitet..." gd_wings_network_prepare
     gd_step $((p + 15)) "Wings wird gestartet..." gd_wings_start
     gd_step $((p + 17)) "Verbindung zwischen Panel und Wings wird geprüft..." gd_wings_verify "$GD_WINGS_FQDN"
     gd_conf_set WINGS_FQDN "$GD_WINGS_FQDN"
@@ -253,7 +270,7 @@ gd_wings_configure_remote() {
     clear
     echo "Wings wird mit dem Panel verbunden..."
     if (cd /etc/pterodactyl && "$WINGS_BIN" configure --panel-url "$url" --token "$token" --node "$node" --override) >> "$GD_LOG" 2>&1 \
-        && gd_wings_start >> "$GD_LOG" 2>&1; then
+        && gd_wings_network_prepare >> "$GD_LOG" 2>&1 && gd_wings_start >> "$GD_LOG" 2>&1; then
         gd_conf_set WINGS_PANEL_URL "$url"
         return 0
     fi

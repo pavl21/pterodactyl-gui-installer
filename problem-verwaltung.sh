@@ -116,7 +116,7 @@ trouble_menu() {
             "3" "🚫 Das Panel kann nicht erreicht werden" \
             "4" "🔓 SSL-Zertifikate erneuern/prüfen" \
             "5" "🔍 Allgemeine Analyse starten" \
-            "6" "↩️  Zurück zum Hauptmenü" 3>&1 1>&2 2>&3) || return 0
+            "6" "🔙 Zurück zum Hauptmenü" 3>&1 1>&2 2>&3) || return 0
 
         case "$choice" in
             1) create_admin_account ;;
