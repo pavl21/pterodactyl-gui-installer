@@ -1,117 +1,111 @@
 #!/bin/bash
+# Pfad: analyse.sh
+# Allgemeine Analyse des Servers und der Pterodactyl-Installation.
 
-# Überprüfe, ob speedtest-cli installiert ist und installiere es falls notwendig
-if ! command -v speedtest-cli &> /dev/null; then
-    echo "speedtest-cli und jq ist nicht installiert. Installation wird durchgeführt..."
-    sudo apt-get install -y speedtest-cli jq
-fi
-
-
-# Funktion zur Anzeige des Fortschritts
-show_progress() {
-    for ((i = 0; i <= 100; i += 10)); do
-        echo "$i"
-        sleep 0.6  # Ändere die Schlafdauer auf 0,6 Sekunden (6 Sekunden insgesamt für 100%)
-    done
-}
-
-# Starte die Anzeige des Fortschritts in einer Hintergrundschleife
-show_progress | whiptail --title "Test läuft" --gauge "Speedtest wird durchgeführt..." 8 40 0 &
-
-# Bandbreitentest mit Speedtest CLI (im Hintergrund)
-speedtest_result=$(speedtest-cli --simple)
-download_speed=$(echo "$speedtest_result" | awk -F ' ' '/Download/{print $2}')
-upload_speed=$(echo "$speedtest_result" | awk -F ' ' '/Upload/{print $2}')
-download_speed+=" Mbit/s" # Hinzufügen von "Mbit/s" zur Download-Geschwindigkeit
-upload_speed+=" Mbit/s"   # Hinzufügen von "Mbit/s" zur Upload-Geschwindigkeit
-
-# Beende das Fortschrittsbalkenfenster
-kill $!  # $! enthält die Prozess-ID des zuletzt gestarteten Hintergrundprozesses
-
-# Prüfen, ob genügend Speicherplatz vorhanden ist
-disk_usage=$(df -h / | awk 'NR==2{print $5}')
-free_space=$(df -h / | awk 'NR==2{print $4}')
-if [[ ${disk_usage%?} -lt 70 ]]; then
-  disk_status="✔ Speicherplatz prüfen - OK ($disk_usage - $free_space frei)"
+# Gemeinsame Bibliotheken laden (vom Hauptskript übergeben, lokal oder aus dem Repository)
+_gd_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -z "${GD_LIB_DIR:-}" ] && [ -f "$_gd_dir/lib/common.sh" ]; then GD_LIB_DIR="$_gd_dir/lib"; GD_LOCAL_DIR="$_gd_dir"; fi
+if [ -n "${GD_LIB_DIR:-}" ] && [ -f "$GD_LIB_DIR/common.sh" ]; then
+    . "$GD_LIB_DIR/common.sh"
 else
-  disk_status="⚠ Speicherplatz prüfen - WARNUNG ($disk_usage - $free_space frei)"
+    _gd_c="$(mktemp)"
+    curl -fsSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH:-main}/lib/common.sh" -o "$_gd_c" \
+        || { echo "Die Bibliothek lib/common.sh konnte nicht geladen werden."; exit 1; }
+    . "$_gd_c"; rm -f "$_gd_c"
 fi
+gd_require_root
 
-# Prüfen, ob Updates verfügbar sind
-update_count=$(apt list --upgradable 2>/dev/null | grep -c -v 'Listing...')
-if [[ $update_count -gt 0 ]]; then
-  update_status="⚠ Offene Updates - Es liegen $update_count Updates vor"
-else
-  update_status="✔ Offene Updates - Auf den neuesten Stand"
+ok()   { RESULT+="✔ $1\n"; }
+warn() { RESULT+="⚠ $1\n"; }
+RESULT=""
+
+SPEEDTEST=false
+if whiptail --title "🔍 Analyse" --defaultno --yesno "Die Analyse prüft Speicherplatz, Updates, Dienste, Versionen, Berechtigungen und Zertifikate.\n\nSoll zusätzlich ein Geschwindigkeitstest der Internetverbindung durchgeführt werden? (dauert ca. 30 Sekunden, nutzt speedtest-cli)" 13 74; then
+    SPEEDTEST=true
 fi
-
-# Prüfen, ob Nginx einwandfrei funktioniert
-nginx_check=$(nginx -t 2>&1)
-if [[ $nginx_check == *"successful"* ]]; then
-  nginx_status="✔ Nginx Einstellungen prüfen - Alles in Ordnung"
-else
-  nginx_status="⚠ Nginx Einstellungen prüfen - FEHLER"
-fi
-
-# Prüfen, ob DNS-Einstellungen in Ordnung sind und Zeit anzeigen
-dns_check=$(ping -c 1 google.com | grep -o -P 'time=\K[^ ]+')
-if [[ -n $dns_check ]]; then
-  dns_status="✔ DNS-Einstellungen - Auflösung erfolgreich ($dns_check ms)"
-else
-  dns_status="⚠ DNS-Einstellungen - DNS-Auflösung fehlgeschlagen"
-fi
-
-# Prüfen, ob das Pterodactyl Panel ein Update hat
-installed_version=$(cat "/var/www/pterodactyl/config/app.php" 2> /dev/null | grep "'version' =>" | cut -d\' -f4 | sed 's/^/v/') # Ersetze /path/to/installed/version.txt durch den tatsächlichen Pfad
-latest_version=$(curl -s https://api.github.com/repos/pterodactyl/panel/releases/latest | jq -r '.tag_name')
-if [[ "$installed_version" == "$latest_version" ]]; then
-  panel_update_status="✔ Pterodactyl Panel - Auf den neuesten Stand"
-else
-  panel_update_status="⚠ Pterodactyl Panel - Ein Update ist verfügbar ($latest_version)"
-fi
-
-# Überprüfe die Berechtigungen von /var/www/pterodactyl
-if [ "$(stat -c %U:%G /var/www/pterodactyl/public)" = "www-data:www-data" ]; then
-    permissions_status="✔ Verzeichnisrechte - Die Berechtigungen sind korrekt"
-else
-    permissions_status="⚠ Verzeichnisrechte - Die Berechtigungen sind nicht korrekt"
-fi
-
-# Funktion zur Überprüfung der Gültigkeit von Certbot-Zertifikaten und Speicherung der Ergebnisse in einer Variable
-check_cert_expiry() {
-    local expiry_info=$(sudo certbot certificates | grep -Eo 'Domains: .+ Expiry Date: .+ \(VALID: [0-9]+ days\)' | awk -F'VALID: ' '{print $2}' | tr -d '()')
-    local IFS=$'\n'
-    local cert_warnings=""
-    local all_valid=true
-    for line in $expiry_info; do
-        local domain=$(echo $line | awk '{print $1}')
-        local days_left=$(echo $line | grep -Eo '[0-9]+ days' | grep -Eo '[0-9]+')
-        if [ "$days_left" -lt 14 ]; then
-            cert_warnings+="- ⚠ Zertifikat für $domain noch $days_left Tage gültig!\n"
-            all_valid=false
-        fi
-    done
-    if [ "$all_valid" = true ]; then
-        cert_warnings="- ✔ Alle SSL-Zertifikate sind mehr als 14 Tage gültig."
-    fi
-    echo -e "$cert_warnings"
-}
-
-# Zertifikatsexpiration überprüfen und Ergebnis in einer Variable speichern
-cert_expiry_status=$(check_cert_expiry)
 
 clear
+echo "Analyse läuft, bitte warten..."
 
-# Whiptail-Fenster anzeigen mit breiteren Abmessungen
-whiptail --title "Ergebnis der Analyse" --msgbox "
-- ✔ Bandbreitentest - $download_speed Download und $upload_speed Upload
-- $disk_status
-- $update_status
-- $nginx_status
-- $dns_status
-- $panel_update_status
-- $permissions_status
-$cert_expiry_status" 20 80
+# Speicherplatz
+usage="$(df -P / | awk 'NR==2{print $5}' | tr -d '%')"
+free_space="$(df -h / | awk 'NR==2{print $4}')"
+if [ "$usage" -lt 80 ]; then ok "Speicherplatz: ${usage} % belegt, ${free_space} frei"; else warn "Speicherplatz: ${usage} % belegt, nur noch ${free_space} frei"; fi
 
-# Zur Problembehandlung zurück
-curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+# Arbeitsspeicher
+mem_avail="$(free -m | awk '/^Mem:/{print $7}')"
+if [ "${mem_avail:-0}" -gt 300 ]; then ok "Arbeitsspeicher: ${mem_avail} MB verfügbar"; else warn "Arbeitsspeicher: nur ${mem_avail} MB verfügbar"; fi
+
+# Updates
+apt-get update -qq >> "$GD_LOG" 2>&1
+update_count="$(apt list --upgradable 2>/dev/null | grep -vcE '^(Listing|Auflistung)')"
+if [ "$update_count" -gt 0 ]; then warn "Offene Updates: $update_count Pakete (apt upgrade)"; else ok "Offene Updates: System ist aktuell"; fi
+
+# DNS
+if getent hosts github.com >/dev/null 2>&1; then ok "DNS-Auflösung funktioniert"; else warn "DNS-Auflösung fehlgeschlagen (github.com nicht auflösbar)"; fi
+
+# Dienste
+for svc in nginx mariadb redis-server pteroq wings docker; do
+    systemctl cat "${svc}.service" >/dev/null 2>&1 || continue
+    if systemctl is-active --quiet "$svc"; then ok "Dienst $svc läuft"; else warn "Dienst $svc läuft NICHT (systemctl status $svc)"; fi
+done
+
+# nginx-Konfiguration
+if command -v nginx >/dev/null 2>&1; then
+    if nginx -t >/dev/null 2>&1; then ok "nginx-Konfiguration ist fehlerfrei"; else warn "nginx-Konfiguration fehlerhaft (nginx -t)"; fi
+fi
+
+# PHP
+php_version="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)"
+if [ -n "$php_version" ]; then
+    if gd_version_ge "$php_version" "8.2"; then ok "PHP-Version: $php_version"; else warn "PHP-Version: $php_version ist veraltet (benötigt 8.2 oder 8.3) – Panel aktualisieren"; fi
+fi
+
+# Panel-Version
+if [ -f "$PTERO_DIR/config/app.php" ]; then
+    installed="$(grep "'version' =>" "$PTERO_DIR/config/app.php" | cut -d\' -f4)"
+    latest="$(gd_latest_release pterodactyl/panel)"
+    if [ -n "$latest" ] && [ "$installed" != "$latest" ]; then
+        warn "Pterodactyl Panel: v$installed installiert, v$latest verfügbar"
+    else
+        ok "Pterodactyl Panel: v$installed ist aktuell"
+    fi
+    if [ "$(stat -c %U "$PTERO_DIR/storage")" = "www-data" ] && [ "$(stat -c %U "$PTERO_DIR/bootstrap/cache")" = "www-data" ]; then
+        ok "Verzeichnisrechte des Panels sind korrekt"
+    else
+        warn "Verzeichnisrechte des Panels sind nicht korrekt (chown -R www-data:www-data $PTERO_DIR)"
+    fi
+fi
+
+# Wings-Version
+if [ -x /usr/local/bin/wings ]; then
+    installed="$(/usr/local/bin/wings --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+    latest="$(gd_latest_release pterodactyl/wings)"
+    if [ -n "$latest" ] && [ "$installed" != "$latest" ]; then
+        warn "Wings: v$installed installiert, v$latest verfügbar"
+    else
+        ok "Wings: v$installed ist aktuell"
+    fi
+fi
+
+# Zertifikate
+if command -v certbot >/dev/null 2>&1; then
+    while read -r name days; do
+        [ -z "$name" ] && continue
+        if [ "$days" -lt 14 ]; then warn "Zertifikat $name: nur noch $days Tage gültig"; else ok "Zertifikat $name: noch $days Tage gültig"; fi
+    done <<< "$(certbot certificates 2>/dev/null | awk '/Certificate Name:/{n=$3} /VALID: [0-9]+ day/{match($0,/VALID: [0-9]+/); print n, substr($0,RSTART+7,RLENGTH-7)}')"
+    certbot certificates 2>/dev/null | grep -q "INVALID" && warn "Mindestens ein Zertifikat ist abgelaufen oder ungültig"
+fi
+
+# Geschwindigkeitstest (optional)
+if $SPEEDTEST; then
+    command -v speedtest-cli >/dev/null 2>&1 || gd_apt_install speedtest-cli >> "$GD_LOG" 2>&1
+    result="$(speedtest-cli --simple 2>/dev/null)"
+    if [ -n "$result" ]; then
+        ok "Bandbreite: ↓ $(awk '/Download/{print $2, $3}' <<< "$result")  ↑ $(awk '/Upload/{print $2, $3}' <<< "$result")"
+    else
+        warn "Bandbreitentest fehlgeschlagen (speedtest-cli)"
+    fi
+fi
+
+whiptail --title "🔍 Ergebnis der Analyse" --scrolltext --msgbox "$RESULT" 24 90

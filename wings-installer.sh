@@ -1,226 +1,152 @@
 #!/bin/bash
+# Pfad: wings-installer.sh
+# Wings installieren, verbinden, aktualisieren oder reparieren.
+# Liegt das Panel auf demselben Server, wird Wings vollautomatisch eingerichtet.
 
-# Pfad, wo Wings installiert sein sollte. Wenn ja, Abbruch und fragen, ob man sonst noch helfen kann. Falls Wings nicht funktioniert!
-WINGS_PATH="/usr/local/bin/wings"
-
-# Überprüfen, ob Wings bereits auf dem System installiert ist und gegebenenfalls abbrechen. Sonst helfen, das es gestartet wird.
-if [ -f "$WINGS_PATH" ]; then
-    if whiptail --title "🚀 Wings bereits installiert" --yesno "Auf diesem System ist bereits Wings installiert. Wenn du versuchst Wings zu starten, falls es nicht reagiert, können wir das hier versuchen. Soll der Status ermittelt werden?" 10 60; then
-        status_output=$(systemctl status wings)
-        if [[ $status_output == *"Failed to start Pterodactyl Wings Daemon."* ]]; then
-            whiptail --title "🔴 Wings Fehler" --msgbox "Es gab einen Fehler beim Starten von Wings. Versuche, Wings neu zu starten. Bestätige, wenn der Neustart erfolgen soll." 10 60
-            sudo systemctl restart wings
-            status_output=$(systemctl status wings)
-            if [[ $status_output == *"Failed to start Pterodactyl Wings Daemon."* ]]; then
-                whiptail --title "🔴 Wings Fehler" --msgbox "Wings konnte nicht gestartet werden, trotz Neustart. Überprüfe, ob eventuell Port-Konflikte vorhanden sind und versuche es erneut, dies kannst du mit dem Befehl 'sudo wings' nachprüfen." 10 80
-            else
-                whiptail --title "🟢 Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein. Das Script wird nun beendet." 10 60
-            fi
-        elif [[ $status_output == *"inactive (dead)"* ]]; then
-            sudo systemctl start wings
-            status_output=$(systemctl status wings)
-            if [[ $status_output == *"Active: active (running)"* ]]; then
-                whiptail --title "🟢 Wings Erfolgreich gestartet" --msgbox "Wings wurde erfolgreich gestartet. Die Server sollten in Kürze aktiv sein." 10 60
-            fi
-        else
-            whiptail --title "🚀 Wings bereits installiert" --msgbox "Wings ist bereits auf diesem System installiert und läuft." 10 60
-            exit 0
-        fi
-    else
-        whiptail --title "🚫 Wings Installation abgebrochen" --msgbox "Die Installation von Wings wurde abgebrochen." 10 60
-    fi
+# Gemeinsame Bibliotheken laden (vom Hauptskript übergeben, lokal oder aus dem Repository)
+_gd_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -z "${GD_LIB_DIR:-}" ] && [ -f "$_gd_dir/lib/common.sh" ]; then GD_LIB_DIR="$_gd_dir/lib"; GD_LOCAL_DIR="$_gd_dir"; fi
+if [ -n "${GD_LIB_DIR:-}" ] && [ -f "$GD_LIB_DIR/common.sh" ]; then
+    . "$GD_LIB_DIR/common.sh"
+else
+    _gd_c="$(mktemp)"
+    curl -fsSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH:-main}/lib/common.sh" -o "$_gd_c" \
+        || { echo "Die Bibliothek lib/common.sh konnte nicht geladen werden."; exit 1; }
+    . "$_gd_c"; rm -f "$_gd_c"
 fi
+gd_require_root
+gd_source_lib security
+gd_source_lib panel
+gd_source_lib wings
 
-# Pfad zur Log-Datei definieren und Log-Datei zu Beginn leeren
-LOG_FILE="wings-install.log"
-> "$LOG_FILE"
-
-# Integrationshilfe für Wings
-integrate_wings() {
-    local DOMAIN="$1"
-
-    # Starte die Integration
-    systemctl enable wings
-    systemctl stop wings
-    cd /var/www/pterodactyl
-    php artisan p:location:make --short=DE --long="Hauptnetz"
-
-    # Zeige Infotext und frage, ob der Node erstellt wurde
+# ---------------------------------------------------------------------------
+# Wings ist bereits installiert: Status, Neustart, Aktualisierung
+# ---------------------------------------------------------------------------
+gd_wings_manage() {
+    local choice state
     while true; do
-        if whiptail --title "Wings Integration" --yesno "Erstelle jetzt im Panel mit der Domain für Wings ($domain) eine Node mit den Vorgaben des Servers. Bist du soweit? Dann fahren wir fort." 10 60; then
-            # Infotext zur Wings-Integration
-            whiptail --title "Manuelle Handlung notwendig" --msgbox "Öffne eine neue SSH-Verbindung und bearbeite die config.yml in /etc/pterodactyl/ (Mit dem Befehl 'nano /etc/pterodactyl/config.yml'). Im Panel unter der erstellten Node findest du den Punkt 'Wings-Integration'. Dort findest du eine config.yml, die dort in dem genannten Pfad eingebunden werden muss. Wenn du das getan hast, bestätige das. Es wird dann überprüft, ob du alles richtig gemacht hast." 15 100
-
-            # Prüfe, ob die Integration abgeschlossen ist
-            if whiptail --title "Wings Integration" --yesno "Hast du die Wings-Integration abgeschlossen?" 10 60; then
-                if [ -f /etc/pterodactyl/config.yml ]; then
-                    systemctl start wings
-                    if whiptail --title "Wings Status prüfen" --yesno "Wings wurde nun gestartet. Überprüfe jetzt bitte, ob die Node aktiv ist. Das sieht du an einem grünen Herz, das schlägt." 10 60; then
-                        whiptail --title "🟢 Pterodactyl ist nun eingerichtet" --msgbox "Die Installation ist nun abgeschlossen, du kannst nun Server für dich (und andere) anlegen. Bevor du das aber tust, musst du noch einige Ports freigeben. Das kannst du unter der Node im Panel unter dem Reiter 'Freigegebene Ports' machen. Dort trägst du dann rechts oben die IP Adresse des Servers ein, in der Mitte einen Alias (zum Beispiel die Domain, unter der dein Server auch erreichbar ist. Das ist kein Pflichtfeld, kannst du auch frei lassen) und darunter die Ports, die du nutzen möchtest. Mit einem Komma kannst du mehrere eingeben. Viel Spaß mit deinem Panel und empfehle GermanDactyl gerne weiter, wenn wir dir weiterhelfen konnten :)." 15 100
-                        swap_question
-                    else
-                        break
-                    fi
+        state="$(systemctl is-active wings 2>/dev/null)"
+        case "$state" in
+            active) state="🟢 läuft" ;;
+            failed) state="🔴 fehlgeschlagen" ;;
+            *) state="⚪ gestoppt ($state)" ;;
+        esac
+        choice=$(whiptail --title "🐦 Wings-Verwaltung" --menu "Wings ist installiert: $("$WINGS_BIN" --version 2>/dev/null | head -n1)\nStatus: $state" 17 78 5 \
+            "1" "Wings neu starten" \
+            "2" "Wings aktualisieren" \
+            "3" "Letzte Log-Einträge anzeigen" \
+            "4" "Swap-Speicher einrichten" \
+            "5" "Zurück" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            1)
+                clear; echo "Wings wird neu gestartet..."
+                if gd_wings_start >> "$GD_LOG" 2>&1; then
+                    gd_msg "🟢 Wings läuft" "Wings wurde erfolgreich neu gestartet. Die Server sollten in Kürze wieder erreichbar sein." 9 70
                 else
-                    whiptail --title "Wings Integration" --msgbox "Die Datei /etc/pterodactyl/config.yml existiert nicht. Hast du es eventuell falsch abgelegt oder vergessen zu speichern?" 10 60
-                fi
-            else
-                continue
-            fi
-        else
-            whiptail --title "Wings Integration" --msgbox "Erstelle bitte erst eine neue Node im Pterodactyl Panel. Gebe dort die Daten an, die benötigt werden. Bei den Ressourcen kannst du die Gigabyte-Zahl mit 1024 multiplizieren (16*1024). Wenn du soweit bist, dann können wir weitermachen." 10 70
-        fi
+                    gd_msg "🔴 Wings startet nicht" "Wings konnte nicht gestartet werden. Häufige Ursachen:\n- Port 8080 oder 2022 wird von einem anderen Programm belegt\n- Das SSL-Zertifikat ist abgelaufen oder fehlt\n- /etc/pterodactyl/config.yml fehlt oder ist fehlerhaft\n\nMit 'Letzte Log-Einträge anzeigen' siehst du die genaue Fehlermeldung." 15 78
+                fi ;;
+            2) gd_wings_update ;;
+            3)
+                journalctl -u wings -n 40 --no-pager > "$GD_TMP/wings.log" 2>&1
+                whiptail --title "Wings-Log (letzte 40 Zeilen)" --scrolltext --textbox "$GD_TMP/wings.log" 25 110 ;;
+            4) gd_swap_dialog ;;
+            *) return 0 ;;
+        esac
     done
 }
 
-# Funktionen zur Validierung
-validate_domain() {
-    local domain=$1
-    if [[ $domain =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        local server_ip=$(hostname -I | awk '{print $1}')
-        local dns_ip=$(dig +short $domain)
-        if [[ "$dns_ip" == "$server_ip" ]]; then
-            title="✅ Erfolg - Domain Überprüfung"
-            message="Die IP-Adresse der Domain $domain stimmt mit der IP-Adresse des Servers überein. Die Installation wird fortgesetzt."
-            whiptail --title "$title" --msgbox "$message" 10 60
-            return 0
-        else
-            title="❌ Fehler - Domain Überprüfung"
-            message="Die IP-Adresse der Domain $domain stimmt nicht mit der IP-Adresse des Servers überein.\n\nDomain -> $domain"
-            whiptail --title "$title" --msgbox "$message" 10 60
-            return 1
-        fi
-    else
-        title="❌ Fehler - Domain Überprüfung"
-        message="Die eingegebene Domain $domain ist keine gültige Domain-Struktur."
-        whiptail --title "$title" --msgbox "$message" 10 60
-        return 1
-    fi
-}
-
-validate_email() {
-    local email=$1
-    if [[ $email =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+gd_swap_dialog() {
+    local size
+    if [ -e /swapfile ]; then
+        gd_msg "Swap vorhanden" "Es existiert bereits eine Swap-Datei. Du kannst sie über die SWAP-Verwaltung im Hauptmenü anpassen." 9 70
         return 0
+    fi
+    gd_yesno "Swap-Speicher" "Möchtest du Swap-Speicher einrichten? Er wird genutzt, wenn der Arbeitsspeicher knapp wird." 9 70 || return 0
+    while true; do
+        size="$(gd_input "Swap-Speicher erstellen" "Gib die gewünschte Swap-Größe in MB ein (z. B. 2048):" "2048" 10 60)" || return 0
+        [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -ge 256 ] && break
+        gd_msg "Ungültige Eingabe" "Bitte gib eine Zahl ab 256 ein." 8 50
+    done
+    if gd_swap_create "$size" >> "$GD_LOG" 2>&1; then
+        gd_msg "Swap-Speicher erstellt" "Swap-Speicher mit ${size} MB wurde erstellt, aktiviert und bleibt auch nach einem Neustart erhalten." 9 70
     else
-        whiptail --title "E-Mail Überprüfung" --msgbox "Die eingegebene E-Mail-Adresse ist kein gültiges E-Mail-Format." 10 60
-        return 1
+        gd_msg "Fehler" "Der Swap-Speicher konnte nicht erstellt werden. Details: $GD_LOG" 9 70
     fi
 }
 
-# Funktion zur Installation von Wings mit Docker-Installation
-install_wings_with_script() {
-    # Erstelle ein Skript für die Eingaben
-    echo -e "1\nN\nN\ny\n$DOMAIN\ny\n$admin_email\ny\n$( [[ ! -d "/var/www/pterodactyl" ]] && echo "Y" )" > inputs.txt
+# ---------------------------------------------------------------------------
+# Neuinstallation
+# ---------------------------------------------------------------------------
+gd_wings_install_local() {
+    # Panel liegt auf diesem Server -> alles automatisch
+    local domain email
+    domain="$(gd_conf_get PANEL_DOMAIN)"
+    [ -z "$domain" ] && domain="$(gd_panel_env APP_URL | sed 's#^https\?://##; s#/.*##')"
+    email="$(gd_conf_get PANEL_EMAIL)"
+    [ -z "$email" ] && email="$(gd_panel_env APP_SERVICE_AUTHOR)"
 
-    # Führe zuerst den Befehl zur Docker-Installation im Hintergrund aus und leite die Ausgabe in die Log-Datei um
-    curl -sSL https://get.docker.com/ | CHANNEL=stable sh >> "$LOG_FILE" 2>&1 &
-    PID_DOCKER=$!
+    GD_WINGS_FQDN="$domain"
+    if ! gd_yesno "🐦 Domain für Wings" "Wings nutzt standardmäßig die Domain des Panels:\n\n${domain} (Port 8080)\n\nMöchtest du diese Domain verwenden? Bei 'Nein' kannst du eine eigene Subdomain angeben." 13 74; then
+        GD_WINGS_FQDN="$(gd_ask_domain "🐦 Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
+    fi
+    if ! gd_valid_email "$email"; then
+        email="$(gd_ask_email "📧 E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:")" || return 1
+    fi
+    GD_EMAIL="$email"
 
-    # Starte den Fortschrittsmonitor im Hintergrund
-    monitor_progress &
-    PID_MONITOR=$!
+    while true; do
+        GD_PORT_RANGE="$(gd_input "🎮 Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024)." "$GD_DEFAULT_PORT_RANGE" 13 74)" || return 1
+        gd_valid_port_range "$GD_PORT_RANGE" && break
+        gd_msg "Ungültiger Portbereich" "Bitte gib einen Bereich wie 25565-25600 an." 8 60
+    done
 
-    # Warte auf den Abschluss der Docker-Installation
-    wait $PID_DOCKER
-    # Beende den Fortschrittsmonitor
-    kill $PID_MONITOR
+    GD_SEC_UFW=false
+    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+        GD_SEC_UFW=true   # Firewall ist bereits aktiv -> Wings-Ports ergänzen
+    elif gd_yesno "🛡️ Firewall" "Soll die Firewall (UFW) aktiviert werden? Dein SSH-Port sowie 80, 443, 8080, 2022 und die Gameserver-Ports werden automatisch freigegeben." 11 74; then
+        GD_SEC_UFW=true
+    fi
 
-    # Führe das Pterodactyl-Installer-Skript aus, wenn Docker erfolgreich installiert wurde
-    bash <(curl -s https://pterodactyl-installer.se) < inputs.txt >> "$LOG_FILE" 2>&1
+    gd_gauge_open "🐦 Wings wird eingerichtet" "Einrichtung wird vorbereitet..."
+    gd_step 2 "Paketquellen werden aktualisiert..." gd_apt update
+    gd_wings_local_steps 5
+    gd_step 25 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
+    if [ "$GD_SEC_UFW" = "true" ]; then
+        gd_step 28 "Firewall wird eingerichtet..." gd_firewall_setup true "$GD_PORT_RANGE"
+    fi
+    gd_progress 100 "Wings ist eingerichtet."
+    gd_gauge_close
 
-    # Entferne die Eingabedatei nach Gebrauch
-    rm inputs.txt
-
-    # Meldung anzeigen, dass die Installation abgeschlossen ist
-    whiptail --title "Wings Integration" --msgbox "Wings wurde erfolgreich installiert und aktiviert. Jetzt muss Wings nur noch in das Panel als Node integriert werden. Damit fahren wir als nächstes fort." 10 60
-
-    integrate_wings
+    gd_msg "🟢 Wings ist einsatzbereit" "Wings ist installiert, als Node im Panel eingetragen und verbunden.\n\nDu kannst jetzt direkt im Panel unter 'Admin' → 'Servers' → 'Create New' deinen ersten Gameserver anlegen.\n\nFreigegebene Ports: ${GD_PORT_RANGE}" 14 78
+    gd_swap_dialog
 }
 
+gd_wings_install_remote() {
+    # Panel liegt auf einem anderen Server -> Installation + Verbindung per Token-Befehl aus dem Panel
+    GD_WINGS_FQDN="$(gd_ask_domain "🐦 Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de.\n\nDer DNS-Eintrag muss auf diesen Server zeigen.")" || return 1
+    GD_EMAIL="$(gd_ask_email "📧 E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu. Das Zertifikat wird automatisch erneuert.")" || return 1
 
+    gd_gauge_open "🐦 Wings wird installiert" "Installation wird vorbereitet..."
+    gd_wings_remote_steps 5
+    gd_progress 100 "Wings ist installiert."
+    gd_gauge_close
 
-
-
-
-monitor_progress() {
-    declare -A progress_messages=(
-        ["+ sh -c DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apt-transport-https ca-certificates curl gnupg >/dev/null"]=15
-        ["+ sh -c DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-ce-rootless-extras docker-buildx-plugin >/dev/null"]=27
-        ["* Retrieving release information..."]=30
-        ["* Installing virt-what..."]=35
-        ["* - will not log or share any IP-information with any third-party."]=48
-        ["SetCreated symlink /etc/systemd/system/timers.target.wants/certbot.timer → /lib/systemd/system/certbot.timer."]=56
-        ["* SUCCESS: Pterodactyl Wings downloaded successfully"]=72
-        ["* SUCCESS: Installed systemd service!"]=79
-        ["* Configuring LetsEncrypt.."]=81
-        ["Plugins selected: Authenticator standalone, Installer None"]=86
-        ["Requesting a certificate for wings.pavl21.de"]=97
-        ["* Wings installation completed"]=99
-    )
-
-    # Fortschrittsbalken initialisieren
-    {
-        for ((i=0; i<=100; i++)); do
-            sleep 1
-            # Lies die neueste Zeile aus der Log-Datei
-            line=$(tail -n 1 "$LOG_FILE")
-            for key in "${!progress_messages[@]}"; do
-                if [[ "$line" == *"$key"* ]]; then
-                    echo "${progress_messages[$key]}"
-                    break
-                fi
-            done
-        done
-    } | whiptail --title "Wings wird installiert" --gauge "Bitte warte einen Moment, das kann je nach Leistung deines Servers einen Moment dauern..." 8 78 0
-}
-
-# SWAP-Speicher zuweisen
-swap_question() {
-    whiptail --title "Swap-Speicher für Wings" --yesno "Möchtest du SWAP-Speicher für Wings einbinden?" 10 60
-    response=$?
-    if [ $response -eq 0 ]; then
-        size=$(whiptail --title "Swap-Speicher erstellen" --inputbox "Gebe die gewünschte Swap-Größe in MB ein:" 10 60 3>&1 1>&2 2>&3)
-        response=$?
-        if [ $response -eq 0 ]; then
-            if [[ $size =~ ^[0-9]+$ ]]; then
-                sudo fallocate -l ${size}M /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-                whiptail --title "Swap-Speicher erstellt" --msgbox "Swap-Speicher wurde erfolgreich erstellt und aktiviert. Das Script wird nun beendet." 10 60
-                exit 0
-            else
-                whiptail --title "Das ist keine Zahl" --msgbox "Ungültige Eingabe. Bitte gebe eine Zahl ein." 10 60
-            fi
-        else
-            whiptail --title "Wings installiert" --msgbox "Wings wurde nun ohne SWAP-Speicher installiert. Du kannst es im Nachhinein über die Verwaltung nachinstallieren. Das Script wird nun beendet." 10 60
-            exit 0
+    if gd_wings_configure_remote; then
+        if gd_yesno "🛡️ Firewall" "Soll die Firewall (UFW) aktiviert werden? Freigegeben werden dein SSH-Port sowie 8080 und 2022.\n\nDie Ports deiner Gameserver gibst du danach mit 'ufw allow <port>' frei." 12 74; then
+            gd_firewall_setup true "" >> "$GD_LOG" 2>&1
         fi
-    else
-        exit 0
+        gd_msg "🟢 Wings ist verbunden" "Wings läuft und ist mit deinem Panel verbunden. In der Node-Übersicht sollte nun ein grünes Herz zu sehen sein.\n\nLege im Panel unter der Node im Reiter 'Allocation' noch die Ports für deine Gameserver an." 13 78
+        gd_swap_dialog
     fi
 }
 
-# Hauptinstallationsschleife zu Beginn ... ->
-while true; do
-    DOMAIN=$(whiptail --title "Domain-Eingabe für Wings" --inputbox "Bitte gib die Domain für Wings ein, die du nutzen möchtest. Diese muss als DNS-Eintrag bei deiner Domain verfügbar sein." 10 70 3>&1 1>&2 2>&3)
-
-    if [ -z "$DOMAIN" ]; then
-        whiptail --title "Installation abgebrochen" --msgbox "Du hast keine Domain angegeben. Du musst eine Domain für Wings verwenden, streng genommen nicht zwingend aber dann unsicher. Das Script wird nun gestoppt, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 10 60
-        exit 0
-    elif ! validate_domain "$DOMAIN"; then
-        continue
-    fi
-
-    admin_email=$(whiptail --title "E-Mail für Let's Encrypt" --inputbox "Gib die E-Mail Adresse erneut ein, die informiert werden soll, wenn das SSL Zertifikat ausläuft. Diese Zertifikate halten 90 Tage, kurz vor Ablauf wird man informiert. Wenn man es nicht verlängert (Mit dem Befehl 'certbot renew' über SSH), wird Wings nicht mehr erreichbar sein und alle Server können nicht mehr kontrolliert werden, die über diese Node laufen" 17 80 3>&1 1>&2 2>&3)
-
-    if [ -z "$admin_email" ]; then
-        whiptail --title "Installation abgebrochen" --msgbox "Du hast keine E-Mail angegeben, die Installation wird abgebrochen, wenn du später fortfahren möchtest, dann kannst du das Script erneut über den Wartungsmodus starten." 10 70
-        exit 0
-    elif ! validate_email "$admin_email"; then
-        continue
-    fi
-
-    install_wings_with_script
-    break
-done
-
-# Code created by ChatGPT, zusammengesetzt und Idee der Struktur und Funktion mit einigen Vorgaben von Pavl21
+# ---------------------------------------------------------------------------
+# Start
+# ---------------------------------------------------------------------------
+if [ -x "$WINGS_BIN" ] && [ -f "$WINGS_CONFIG" ]; then
+    gd_wings_manage
+elif [ -f "$PTERO_DIR/artisan" ]; then
+    gd_wings_install_local
+else
+    gd_wings_install_remote
+fi

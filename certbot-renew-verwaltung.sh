@@ -1,66 +1,63 @@
 #!/bin/bash
+# Pfad: certbot-renew-verwaltung.sh
+# SSL-Zertifikate prüfen und erneuern. Webserver laufen dabei weiter; nach einer Erneuerung
+# werden nginx und Wings über den Deploy-Hook automatisch neu geladen.
 
-# Info-Box, dass das Panel während des Prozesses nicht erreichbar ist
-whiptail --title "Info zum Panel" --msgbox "Hier werden die SSL-Zertifikate erneuert. Sämtliche Websites, auch das Panel, die über diesen Server laufen, werden während des Vorgangs offline sein. Das dauert in der Regel nur 1 Minute." 15 50
-
-# Fortschrittsanzeige in Whiptail starten
-{
-    echo 10; sleep 1
-    systemctl is-active --quiet apache2 && systemctl stop apache2 && echo "Apache gestoppt."
-    echo 30; sleep 1
-    systemctl stop nginx && echo "Nginx gestoppt."
-    echo 40; sleep 1
-    sudo fuser -k 80/tcp
-    sudo fuser -k 443/tcp
-    echo 50; sleep 1
-    renew_output=$(certbot renew -q 2>&1)
-    echo 70; sleep 1
-    systemctl is-active --quiet apache2 && systemctl restart apache2 && echo "Apache neu gestartet."
-    sudo fuser -k 80/tcp
-    systemctl restart nginx && echo "Nginx neu gestartet."
-    echo 90; sleep 1
-    echo 100; sleep 1
-} | whiptail --title "Certbot erneuert Zertifikate" --gauge "Bitte warten, Certbot versucht die Zertifikate zu erneuern..." 10 50 0
-
-clear
-echo ""
-echo ""
-echo "DEBUG - - - - - - - -"
-echo "Die Logs werden ausgewertet, bitte warte einen Moment..."
-
-# Titel und Text für die Whiptail-Box vorbereiten
-title=""
-text=""
-
-# Certbot erneuern und Ausgabe in Variable speichern
-renew_output=$(certbot renew -q 2>&1)
-
-# Überprüfen, ob Fehler aufgetreten sind
-if echo "$renew_output" | grep -q "Failed to renew"; then
-    title="Details der Erneuerung"
-    text="Beim erneuern der Zertifikate sind Probleme aufgetreten.\n\n"
-
-    # Jede Zeile der Ausgabe durchgehen
-    while IFS= read -r line; do
-        if echo "$line" | grep -q "Could not bind to IPv4 or IPv6"; then
-            domain=$(echo "$line" | grep -oP '(?<=certificate ).*(?= with error)')
-            text+="⚠ $domain war nicht erfolgreich: Anderer Webserver blockiert die Ports (Port 80 blockiert)\n"
-        elif echo "$line" | grep -q "rateLimited"; then
-            domain=$(echo "$line" | grep -oP '(?<=certificate ).*(?= with error)')
-            text+="⚠ $domain war nicht erfolgreich: Validierungslimit überschritten, Domain temporär gesperrt.\n"
-        fi
-    done <<< "$(echo "$renew_output" | grep "Failed to renew")"
-
-    text+="\nVersuche 'certbot renew' selbst nochmal auszuführen, wenn du weitere Infos benötigst."
+# Gemeinsame Bibliotheken laden (vom Hauptskript übergeben, lokal oder aus dem Repository)
+_gd_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -z "${GD_LIB_DIR:-}" ] && [ -f "$_gd_dir/lib/common.sh" ]; then GD_LIB_DIR="$_gd_dir/lib"; GD_LOCAL_DIR="$_gd_dir"; fi
+if [ -n "${GD_LIB_DIR:-}" ] && [ -f "$GD_LIB_DIR/common.sh" ]; then
+    . "$GD_LIB_DIR/common.sh"
 else
-    title="Erneuerung abgeschlossen"
-    text="Alle Domains, die verbunden sind wurden bei Bedarf erneuert. Es wurden keine Probleme festgestellt."
+    _gd_c="$(mktemp)"
+    curl -fsSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH:-main}/lib/common.sh" -o "$_gd_c" \
+        || { echo "Die Bibliothek lib/common.sh konnte nicht geladen werden."; exit 1; }
+    . "$_gd_c"; rm -f "$_gd_c"
+fi
+gd_require_root
+gd_source_lib security
+
+if ! command -v certbot >/dev/null 2>&1; then
+    gd_msg "Certbot fehlt" "Certbot ist auf diesem Server nicht installiert, es gibt also keine Let's-Encrypt-Zertifikate zu erneuern." 9 70
+    exit 0
 fi
 
+# Deploy-Hook sicherstellen (ältere Installationen hatten keinen)
+gd_certbot_hook
+
+gd_msg "🔓 Zertifikate erneuern" "Es werden alle Zertifikate geprüft und erneuert, die in den nächsten 30 Tagen ablaufen. Die Webseiten bleiben dabei erreichbar." 10 70
+
 clear
-# Whiptail-Box anzeigen
-whiptail --title "$title" --msgbox "$text" 23 84
+echo "Zertifikate werden geprüft und bei Bedarf erneuert..."
+renew_output="$(certbot renew --non-interactive 2>&1)"
+echo "$renew_output" >> "$GD_LOG"
 
-# Zurück zur Oberfläche
-curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/problem-verwaltung.sh | bash
+text=""
+if grep -q "failed" <<< "$renew_output"; then
+    title="⚠️ Probleme bei der Erneuerung"
+    text="Mindestens ein Zertifikat konnte nicht erneuert werden:\n\n"
+    while IFS= read -r line; do
+        domain="$(grep -oE '/etc/letsencrypt/live/[^/]+' <<< "$line" | cut -d/ -f5)"
+        [ -z "$domain" ] && continue
+        text+="⚠ ${domain}\n"
+    done <<< "$(grep -iE 'fail' <<< "$renew_output")"
+    if grep -qiE "Could not bind|Address already in use" <<< "$renew_output"; then
+        text+="\nUrsache: Port 80 wird blockiert. Ein Zertifikat wurde im 'standalone'-Modus erstellt, während jetzt ein Webserver läuft."
+    fi
+    if grep -qiE "rateLimited|too many" <<< "$renew_output"; then
+        text+="\nUrsache: Das Limit von Let's Encrypt wurde erreicht. Warte einige Stunden und versuche es erneut."
+    fi
+    if grep -qiE "DNS problem|NXDOMAIN|unauthorized" <<< "$renew_output"; then
+        text+="\nUrsache: Die Domain zeigt nicht (mehr) auf diesen Server oder ist über einen Proxy (z. B. Cloudflare) geschaltet."
+    fi
+    text+="\n\nDas vollständige Protokoll findest du hier: $GD_LOG"
+else
+    title="✅ Erneuerung abgeschlossen"
+    text="Alle Zertifikate wurden geprüft und bei Bedarf erneuert. Es wurden keine Probleme festgestellt.\n\n"
+fi
 
+# Übersicht der Restlaufzeiten
+overview="$(certbot certificates 2>/dev/null | awk '/Certificate Name:/{n=$3} /Expiry Date:/{sub(/.*\(VALID: /,""); sub(/\)/,""); print "• " n ": noch " $0}' | sed 's/ days/ Tage/')"
+[ -n "$overview" ] && text+="\nRestlaufzeiten:\n${overview}"
+
+whiptail --title "$title" --msgbox "$text" 22 84

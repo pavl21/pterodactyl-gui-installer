@@ -1,120 +1,101 @@
 #!/bin/bash
-## Muss installiert sein: lolcat, figlet, vnstat, jq
+# Pfad: motd.sh (wird nach /usr/local/bin/germandactyl-motd installiert)
+# Loginseite von GermanDactyl Setup: Übersicht über den Zustand des Servers nach dem SSH-Login.
+# Benötigt: lolcat, figlet, vnstat, jq, bc (werden von custom-ssh-login-config.sh installiert)
+
+LOLCAT="/usr/games/lolcat"
+[ -x "$LOLCAT" ] || LOLCAT="cat"
 
 clear
 
-# "GermanDactyl Panel" Logo
-figlet -f small "GermanDactyl Panel" | /usr/games/lolcat -f
-echo -e "Pterodactyl Panel, übersetzt von Pavl21 und Verwaltung via GermanDactyl Setup" | /usr/games/lolcat
-echo "-----------------------------------------------------------------------------" | /usr/games/lolcat
+# Logo
+if command -v figlet >/dev/null 2>&1; then
+    figlet -f small "GermanDactyl Panel" | $LOLCAT
+fi
+echo "Pterodactyl Panel mit deutscher Übersetzung – verwaltet mit GermanDactyl Setup" | $LOLCAT
+echo "-----------------------------------------------------------------------------" | $LOLCAT
 
-
-# Begrüßung basierend auf der Tageszeit
-HOUR=$(date +"%H")
-if (( HOUR >= 6 && HOUR <= 11 )); then
+# Begrüßung je nach Tageszeit
+HOUR=$((10#$(date +%H)))
+if (( HOUR >= 5 && HOUR <= 11 )); then
     GREETING="Guten Morgen"
 elif (( HOUR >= 12 && HOUR <= 14 )); then
     GREETING="Mahlzeit"
 elif (( HOUR >= 15 && HOUR <= 17 )); then
-    GREETING="Genieß dein Cauken"
+    GREETING="Zeit für Kaffee und Kuchen"
 else
     GREETING="Guten Abend"
 fi
+echo -e "\n${GREETING}, $(whoami)!\nWillkommen auf $(hostname -f 2>/dev/null || hostname)!" | $LOLCAT
 
-echo -e "\n\e[32m${GREETING}, $(whoami)!\nWillkommen auf $(hostname -f)!\e[0m" | /usr/games/lolcat
-
-# Paketupdates Überprüfung
-UPDATES=$(apt list --upgradable 2>/dev/null | grep -v "Listing")
-UPDATE_COUNT=$(echo "$UPDATES" | wc -l)
-CRITICAL_UPDATE=$(echo "$UPDATES" | grep -E "containerd|docker" | wc -l)
-
+# Paketupdates
+UPDATES="$(apt list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^Auflistung')"
+UPDATE_COUNT="$(grep -c . <<< "$UPDATES")"
+CRITICAL_UPDATE="$(grep -cE '^(containerd|docker)' <<< "$UPDATES")"
 if [ "$CRITICAL_UPDATE" -gt 0 ]; then
-    echo -e "\n📦 Es liegen $UPDATE_COUNT Updates und auch Sicherheitsupdates für die Pterodactyl-Instanzen bereit.\nInstalliere diese nach Gelegenheit, denn dabei müssen sämtliche Pterodactyl-Instanzen neu gestartet werden." | /usr/games/lolcat
+    echo -e "\n📦 Es liegen $UPDATE_COUNT Updates vor, darunter Updates für Docker.\nInstalliere sie bei Gelegenheit – dabei werden alle Gameserver kurz neu gestartet." | $LOLCAT
 elif [ "$UPDATE_COUNT" -gt 0 ]; then
-    echo -e "\n📦 Es liegen $UPDATE_COUNT Updates vor Du kannst sie bei Gelegenheit aktualisieren, aber derzeit ist es nicht notwendig." | /usr/games/lolcat
+    echo -e "\n📦 Es liegen $UPDATE_COUNT Updates vor. Du kannst sie bei Gelegenheit installieren." | $LOLCAT
 else
-    echo -e "\n📦 Keine Paketupdates verfügbar." | /usr/games/lolcat
+    echo -e "\n📦 Keine Paketupdates verfügbar." | $LOLCAT
 fi
 
-# Fehlgeschlagene Loginversuche
-LOGIN_ATTEMPTS=$(grep "Failed password" /var/log/auth.log | wc -l)
-
-if (( LOGIN_ATTEMPTS < 10000 )); then
-    echo -e "\n🔓 Keine nennenswerten Meldungen vorhanden. Sehr gut!" | /usr/games/lolcat
-else
-    echo -e "\n⚠️ Info: Es fanden im Hintergrund über 10k Loginversuche statt, hier sind die aktivsten Angreifer:" | /usr/games/lolcat
-    grep "Failed password" /var/log/auth.log | awk '{print $(NF-3)}' | sort | uniq -c | sort -nr | head -3 | awk '{print "Platz " NR ": " $2 " -> " $1 " Loginversuche"}' | /usr/games/lolcat
-fi
-
-# System-Up-Time in deutscher Sprache
-UPTIME=$(uptime -p | sed 's/up /Seit /; s/ days,/ Tagen,/; s/ day,/ Tag,/; s/ hours,/ Std.,/; s/ hour,/ Std.,/; s/ minutes/min./; s/ minute/min./;')
-UPTIME_DAYS=$(echo $UPTIME | grep -o '[0-9]* Tage')
-if [[ $UPTIME_DAYS == *Tage* ]] && [ "${UPTIME_DAYS% *} " -ge 30 ]; then
-    echo -e "\n⏱ System-Up-Time: $UPTIME.\nEs wird empfohlen, den Server bei Gelegenheit neu zu starten. Ein Neustart kann bekannte Fehler beheben." | /usr/games/lolcat
-else
-    echo -e "\n⏱ System-Up-Time: $UPTIME" | /usr/games/lolcat
-fi
-
-convert_to_mb() {
-    local value=$1
-    # Ersetzt Kommas durch Punkte für die Berechnung und fügt eine führende Null hinzu, falls erforderlich
-    local number=$(echo "$value" | sed 's/,/./' | awk '{printf "%.1f", $0}')
-    local unit=$(echo "$value" | grep -o '[a-zA-Z]*$')
-
-    local result
-    case $unit in
-        KiB) result=$(echo "scale=1; $number / 1024" | bc) ;;
-        MiB) result="$number" ;;
-        GiB) result=$(echo "scale=1; $number * 1024" | bc) ;;
-        B) result=$(echo "scale=1; $number / 1048576" | bc) ;; # Konvertierung von Bytes in MB
-        *) result="0" ;; # Fallback, falls keine gültige Einheit erkannt wurde
-    esac
-
-    # Überprüft, ob das Ergebnis eine führende Null benötigt
-    if [[ $result == .* ]]; then
-        echo "0$result"
+# Fehlgeschlagene SSH-Logins der letzten 24 Stunden (nur als root lesbar)
+if [ "$(id -u)" = "0" ]; then
+    FAILED="$(journalctl -u ssh -u sshd --since '24 hours ago' --no-pager 2>/dev/null | grep -cE 'Failed password|Invalid user')"
+    if [ "${FAILED:-0}" -lt 1000 ]; then
+        echo -e "\n🔓 Fehlgeschlagene SSH-Logins (24 h): ${FAILED:-0} – keine Auffälligkeiten." | $LOLCAT
     else
-        echo $result
+        echo -e "\n⚠️  In den letzten 24 Stunden gab es ${FAILED} fehlgeschlagene SSH-Logins. Die aktivsten Absender:" | $LOLCAT
+        journalctl -u ssh -u sshd --since '24 hours ago' --no-pager 2>/dev/null | grep -E 'Failed password|Invalid user' \
+            | grep -oE 'from [0-9a-fA-F.:]+' | awk '{print $2}' | sort | uniq -c | sort -nr | head -3 \
+            | awk '{print "Platz " NR ": " $2 " -> " $1 " Versuche"}' | $LOLCAT
+        command -v fail2ban-client >/dev/null 2>&1 || echo "Tipp: fail2ban sperrt solche Angreifer automatisch." | $LOLCAT
     fi
-}
-
-
-# Netzwerkdaten mit vnstat für eine spezifische Schnittstelle (z.B. eth0)
-INTERFACE="eth0" # Setze dies auf deine spezifische Schnittstelle
-if hash vnstat 2>/dev/null; then
-    NETWORK_USAGE=$(vnstat -i $INTERFACE --oneline | grep $INTERFACE)
-    if [[ $NETWORK_USAGE == *"Not enough data available yet."* ]]; then
-        echo -e "\n📶 Netzwerkdaten: Es stehen noch nicht genügend Daten für die Auswertung zur Verfügung." | /usr/games/lolcat
-    else
-        # Daten extrahieren und in MB umrechnen
-        TODAY_UP=$(convert_to_mb "$(echo $NETWORK_USAGE | cut -d ';' -f 4)")
-        TODAY_DOWN=$(convert_to_mb "$(echo $NETWORK_USAGE | cut -d ';' -f 5)")
-        MONTH_UP=$(convert_to_mb "$(echo $NETWORK_USAGE | cut -d ';' -f 9)")
-        MONTH_DOWN=$(convert_to_mb "$(echo $NETWORK_USAGE | cut -d ';' -f 10)")
-
-        # Ergebnisse ausgeben
-        echo -e "\n📶 Netzwerkdaten für die Schnittstelle $INTERFACE:" | /usr/games/lolcat
-        echo -e "Heute: ↑ ${TODAY_UP}MB - ↓ ${TODAY_DOWN}MB\nDieser Monat:  ↑ ${MONTH_UP}MB - ↓ ${MONTH_DOWN}MB" | /usr/games/lolcat
-        echo "IP-Adresse: $(hostname -I | awk '{print $1}')" | /usr/games/lolcat
-        echo "Standort: $(curl -s http://ip-api.com/json/$(hostname -I | awk '{print $1}') | jq -r '.country')" | /usr/games/lolcat
-
-    fi
-else
-    echo -e "\n📶 Netzwerkdaten: vnstat ist nicht installiert, keine Informationen verfügbar." | /usr/games/lolcat
 fi
 
-# Letzter erfolgreicher Login
-LAST_LOGIN=$(last -i | grep -m 1 "logged in")
-LAST_LOGIN_USER=$(echo $LAST_LOGIN | awk '{print $1}')
-LAST_LOGIN_IP=$(echo $LAST_LOGIN | awk '{print $3}')
-LAST_LOGIN_TIME=$(echo $LAST_LOGIN | awk '{print $4, $5, $6, $7}')
-LAST_LOGIN_TIMESTAMP=$(date -d "$LAST_LOGIN_TIME" +'%d.%m.%Y - %H:%M:%S')
+# Laufzeit des Systems
+UPTIME_DAYS=$(( $(cut -d. -f1 /proc/uptime) / 86400 ))
+UPTIME="$(uptime -p | sed 's/^up /seit /; s/ years\?/ J./; s/ weeks\?/ Wo./; s/ days\?/ Tg./; s/ hours\?/ Std./; s/ minutes\?/ Min./')"
+if [ "$UPTIME_DAYS" -ge 30 ]; then
+    echo -e "\n⏱  Laufzeit: $UPTIME\nDer Server läuft seit über 30 Tagen. Ein Neustart bei Gelegenheit spielt z. B. Kernel-Updates ein." | $LOLCAT
+else
+    echo -e "\n⏱  Laufzeit: $UPTIME" | $LOLCAT
+fi
 
-echo -e "\n🔑 Letzter erfolgreicher Login:" | /usr/games/lolcat
-echo -e "Benutzer: $LAST_LOGIN_USER\nLogin von IP: $LAST_LOGIN_IP\nZeitpunkt: $LAST_LOGIN_TIMESTAMP" | /usr/games/lolcat
+# Netzwerkdaten (Schnittstelle der Standardroute)
+INTERFACE="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+if command -v vnstat >/dev/null 2>&1 && [ -n "$INTERFACE" ]; then
+    NETWORK_USAGE="$(vnstat -i "$INTERFACE" --oneline 2>/dev/null)"
+    if [[ -z "$NETWORK_USAGE" || "$NETWORK_USAGE" == *"Not enough data"* || "$NETWORK_USAGE" == *"Error"* ]]; then
+        echo -e "\n📶 Netzwerk ($INTERFACE): Es liegen noch nicht genügend Daten vor." | $LOLCAT
+    else
+        # Format: 1;iface;tag;rx;tx;total;rate;monat;rx;tx;total;rate;...
+        IFS=';' read -r _ _ _ TODAY_RX TODAY_TX _ _ _ MONTH_RX MONTH_TX _ <<< "$NETWORK_USAGE"
+        echo -e "\n📶 Netzwerk ($INTERFACE):\nHeute:        ↓ ${TODAY_RX}  ↑ ${TODAY_TX}\nDieser Monat: ↓ ${MONTH_RX}  ↑ ${MONTH_TX}" | $LOLCAT
+    fi
+fi
+echo "IP-Adresse: $(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')" | $LOLCAT
 
-# Bunter Trenner und Abschluss des Scripts
-echo -e "$(printf '%*s\n' "${COLUMNS:-$(tput cols)}" '' | tr ' ' '-')\n" | /usr/games/lolcat
+# Dienste von Pterodactyl
+STATUS_LINE=""
+for svc in nginx pteroq wings; do
+    if systemctl list-unit-files "${svc}.service" >/dev/null 2>&1 && systemctl cat "${svc}.service" >/dev/null 2>&1; then
+        if systemctl is-active --quiet "$svc"; then STATUS_LINE+="🟢 $svc  "; else STATUS_LINE+="🔴 $svc  "; fi
+    fi
+done
+[ -n "$STATUS_LINE" ] && echo -e "\n🧩 Dienste: $STATUS_LINE" | $LOLCAT
 
-# Das Script ist ein Teil vom GermanDactyl-Setup Projekt, zur Übersicht aller aktuellen Infos des Servers und der Pterodactyl-Instanzen
-# Du kannst es unter privater Nutzung nach deinen belieben anpassen, wenn du möchtest.
+# Letzter erfolgreicher Login (vor der aktuellen Sitzung)
+LAST_LOGIN="$(last -i -n 2 -w 2>/dev/null | sed -n '2p')"
+if [ -n "$LAST_LOGIN" ] && [[ "$LAST_LOGIN" != wtmp* ]]; then
+    read -r L_USER _ L_IP L_REST <<< "$LAST_LOGIN"
+    echo -e "\n🔑 Vorheriger Login: $L_USER von $L_IP ($(awk '{print $1, $2, $3, $4}' <<< "$L_REST"))" | $LOLCAT
+fi
+
+# Trenner
+printf '%*s\n' "${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}" '' | tr ' ' '-' | $LOLCAT
+echo ""
+
+# Das Skript ist ein Teil von GermanDactyl Setup und zeigt eine Übersicht über den Server.
+# Du darfst es für private Zwecke nach Belieben anpassen.
