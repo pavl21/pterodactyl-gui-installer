@@ -125,6 +125,9 @@ gd_panel_build() {
     # Frontend des Panels neu bauen (nötig, damit die Übersetzung sichtbar wird)
     local dir="${1:-$PTERO_DIR}" rc=0
     cd "$dir" || return 1
+    # Wie Blueprint: Ältere Build-Abhängigkeiten nutzen Hash-Verfahren, die OpenSSL 3 (Node >= 17)
+    # nur mit dem Legacy-Provider erlaubt – sonst "error:0308010C:digital envelope routines::unsupported"
+    export NODE_OPTIONS="--openssl-legacy-provider"
     gd_build_swap_on
     yarn install --frozen-lockfile --network-timeout 600000 || yarn install --network-timeout 600000 || rc=1
     [ $rc -eq 0 ] && { yarn run build:production || rc=1; }
