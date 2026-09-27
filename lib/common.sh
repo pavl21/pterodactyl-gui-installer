@@ -166,7 +166,7 @@ gd_progress() {
         # und nicht die laufende Installation. Danach wird ohne Balken weitergearbeitet.
         if ! ( printf 'XXX\n%d\n%s\nXXX\n' "$1" "$2" >&7 ) 2>/dev/null; then
             GD_GAUGE_OPEN=0
-            exec 7>&- 2>/dev/null
+            { exec 7>&-; } 2>/dev/null   # nur den Balken schließen, stderr des Skripts unverändert lassen
             echo "[$1%] $2"
         fi
     else

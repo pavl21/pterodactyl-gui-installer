@@ -492,7 +492,7 @@ gd_sanitize() {
     # Entfernt Passwörter, Schlüssel und Tokens aus Textdateien (für das Support-Paket)
     sed -E -i \
         -e 's/((PASSWORD|PASS|SECRET|KEY|TOKEN|SALT)[A-Z_]*=).*/\1***/I' \
-        -e 's/("?(password|passwd|token|secret|api_key)"?\s*[:=]\s*)"?[^",} ]+"?/\1***/Ig' \
+        -e 's/("?(password|passwd|token|token_id|secret|api_key)"?\s*[:=]\s*)"?[^",} ]+"?/\1***/Ig' \
         -e 's/(Bearer )[A-Za-z0-9._-]+/\1***/g' \
         -e 's/\b(ptl[acr]_)[A-Za-z0-9]+/\1***/g' \
         -e 's/base64:[A-Za-z0-9+\/=]+/base64:***/g' \

@@ -93,6 +93,10 @@ gd_unattended_upgrades_setup() {
     gd_apt_install unattended-upgrades apt-listchanges || return 1
     echo 'unattended-upgrades unattended-upgrades/enable_auto_updates boolean true' | debconf-set-selections
     dpkg-reconfigure -f noninteractive unattended-upgrades
+    # Direkt setzen: dpkg-reconfigure überschreibt eine bereits geänderte Datei nicht
+    printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' > /etc/apt/apt.conf.d/20auto-upgrades
+    systemctl enable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
+    return 0
 }
 
 gd_security_ask() {
