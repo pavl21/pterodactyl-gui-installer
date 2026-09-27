@@ -32,6 +32,7 @@ EOF
 gd_blueprint_apply() {
     # gd_blueprint_apply <tag> – Blueprint (erneut) installieren; ersetzt überschriebene Dateien nach Panel-Updates
     local tag="$1"
+    gd_blueprint_supported || { echo "Blueprint funktioniert nicht innerhalb eines Docker-Containers (/.dockerenv vorhanden)."; return 1; }
     cd "$PTERO_DIR" || return 1
     gd_install_node || return 1
     gd_apt_install zip unzip git curl || return 1
@@ -57,9 +58,16 @@ gd_blueprint_version() {
 # ---------------------------------------------------------------------------
 # Einbindung in Installation und Aktualisierung
 # ---------------------------------------------------------------------------
+gd_blueprint_supported() {
+    # Blueprint hält jede Umgebung mit /.dockerenv für das offizielle Pterodactyl-Docker-Image (Pfad /app)
+    # und funktioniert dann nicht mit einer normalen Installation unter /var/www/pterodactyl.
+    [ ! -f /.dockerenv ]
+}
+
 gd_blueprint_ask() {
     # Setzt GD_BLUEPRINT (true/false)
     GD_BLUEPRINT=false
+    gd_blueprint_supported || return 0
     local text="Blueprint ist ein Framework, mit dem du Erweiterungen und Themes für Pterodactyl bequem installieren kannst (https://blueprint.zip).\n\nMöchtest du Blueprint gleich mit installieren? (optional)"
     if [ "${GD_APPLY_PATCH:-false}" = "true" ]; then
         text+="\n\nHinweis: Blueprint ersetzt einige Dateien der Oberfläche. Die deutsche Übersetzung wird danach angewendet, einzelne Bereiche können aber englisch bleiben."
@@ -107,6 +115,9 @@ gd_blueprint_menu() {
                 2) gd_blueprint_reapply_dialog ;;
                 *) return 0 ;;
             esac
+        elif ! gd_blueprint_supported; then
+            gd_msg "🧩 Blueprint nicht verfügbar" "Dieser Server läuft in einem Docker-Container. Blueprint unterstützt diese Umgebung nicht." 9 70
+            return 0
         else
             gd_yesno "🧩 Blueprint installieren" "Blueprint ist ein Framework für Erweiterungen und Themes (https://blueprint.zip).\n\nBlueprint ersetzt einige Dateien der Oberfläche. Eine vorhandene deutsche Übersetzung wird danach erneut angewendet, einzelne Bereiche können aber englisch bleiben.\n\nEmpfehlung: Erstelle vorher ein Backup über die Backup-Verwaltung.\n\nJetzt installieren?" 17 78 || return 0
             gd_blueprint_reapply_dialog
