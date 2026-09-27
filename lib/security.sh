@@ -118,8 +118,11 @@ gd_security_ask() {
 gd_security_steps() {
     # gd_security_steps <start-prozent> <mit_wings> [portbereich] – innerhalb eines offenen Fortschrittsbalkens
     local p="$1" with_wings="$2" range="${3:-}"
-    gd_step "$p" "Sicherheit: Datenbank wird abgesichert..." gd_mariadb_harden
-    gd_step "$p" "Sicherheit: Redis wird geprüft..." gd_redis_check
+    # Pelican nutzt standardmäßig SQLite – MariaDB/Redis nur prüfen, wenn sie installiert sind
+    if command -v mariadb >/dev/null 2>&1 || command -v mysql >/dev/null 2>&1; then
+        gd_step "$p" "Sicherheit: Datenbank wird abgesichert..." gd_mariadb_harden
+    fi
+    [ -f /etc/redis/redis.conf ] && gd_step "$p" "Sicherheit: Redis wird geprüft..." gd_redis_check
     if [ "${GD_SEC_UFW:-false}" = "true" ]; then
         gd_step $((p + 1)) "Sicherheit: Firewall wird eingerichtet..." gd_firewall_setup "$with_wings" "$range"
     fi

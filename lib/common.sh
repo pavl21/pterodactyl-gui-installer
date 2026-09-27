@@ -212,6 +212,21 @@ gd_require_root() {
         echo "Falls du nicht der Administrator des Servers bist, bitte ihn, dir temporär Zugriff zu erteilen."
         exit 1
     fi
+    gd_ensure_base_tools
+}
+
+gd_ensure_base_tools() {
+    # Fehlen auf Minimal-Systemen Grundwerkzeuge (z. B. wenn ein Unterskript direkt gestartet wird),
+    # werden sie still nachinstalliert – sonst scheitern DNS-/IP-Prüfungen mit irreführenden Meldungen
+    local miss=() c
+    for c in whiptail:whiptail curl:curl dig:dnsutils jq:jq ip:iproute2 gpg:gnupg fuser:psmisc; do
+        command -v "${c%%:*}" >/dev/null 2>&1 || miss+=("${c#*:}")
+    done
+    [ ${#miss[@]} -eq 0 ] && return 0
+    echo "Benötigte Grundpakete werden installiert: ${miss[*]} ..."
+    { gd_apt update && gd_apt_install "${miss[@]}"; } >/dev/null 2>&1 \
+        || echo "Hinweis: Nicht alle Grundpakete konnten installiert werden (${miss[*]})."
+    return 0
 }
 
 gd_wait_for_apt() {

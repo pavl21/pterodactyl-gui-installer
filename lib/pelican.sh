@@ -149,9 +149,28 @@ gd_pelican_configure() {
 }
 
 gd_pelican_services() {
-    local cron_line="* * * * * php ${PELICAN_DIR}/artisan schedule:run >> /dev/null 2>&1"
+    local cron_line="* * * * * /usr/bin/php${PELICAN_PHP} ${PELICAN_DIR}/artisan schedule:run >> /dev/null 2>&1"
     { crontab -l 2>/dev/null | grep -vF "${PELICAN_DIR}/artisan schedule:run"; echo "$cron_line"; } | crontab - || return 1
-    (cd "$PELICAN_DIR" && php artisan p:environment:queue-service --service-name=pelican-queue --user=www-data --group=www-data --overwrite) || return 1
+    # Entspricht "php artisan p:environment:queue-service", aber direkt geschrieben: der Befehl
+    # weicht bei vorhandener /.dockerenv auf supervisor aus und liefert bei Fehlern trotzdem Exit-Code 0
+    cat > /etc/systemd/system/pelican-queue.service <<EOF_SVC || return 1
+# Pelican Queue File – angelegt von GermanDactyl Setup
+[Unit]
+Description=Pelican Queue Service
+After=redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=/usr/bin/php${PELICAN_PHP} ${PELICAN_DIR}/artisan queue:work --tries=3
+StartLimitInterval=180
+StartLimitBurst=30
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF_SVC
     systemctl daemon-reload
     systemctl enable --now pelican-queue
 }
@@ -222,7 +241,8 @@ gd_pelican_node() {
         --daemonConnectingPort=8080 --daemonSFTPPort=2022 --daemonSFTPAlias="" --daemonBase=/var/lib/pelican/volumes)" \
         || { echo "$out"; return 1; }
     echo "$out"
-    GD_NODE_ID="$(grep -oE 'id of [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
+    # Meldung ist übersetzt (APP_LOCALE=de: "... hat die ID 1", englisch: "... has an id of 1")
+    GD_NODE_ID="$(grep -oiE '(id of|id) [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
     [ -n "$GD_NODE_ID" ] || return 1
     gd_pelican_artisan_www p:node:configuration "$GD_NODE_ID" --format=yaml > "$GD_TMP/pelican-config.yml" || return 1
     grep -q '^token:' "$GD_TMP/pelican-config.yml" || return 1

@@ -30,10 +30,11 @@ EOF
 }
 
 gd_shortcut_remove() {
-    rm -f "$GD_SHORTCUT"
-    if [ "$(gd_conf_get SHORTCUT_GMD)" = "1" ] && [ -L "$GD_SHORTCUT_SHORT" ]; then
+    # "gmd" nur entfernen, wenn es unser Link ist (die setup.conf ist nach der Deinstallation schon gelöscht)
+    if [ -L "$GD_SHORTCUT_SHORT" ] && [ "$(readlink "$GD_SHORTCUT_SHORT")" = "$GD_SHORTCUT" ]; then
         rm -f "$GD_SHORTCUT_SHORT"
     fi
+    rm -f "$GD_SHORTCUT"
     return 0
 }
 

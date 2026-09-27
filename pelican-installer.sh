@@ -40,6 +40,16 @@ pelican_update() {
     gd_msg "✔ Aktualisierung abgeschlossen" "Pelican wurde aktualisiert." 8 50
 }
 
+# Abgebrochene Installation: nicht als "installiert" behandeln, sondern Neuinstallation anbieten
+if [ -d "$PELICAN_DIR" ] && [ "$(gd_conf_get PELICAN_INSTALL_STATE)" = "laeuft" ]; then
+    if gd_yesno "⚠ Abgebrochene Installation" "Eine frühere Installation von Pelican wurde nicht abgeschlossen.\n\nSoll sie entfernt und die Installation neu gestartet werden? Die Pelican-Datenbank im Panel-Ordner wird dabei mit gelöscht." 12 76; then
+        systemctl disable --now pelican-queue >/dev/null 2>&1
+        rm -rf "$PELICAN_DIR"
+    else
+        exit 0
+    fi
+fi
+
 if [ -d "$PELICAN_DIR" ]; then
     choice=$(whiptail --title "Pelican Verwaltung" --menu "Pelican ist bereits installiert. Was möchtest du tun?" 13 70 3 \
         "1" "Panel aktualisieren" \
@@ -78,6 +88,7 @@ if gd_yesno "⇄ Wings mitinstallieren?" "Soll Wings auf diesem Server gleich mi
 fi
 gd_security_ask
 
+gd_conf_set PELICAN_INSTALL_STATE laeuft
 gd_gauge_open "➜ Pelican wird installiert" "Installation wird vorbereitet..."
 gd_step 2  "Paketquellen werden aktualisiert..." gd_apt update
 gd_step 5  "PHP ${PELICAN_PHP}-Paketquelle wird eingerichtet..." gd_php_repo
@@ -104,16 +115,30 @@ if $WITH_WINGS; then
     fi
     gd_step 85 "Docker-Netzwerk für Gameserver wird vorbereitet..." gd_wings_network_prepare "$PELICAN_WINGS_CONFIG" pelican_nw pelican0
     gd_step 86 "Wings wird gestartet..." gd_wings_start
+    gd_progress 88 "Verbindung zwischen Panel und Wings wird geprüft..."
+    if gd_wings_verify "$GD_DOMAIN" "$PELICAN_WINGS_CONFIG" >> "$GD_LOG" 2>&1; then
+        WINGS_OK=true
+    else
+        WINGS_OK=false
+    fi
 fi
 gd_security_steps 90 "$WITH_WINGS" "${GD_PORT_RANGE:-}"
 gd_progress 100 "Installation abgeschlossen."
 gd_gauge_close
 
 gd_conf_set PELICAN_DOMAIN "$GD_DOMAIN"
+gd_conf_set PELICAN_INSTALL_STATE fertig
+if [ "${GD_SEC_BACKUP:-false}" = "true" ] && [ -s "$GD_AB_PASS" ]; then
+    gd_msg "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+fi
 whiptail --title "✱ Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}" 15 78
 
 if $WITH_WINGS; then
-    text="Pelican und Wings sind eingerichtet und verbunden. Du kannst direkt deinen ersten Server anlegen."
+    if [ "${WINGS_OK:-false}" = "true" ]; then
+        text="Pelican und Wings sind eingerichtet und verbunden. Du kannst direkt deinen ersten Server anlegen."
+    else
+        text="Pelican und Wings sind installiert, aber Wings antwortet nicht. Prüfe den Dienst mit 'journalctl -u wings -n 50' und im Panel unter 'Nodes', ob die Node erreichbar ist."
+    fi
     [ "${ALLOC_OK:-false}" = "true" ] || text+="\n\nDie Ports konnten nicht automatisch angelegt werden. Füge sie im Panel unter 'Nodes' → deine Node → 'Allocations' hinzu (${GD_PORT_RANGE})."
 else
     text="Pelican ist eingerichtet: https://${GD_DOMAIN}\n\nFür Gameserver brauchst du noch Wings. Starte das Skript dazu erneut."

@@ -103,15 +103,16 @@ gd_wings_start() {
         systemctl is-active --quiet wings && return 0
         sleep 2
     done
-    journalctl -u wings -n 30 --no-pager
+    journalctl -u wings -n 30 --no-pager -o cat
     return 1
 }
 
 gd_wings_verify() {
     # Fragt die Wings-API mit dem Node-Token ab – entspricht dem "grünen Herz" im Panel
-    local fqdn="$1" token port code i
-    token="$(awk '$1=="token:"{print $2; exit}' "$WINGS_CONFIG" | tr -d "'\"")"
-    port="$(awk '/^api:/{a=1} a && $1=="port:"{print $2; exit}' "$WINGS_CONFIG")"
+    # gd_wings_verify <fqdn> [config.yml] – Standard: Pterodactyl-Wings
+    local fqdn="$1" cfg="${2:-$WINGS_CONFIG}" token port code i
+    token="$(awk '$1=="token:"{print $2; exit}' "$cfg" | tr -d "'\"")"
+    port="$(awk '/^api:/{a=1} a && $1=="port:"{print $2; exit}' "$cfg")"
     port="${port:-8080}"
     for i in $(seq 1 10); do
         code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${fqdn}:${port}:127.0.0.1" \
@@ -180,7 +181,7 @@ gd_wings_node_create() {
         --uploadSize=100 --daemonListeningPort=8080 --daemonSFTPPort=2022 \
         --daemonBase=/var/lib/pterodactyl/volumes)" || { echo "$out"; return 1; }
     echo "$out"
-    GD_NODE_ID="$(grep -oE 'id of [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
+    GD_NODE_ID="$(grep -oiE '(id of|id) [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
     [ -z "$GD_NODE_ID" ] && GD_NODE_ID="$(gd_panel_sql "SELECT id FROM nodes WHERE fqdn='${fqdn}' ORDER BY id DESC LIMIT 1;")"
     [ -n "$GD_NODE_ID" ]
 }
