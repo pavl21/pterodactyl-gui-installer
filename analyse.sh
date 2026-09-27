@@ -77,8 +77,9 @@ check_updates() {
     list="$(apt list --upgradable 2>/dev/null | grep -vE '^(Listing|Auflistung)')"
     count="$(grep -c . <<< "$list")"
     sec="$(grep -ci -- '-security' <<< "$list")"
-    if [ "$sec" -gt 0 ]; then warn "Offene Updates: $count Pakete, davon $sec Sicherheitsupdates (apt upgrade)"
-    elif [ "$count" -gt 0 ]; then warn "Offene Updates: $count Pakete (apt upgrade)"
+    local pk="Pakete"; [ "$count" -eq 1 ] && pk="Paket"
+    if [ "$sec" -gt 0 ]; then warn "Offene Updates: $count $pk, davon $sec mit Sicherheitsupdates (apt upgrade)"
+    elif [ "$count" -gt 0 ]; then warn "Offene Updates: $count $pk (apt upgrade)"
     else ok "Alle Pakete sind aktuell"; fi
 }
 
@@ -417,7 +418,7 @@ if $TEXT_MODE; then
     fi
 else
     gd_whip --title "✚ Ergebnis der Analyse" --scrolltext --textbox "$REPORT" 30 110
-    if [ ${#FIX_DESC[@]} -gt 0 ] && gd_yesno "⚙ Probleme beheben?" "${#FIX_DESC[@]} der gefundenen Probleme können automatisch behoben werden. Möchtest du sie jetzt beheben?" 10 70; then
+    if [ ${#FIX_DESC[@]} -gt 0 ] && gd_yesno "⚙ Probleme beheben?" "$( [ ${#FIX_DESC[@]} -eq 1 ] && echo "1 gefundenes Problem kann" || echo "${#FIX_DESC[@]} gefundene Probleme können") automatisch behoben werden. Möchtest du das jetzt tun?" 10 70; then
         if run_fixes; then
             exec bash "$0" "$@"   # Analyse erneut ausführen
         fi

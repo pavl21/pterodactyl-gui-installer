@@ -95,5 +95,10 @@ if gd_yesno "✔ Einrichtung prüfen" "Konnte der Database-Host im Panel erfolgr
     gd_msg "★ Erfolg" "Super! Der Database-Host ist eingerichtet. Deine Gameserver können jetzt im Reiter 'Databases' eigene Datenbanken anlegen." 10 70
 else
     gd_mysql -e "DROP USER IF EXISTS '${USERNAME}'@'${IP_ADDRESS}'; FLUSH PRIVILEGES;" >> "$GD_LOG" 2>&1
-    gd_msg "Vorgang zurückgesetzt" "Der Datenbank-Benutzer wurde aus Sicherheitsgründen wieder gelöscht. Prüfe deine Eingaben auf Schreibfehler und versuche es erneut." 10 74
+    # Gibt es keinen weiteren Database-Host, MariaDB wieder nur lokal lauschen lassen
+    if [ "$(gd_mysql -N -e "SELECT COUNT(*) FROM mysql.user WHERE User LIKE 'gd\\_dbhost\\_%';" 2>/dev/null)" = "0" ]; then
+        rm -f "$MARIADB_CONF"
+        systemctl restart mariadb 2>/dev/null || systemctl restart mysql
+    fi
+    gd_msg "Vorgang zurückgesetzt" "Der Datenbank-Benutzer wurde aus Sicherheitsgründen wieder gelöscht und MariaDB ist wieder nur lokal erreichbar. Prüfe deine Eingaben auf Schreibfehler und versuche es erneut." 10 74
 fi

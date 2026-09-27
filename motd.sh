@@ -35,7 +35,12 @@ CRITICAL_UPDATE="$(grep -cE '^(containerd|docker)' <<< "$UPDATES")"
 if [ "$CRITICAL_UPDATE" -gt 0 ]; then
     echo -e "\n▤ Es liegen $UPDATE_COUNT Updates vor, darunter Updates für Docker.\nInstalliere sie bei Gelegenheit – dabei werden alle Gameserver kurz neu gestartet." | $LOLCAT
 elif [ "$UPDATE_COUNT" -gt 0 ]; then
-    echo -e "\n▤ Es liegen $UPDATE_COUNT Updates vor. Du kannst sie bei Gelegenheit installieren." | $LOLCAT
+    if [ "$UPDATE_COUNT" -eq 1 ]; then
+        UPDATE_TEXT="Es liegt 1 Update vor. Du kannst es bei Gelegenheit installieren."
+    else
+        UPDATE_TEXT="Es liegen $UPDATE_COUNT Updates vor. Du kannst sie bei Gelegenheit installieren."
+    fi
+    echo -e "\n▤ ${UPDATE_TEXT}" | $LOLCAT
 else
     echo -e "\n▤ Keine Paketupdates verfügbar." | $LOLCAT
 fi

@@ -31,7 +31,7 @@ gd_wings_manage() {
             failed) state="✖ fehlgeschlagen" ;;
             *) state="○ gestoppt ($state)" ;;
         esac
-        choice=$(whiptail --title "⇄ Wings-Verwaltung" --menu "Wings ist installiert: $("$WINGS_BIN" version 2>/dev/null | head -n1)\nStatus: $state" 17 78 5 \
+        choice=$(whiptail --title "⇄ Wings-Verwaltung" --menu "Wings ist installiert: v$("$WINGS_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)\nStatus: $state" 17 78 5 \
             "1" "Wings neu starten" \
             "2" "Wings aktualisieren" \
             "3" "Letzte Log-Einträge anzeigen" \
