@@ -24,7 +24,7 @@ gd_source_lib blueprint
 # Notfall-Administrator anlegen
 # ---------------------------------------------------------------------------
 create_admin_account() {
-    if ! gd_yesno "🔒 Ausgesperrt?" "Wenn du das Passwort deines Administrator-Kontos vergessen hast, wird hier ein zusätzlicher, temporärer Administrator angelegt. Damit kannst du dich anmelden, das Passwort deines eigentlichen Kontos ändern und das temporäre Konto anschließend wieder löschen.\n\nMöchtest du fortfahren?" 14 78; then
+    if ! gd_yesno "✱ Ausgesperrt?" "Wenn du das Passwort deines Administrator-Kontos vergessen hast, wird hier ein zusätzlicher, temporärer Administrator angelegt. Damit kannst du dich anmelden, das Passwort deines eigentlichen Kontos ändern und das temporäre Konto anschließend wieder löschen.\n\nMöchtest du fortfahren?" 14 78; then
         return
     fi
 
@@ -38,7 +38,7 @@ create_admin_account() {
         --name-first=Notfall --name-last=Admin --password="$password" --admin=1 2>&1)"; then
         gd_log "Notfall-Administrator $username angelegt."
         while true; do
-            gd_msg "🎉 Temporärer Administrator" "Ein neuer Administrator wurde angelegt:\n\n👤 Benutzername: $username\n📧 E-Mail:       $email\n🔑 Passwort:     $password\n\nLösche dieses Konto, sobald du wieder Zugriff auf dein eigentliches Konto hast (Admin → Users)." 16 78
+            gd_msg "★ Temporärer Administrator" "Ein neuer Administrator wurde angelegt:\n\n☺ Benutzername: $username\n✉ E-Mail:       $email\n✱ Passwort:     $password\n\nLösche dieses Konto, sobald du wieder Zugriff auf dein eigentliches Konto hast (Admin → Users)." 16 78
             gd_yesno "Zugangsdaten gespeichert?" "Hast du dir die Zugangsdaten gespeichert? Sie werden danach nicht noch einmal angezeigt." 9 70 && break
         done
     else
@@ -51,7 +51,7 @@ create_admin_account() {
 # Panel reparieren = auf die gewünschte Version neu aufspielen
 # ---------------------------------------------------------------------------
 repair_panel() {
-    gd_msg "🔧 Panel reparieren" "Beim Reparieren werden die Dateien des Panels neu heruntergeladen und alle Abhängigkeiten, die Datenbank-Struktur und die Berechtigungen neu eingerichtet. Deine Daten (Benutzer, Server, Einstellungen) bleiben erhalten.\n\nAchtung: Änderungen an Dateien des Panels (Themes, Addons) werden dabei überschrieben." 14 78
+    gd_msg "⚙ Panel reparieren" "Beim Reparieren werden die Dateien des Panels neu heruntergeladen und alle Abhängigkeiten, die Datenbank-Struktur und die Berechtigungen neu eingerichtet. Deine Daten (Benutzer, Server, Einstellungen) bleiben erhalten.\n\nAchtung: Änderungen an Dateien des Panels (Themes, Addons) werden dabei überschrieben." 14 78
     gd_panel_update
 }
 
@@ -61,7 +61,7 @@ repair_panel() {
 check_nginx_config() {
     local domain email
     domain="$(gd_conf_get PANEL_DOMAIN)"
-    domain="$(gd_input "🚫 Panel nicht erreichbar" "Unter welcher Domain soll das Panel erreichbar sein? Gib nur die Domain des Panels ein (nicht die von Wings)." "$domain" 11 70)" || return
+    domain="$(gd_input "⊘ Panel nicht erreichbar" "Unter welcher Domain soll das Panel erreichbar sein? Gib nur die Domain des Panels ein (nicht die von Wings)." "$domain" 11 70)" || return
     domain="$(tr '[:upper:]' '[:lower:]' <<< "$domain" | tr -d '[:space:]')"
     if ! gd_valid_domain "$domain"; then
         gd_msg "Ungültige Domain" "Die eingegebene Domain ist ungültig. Bitte versuche es erneut." 8 60
@@ -76,10 +76,10 @@ check_nginx_config() {
 
     if [ ! -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
         gd_yesno "Kein SSL-Zertifikat" "Für $domain wurde kein SSL-Zertifikat gefunden. Soll es jetzt erstellt werden?" 9 70 || return
-        email="$(gd_ask_email "📧 E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:" "$(gd_conf_get PANEL_EMAIL)")" || return
+        email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:" "$(gd_conf_get PANEL_EMAIL)")" || return
         clear; echo "SSL-Zertifikat wird angefordert..."
         if ! { gd_nginx_http_config "$domain" && gd_certbot_issue "$domain" "$email"; } >> "$GD_LOG" 2>&1; then
-            gd_msg "❌ Zertifikat fehlgeschlagen" "Das Zertifikat konnte nicht ausgestellt werden. Häufige Ursachen: DNS zeigt nicht auf diesen Server, Port 80 ist blockiert oder das Limit von Let's Encrypt wurde erreicht.\n\nLog: $GD_LOG" 13 78
+            gd_msg "✖ Zertifikat fehlgeschlagen" "Das Zertifikat konnte nicht ausgestellt werden. Häufige Ursachen: DNS zeigt nicht auf diesen Server, Port 80 ist blockiert oder das Limit von Let's Encrypt wurde erreicht.\n\nLog: $GD_LOG" 13 78
             return
         fi
         gd_certbot_hook
@@ -95,12 +95,12 @@ check_nginx_config() {
     if gd_nginx_ssl_config "$domain" >> "$GD_LOG" 2>&1; then
         gd_conf_set PANEL_DOMAIN "$domain"
         if gd_panel_healthcheck "$domain" >> "$GD_LOG" 2>&1; then
-            gd_msg "✅ Reparatur erfolgreich" "Das Panel antwortet wieder unter https://$domain.\n\nFalls es im Browser noch nicht geht, leere den Browser-Cache oder teste es in einem privaten Fenster." 11 74
+            gd_msg "✔ Reparatur erfolgreich" "Das Panel antwortet wieder unter https://$domain.\n\nFalls es im Browser noch nicht geht, leere den Browser-Cache oder teste es in einem privaten Fenster." 11 74
         else
-            gd_msg "⚠️ Panel antwortet nicht" "Der Webserver ist eingerichtet, aber das Panel antwortet noch nicht korrekt. Versuche als Nächstes 'Das Panel ist fehlerhaft' (Reparatur).\n\nLog: $GD_LOG" 12 74
+            gd_msg "⚠ Panel antwortet nicht" "Der Webserver ist eingerichtet, aber das Panel antwortet noch nicht korrekt. Versuche als Nächstes 'Das Panel ist fehlerhaft' (Reparatur).\n\nLog: $GD_LOG" 12 74
         fi
     else
-        gd_msg "❌ Fehler" "Die nginx-Konfiguration ist fehlerhaft und wurde nicht aktiviert. Details: $GD_LOG" 9 74
+        gd_msg "✖ Fehler" "Die nginx-Konfiguration ist fehlerhaft und wurde nicht aktiviert. Details: $GD_LOG" 9 74
     fi
 }
 
@@ -110,13 +110,13 @@ check_nginx_config() {
 trouble_menu() {
     local choice
     while true; do
-        choice=$(whiptail --title "🔍 Problembehandlung" --menu "Wobei können wir dir helfen?" 17 70 6 \
-            "1" "🔒 Ich habe mich ausgesperrt" \
-            "2" "🔧 Das Panel ist fehlerhaft (reparieren)" \
-            "3" "🚫 Das Panel kann nicht erreicht werden" \
-            "4" "🔓 SSL-Zertifikate erneuern/prüfen" \
-            "5" "🔍 Allgemeine Analyse starten" \
-            "6" "🔙 Zurück zum Hauptmenü" 3>&1 1>&2 2>&3) || return 0
+        choice=$(whiptail --title "✚ Problembehandlung" --menu "Wobei können wir dir helfen?" 17 70 6 \
+            "1" "✱ Ich habe mich ausgesperrt" \
+            "2" "⚙ Das Panel ist fehlerhaft (reparieren)" \
+            "3" "⊘ Das Panel kann nicht erreicht werden" \
+            "4" "✱ SSL-Zertifikate erneuern/prüfen" \
+            "5" "✚ Allgemeine Analyse starten" \
+            "6" "← Zurück zum Hauptmenü" 3>&1 1>&2 2>&3) || return 0
 
         case "$choice" in
             1) create_admin_account ;;

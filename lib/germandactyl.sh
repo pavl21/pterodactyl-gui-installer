@@ -44,7 +44,7 @@ gd_choose_panel_version() {
     fi
 
     patch_version="$(gd_patch_latest)"
-    choice=$(whiptail --title "🇩🇪 GermanDactyl – Versionsauswahl" --menu "Die neueste Pterodactyl-Version ist v$latest. Für diese Version gibt es noch keine deutsche Übersetzung (GermanDactyl).\n\nDie neueste übersetzte Version ist v$patch_version. Welche Version möchtest du installieren?" 18 78 2 \
+    choice=$(whiptail --title "DE GermanDactyl – Versionsauswahl" --menu "Die neueste Pterodactyl-Version ist v$latest. Für diese Version gibt es noch keine deutsche Übersetzung (GermanDactyl).\n\nDie neueste übersetzte Version ist v$patch_version. Welche Version möchtest du installieren?" 18 78 2 \
         "1" "v$latest – aktuellste Version, Oberfläche auf Englisch" \
         "2" "v$patch_version – ältere Version, Oberfläche auf Deutsch" 3>&1 1>&2 2>&3) || return 1
 

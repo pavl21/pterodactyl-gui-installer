@@ -98,7 +98,7 @@ gd_unattended_upgrades_setup() {
 gd_security_ask() {
     # Fragt die optionalen Sicherheitsfunktionen ab. Setzt GD_SEC_UFW, GD_SEC_FAIL2BAN, GD_SEC_UPDATES (true/false)
     local sel
-    sel=$(whiptail --title "🛡️ Absicherung des Servers" --checklist "Welche Schutzmaßnahmen sollen eingerichtet werden? (Leertaste = an/aus)\n\nDie Firewall gibt automatisch deinen SSH-Port frei, damit du dich nicht aussperrst." 19 80 4 \
+    sel=$(whiptail --title "✚ Absicherung des Servers" --checklist "Welche Schutzmaßnahmen sollen eingerichtet werden? (Leertaste = an/aus)\n\nDie Firewall gibt automatisch deinen SSH-Port frei, damit du dich nicht aussperrst." 19 80 4 \
         "UFW" "Firewall aktivieren und benötigte Ports freigeben" ON \
         "FAIL2BAN" "Angriffe auf SSH automatisch sperren" ON \
         "UPDATES" "Sicherheitsupdates automatisch installieren" ON \

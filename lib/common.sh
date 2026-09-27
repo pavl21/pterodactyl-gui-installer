@@ -198,7 +198,7 @@ gd_fail() {
     local tail_text
     tail_text="$(tail -n 12 "$GD_LOG" 2>/dev/null | cut -c1-110)"
     gd_log "FEHLGESCHLAGEN: $1"
-    gd_whip --title "❌ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 26 118
+    gd_whip --title "✖ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 26 118
     clear
     gd_die "Schritt fehlgeschlagen: $1"
 }
@@ -462,12 +462,12 @@ gd_dns_check_dialog() {
     dns_ips="$(gd_resolve_a "$domain")"
 
     if [ -z "$dns_ips" ]; then
-        gd_msg "❌ Domain-Überprüfung" "Für die Domain $domain wurde kein A-Eintrag (IPv4) gefunden.\n\nLege bei deinem Domain-Anbieter einen A-Eintrag an, der auf die IP-Adresse dieses Servers zeigt:\n\n$server_ip\n\nDNS-Änderungen können einige Minuten dauern." 16 78
+        gd_msg "✖ Domain-Überprüfung" "Für die Domain $domain wurde kein A-Eintrag (IPv4) gefunden.\n\nLege bei deinem Domain-Anbieter einen A-Eintrag an, der auf die IP-Adresse dieses Servers zeigt:\n\n$server_ip\n\nDNS-Änderungen können einige Minuten dauern." 16 78
         return 1
     fi
 
     if grep -qxF "$server_ip" <<< "$dns_ips"; then
-        gd_msg "✅ Domain-Überprüfung" "Die Domain $domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft." 10 78
+        gd_msg "✔ Domain-Überprüfung" "Die Domain $domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft." 10 78
         return 0
     fi
 
@@ -476,7 +476,7 @@ gd_dns_check_dialog() {
     if gd_is_cloudflare_ip "$first_ip"; then
         hint="\n\nDie Domain zeigt auf Cloudflare. Deaktiviere in Cloudflare den Proxy (graue Wolke, 'DNS only'), sonst können weder das SSL-Zertifikat noch Wings funktionieren."
     fi
-    gd_msg "❌ Domain-Überprüfung" "Die Domain $domain zeigt auf eine andere IP-Adresse.\n\nDNS-Eintrag: $(tr '\n' ' ' <<< "$dns_ips")\nDieser Server: $server_ip\n\nPrüfe die DNS-Einträge auf Schreibfehler.${hint}" 18 78
+    gd_msg "✖ Domain-Überprüfung" "Die Domain $domain zeigt auf eine andere IP-Adresse.\n\nDNS-Eintrag: $(tr '\n' ' ' <<< "$dns_ips")\nDieser Server: $server_ip\n\nPrüfe die DNS-Einträge auf Schreibfehler.${hint}" 18 78
     return 1
 }
 

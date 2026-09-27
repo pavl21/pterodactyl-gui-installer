@@ -256,9 +256,9 @@ gd_wings_remote_steps() {
 gd_wings_configure_remote() {
     # Den im Panel erzeugten Befehl "wings configure ..." abfragen und ausführen (ersetzt das Bearbeiten der config.yml)
     local cmd url token node
-    gd_msg "🔗 Wings mit dem Panel verbinden" "So verbindest du Wings mit deinem Panel:\n\n1. Öffne im Panel: Admin → Nodes → Create New\n   FQDN: ${GD_WINGS_FQDN}, 'Communicate Over SSL' aktivieren.\n2. Öffne nach dem Anlegen den Reiter 'Configuration'.\n3. Klicke rechts auf 'Generate Token'.\n4. Kopiere den angezeigten Befehl und füge ihn im nächsten Fenster ein\n   (mit der rechten Maustaste bzw. Strg + Umschalt + V)." 18 78
+    gd_msg "⇄ Wings mit dem Panel verbinden" "So verbindest du Wings mit deinem Panel:\n\n1. Öffne im Panel: Admin → Nodes → Create New\n   FQDN: ${GD_WINGS_FQDN}, 'Communicate Over SSL' aktivieren.\n2. Öffne nach dem Anlegen den Reiter 'Configuration'.\n3. Klicke rechts auf 'Generate Token'.\n4. Kopiere den angezeigten Befehl und füge ihn im nächsten Fenster ein\n   (mit der rechten Maustaste bzw. Strg + Umschalt + V)." 18 78
     while true; do
-        cmd="$(gd_input "🔗 Befehl einfügen" "Füge hier den Befehl aus dem Panel ein:" "" 10 78)" || return 1
+        cmd="$(gd_input "⇄ Befehl einfügen" "Füge hier den Befehl aus dem Panel ein:" "" 10 78)" || return 1
         url="$(grep -oE -- '--panel-url +https?://[^ ]+' <<< "$cmd" | awk '{print $2}')"
         token="$(grep -oE -- '--token +[A-Za-z0-9._-]+' <<< "$cmd" | awk '{print $2}')"
         node="$(grep -oE -- '--node +[0-9]+' <<< "$cmd" | awk '{print $2}')"
@@ -274,18 +274,18 @@ gd_wings_configure_remote() {
         gd_conf_set WINGS_PANEL_URL "$url"
         return 0
     fi
-    gd_msg "❌ Verbindung fehlgeschlagen" "Wings konnte nicht mit dem Panel verbunden werden.\n\nPrüfe, ob das Panel erreichbar ist und der Token noch gültig ist (er kann nur einmal verwendet werden).\n\nLog: $GD_LOG" 14 78
+    gd_msg "✖ Verbindung fehlgeschlagen" "Wings konnte nicht mit dem Panel verbunden werden.\n\nPrüfe, ob das Panel erreichbar ist und der Token noch gültig ist (er kann nur einmal verwendet werden).\n\nLog: $GD_LOG" 14 78
     return 1
 }
 
 gd_wings_update() {
     # Wings auf die neueste Version aktualisieren
-    gd_gauge_open "⬆️ Wings wird aktualisiert" "Aktualisierung wird vorbereitet..."
+    gd_gauge_open "↑ Wings wird aktualisiert" "Aktualisierung wird vorbereitet..."
     gd_step 20 "Neueste Wings-Version wird heruntergeladen..." gd_wings_binary
     gd_step 80 "Wings wird neu gestartet..." gd_wings_start
     gd_progress 100 "Fertig."
     gd_gauge_close
-    gd_msg "✅ Wings aktualisiert" "Wings wurde auf v$(gd_conf_get WINGS_VERSION) aktualisiert und neu gestartet." 9 60
+    gd_msg "✔ Wings aktualisiert" "Wings wurde auf v$(gd_conf_get WINGS_VERSION) aktualisiert und neu gestartet." 9 60
 }
 
 gd_swap_create() {

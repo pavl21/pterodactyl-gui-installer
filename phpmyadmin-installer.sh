@@ -114,7 +114,7 @@ if [ -d "$PTERO_DIR/public/phpmyadmin" ]; then
 fi
 
 if [ -f "$PMA_DIR/config.inc.php" ] && grep -q "GermanDactyl" "$PMA_DIR/config.inc.php"; then
-    if ! gd_yesno "📦 phpMyAdmin ist installiert" "phpMyAdmin (v$(gd_conf_get PHPMYADMIN_VERSION)) ist bereits installiert.\n\nMöchtest du es auf die neueste Version aktualisieren?" 11 70; then
+    if ! gd_yesno "▤ phpMyAdmin ist installiert" "phpMyAdmin (v$(gd_conf_get PHPMYADMIN_VERSION)) ist bereits installiert.\n\nMöchtest du es auf die neueste Version aktualisieren?" 11 70; then
         exit 0
     fi
     UPDATE_ONLY=true
@@ -126,16 +126,16 @@ if [ ! -f "$PANEL_NGINX" ]; then
 fi
 
 if [ "${UPDATE_ONLY:-false}" != "true" ]; then
-    gd_msg "👋 phpMyAdmin-Installation" "Bevor es losgeht, ein paar Hinweise:\n\n- phpMyAdmin ist öffentlich unter https://$(gd_conf_get PANEL_DOMAIN)/phpmyadmin erreichbar. Geschützt ist es nur durch die Zugangsdaten.\n- Verwende immer sichere Passwörter.\n- Der angelegte Benutzer hat vollen Zugriff auf alle Datenbanken." 15 74
+    gd_msg "☺ phpMyAdmin-Installation" "Bevor es losgeht, ein paar Hinweise:\n\n- phpMyAdmin ist öffentlich unter https://$(gd_conf_get PANEL_DOMAIN)/phpmyadmin erreichbar. Geschützt ist es nur durch die Zugangsdaten.\n- Verwende immer sichere Passwörter.\n- Der angelegte Benutzer hat vollen Zugriff auf alle Datenbanken." 15 74
 fi
 
-gd_gauge_open "📦 phpMyAdmin" "Installation wird vorbereitet..."
+gd_gauge_open "▤ phpMyAdmin" "Installation wird vorbereitet..."
 gd_step 20 "phpMyAdmin wird heruntergeladen und eingerichtet..." install_phpmyadmin
 gd_progress 100 "Fertig."
 gd_gauge_close
 
 if [ "${UPDATE_ONLY:-false}" = "true" ]; then
-    gd_msg "✅ phpMyAdmin aktualisiert" "phpMyAdmin wurde auf v$(gd_conf_get PHPMYADMIN_VERSION) aktualisiert." 8 60
+    gd_msg "✔ phpMyAdmin aktualisiert" "phpMyAdmin wurde auf v$(gd_conf_get PHPMYADMIN_VERSION) aktualisiert." 8 60
     exit 0
 fi
 
@@ -145,7 +145,7 @@ if ! create_database_user >> "$GD_LOG" 2>&1; then
 fi
 
 while true; do
-    gd_msg "🔑 Zugangsdaten für phpMyAdmin" "Adresse:       https://$(gd_conf_get PANEL_DOMAIN)/phpmyadmin\nBenutzername:  ${PMA_USER}\nPasswort:      ${PMA_PASSWORD}\n\nSpeichere dir diese Daten jetzt ab, sie werden nicht noch einmal angezeigt." 14 78
+    gd_msg "✱ Zugangsdaten für phpMyAdmin" "Adresse:       https://$(gd_conf_get PANEL_DOMAIN)/phpmyadmin\nBenutzername:  ${PMA_USER}\nPasswort:      ${PMA_PASSWORD}\n\nSpeichere dir diese Daten jetzt ab, sie werden nicht noch einmal angezeigt." 14 78
     gd_yesno "Zugangsdaten gespeichert?" "Hast du die Zugangsdaten gespeichert und funktionieren sie?" 8 60 && break
 done
-gd_msg "🎉 Einrichtung abgeschlossen" "Du kannst phpMyAdmin jetzt nutzen." 8 50
+gd_msg "★ Einrichtung abgeschlossen" "Du kannst phpMyAdmin jetzt nutzen." 8 50

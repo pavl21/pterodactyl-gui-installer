@@ -115,7 +115,7 @@ gd_check_environment() {
 # Neuinstallation
 # ---------------------------------------------------------------------------
 gd_show_credentials() {
-    whiptail --title "🔑 Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
+    whiptail --title "✱ Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
 }
 
 gd_save_credentials() {
@@ -142,18 +142,18 @@ gd_fresh_install() {
     [ "$mode" = "panel_wings" ] && with_wings=true
 
     # --- Eingaben -------------------------------------------------------------
-    GD_DOMAIN="$(gd_ask_domain "🌐 Domain für das Panel" "Gib die Domain (FQDN) ein, unter der das Panel erreichbar sein soll, z. B. panel.deinedomain.de.\n\nDer DNS-Eintrag (A-Eintrag) muss bereits auf diesen Server zeigen, das wird im nächsten Schritt geprüft.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+    GD_DOMAIN="$(gd_ask_domain "⌂ Domain für das Panel" "Gib die Domain (FQDN) ein, unter der das Panel erreichbar sein soll, z. B. panel.deinedomain.de.\n\nDer DNS-Eintrag (A-Eintrag) muss bereits auf diesen Server zeigen, das wird im nächsten Schritt geprüft.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
 
-    GD_EMAIL="$(gd_ask_email "📧 E-Mail-Adresse" "Gib deine E-Mail-Adresse ein. Sie wird für das SSL-Zertifikat (Let's Encrypt) und dein Administrator-Konto verwendet.\n\nMit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+    GD_EMAIL="$(gd_ask_email "✉ E-Mail-Adresse" "Gib deine E-Mail-Adresse ein. Sie wird für das SSL-Zertifikat (Let's Encrypt) und dein Administrator-Konto verwendet.\n\nMit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
 
     while true; do
-        GD_ADMIN_USER="$(gd_input "👤 Benutzername" "Wähle einen Benutzernamen für dein Administrator-Konto (nur Buchstaben, Zahlen, Punkt, Binde- und Unterstrich):" "admin" 11 70)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        GD_ADMIN_USER="$(gd_input "☺ Benutzername" "Wähle einen Benutzernamen für dein Administrator-Konto (nur Buchstaben, Zahlen, Punkt, Binde- und Unterstrich):" "admin" 11 70)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
         [[ "$GD_ADMIN_USER" =~ ^[A-Za-z0-9._-]{3,191}$ ]] && break
         gd_msg "Ungültiger Benutzername" "Der Benutzername muss mindestens 3 Zeichen lang sein und darf nur Buchstaben, Zahlen, Punkt, Binde- und Unterstrich enthalten." 10 70
     done
 
     GD_TELEMETRY=false
-    if gd_yesno "📊 Anonyme Telemetrie" "Pterodactyl kann anonyme Nutzungsdaten (z. B. Versionen und Anzahl der Server, keine persönlichen Daten) an die Entwickler senden. Das hilft bei der Weiterentwicklung.\n\nMöchtest du die anonyme Telemetrie aktivieren?" 13 74; then
+    if gd_yesno "☰ Anonyme Telemetrie" "Pterodactyl kann anonyme Nutzungsdaten (z. B. Versionen und Anzahl der Server, keine persönlichen Daten) an die Entwickler senden. Das hilft bei der Weiterentwicklung.\n\nMöchtest du die anonyme Telemetrie aktivieren?" 13 74; then
         GD_TELEMETRY=true
     fi
 
@@ -161,11 +161,11 @@ gd_fresh_install() {
 
     if $with_wings; then
         GD_WINGS_FQDN="$GD_DOMAIN"
-        if ! gd_yesno "🐦 Domain für Wings" "Wings (die Verbindung zu deinen Gameservern) nutzt standardmäßig dieselbe Domain wie das Panel:\n\n${GD_DOMAIN} (Port 8080)\n\nDas ist die einfachste Variante. Möchtest du diese Domain verwenden?\n\nBei 'Nein' kannst du eine eigene Subdomain angeben (z. B. node1.deinedomain.de)." 15 76; then
-            GD_WINGS_FQDN="$(gd_ask_domain "🐦 Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss ebenfalls auf diesen Server zeigen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        if ! gd_yesno "⇄ Domain für Wings" "Wings (die Verbindung zu deinen Gameservern) nutzt standardmäßig dieselbe Domain wie das Panel:\n\n${GD_DOMAIN} (Port 8080)\n\nDas ist die einfachste Variante. Möchtest du diese Domain verwenden?\n\nBei 'Nein' kannst du eine eigene Subdomain angeben (z. B. node1.deinedomain.de)." 15 76; then
+            GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss ebenfalls auf diesen Server zeigen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
         fi
         while true; do
-            GD_PORT_RANGE="$(gd_input "🎮 Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024). Du kannst später im Panel weitere Ports hinzufügen." "$GD_DEFAULT_PORT_RANGE" 14 74)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+            GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024). Du kannst später im Panel weitere Ports hinzufügen." "$GD_DEFAULT_PORT_RANGE" 14 74)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
             gd_valid_port_range "$GD_PORT_RANGE" && break
             gd_msg "Ungültiger Portbereich" "Bitte gib einen Bereich wie 25565-25600 an (größer als 1024, höchstens 65535, maximal 1000 Ports)." 10 70
         done
@@ -195,7 +195,7 @@ gd_fresh_install() {
     summary+="Firewall:      $( [ "$GD_SEC_UFW" = true ] && echo an || echo aus)   fail2ban: $( [ "$GD_SEC_FAIL2BAN" = true ] && echo an || echo aus)   Auto-Updates: $( [ "$GD_SEC_UPDATES" = true ] && echo an || echo aus)\n"
     summary+="Backups:       $( [ "$GD_SEC_BACKUP" = true ] && echo 'täglich 04:00 Uhr, inkrementell' || echo aus)\n"
     summary+="Blueprint:     $( [ "${GD_BLUEPRINT:-false}" = true ] && echo 'wird installiert' || echo 'nein')"
-    if ! whiptail --title "📋 Zusammenfassung" --yesno "Bitte prüfe deine Angaben:\n\n${summary}\n\nDie Installation dauert je nach Server 5 bis 20 Minuten. Soll sie jetzt starten?" 22 80; then
+    if ! whiptail --title "☰ Zusammenfassung" --yesno "Bitte prüfe deine Angaben:\n\n${summary}\n\nDie Installation dauert je nach Server 5 bis 20 Minuten. Soll sie jetzt starten?" 22 80; then
         clear; echo "Die Installation wurde abgebrochen."; exit 0
     fi
 
@@ -204,7 +204,7 @@ gd_fresh_install() {
     GD_DB_PASSWORD="$(gd_gen_password 48)"
     gd_log "Installation gestartet: mode=$mode domain=$GD_DOMAIN version=$GD_PANEL_VERSION patch=$GD_APPLY_PATCH"
 
-    gd_gauge_open "🚀 Pterodactyl wird installiert" "Installation wird vorbereitet..."
+    gd_gauge_open "➜ Pterodactyl wird installiert" "Installation wird vorbereitet..."
     gd_panel_install_steps
     if $with_wings; then
         gd_wings_local_steps 72
@@ -217,9 +217,9 @@ gd_fresh_install() {
     # --- Abschluss ------------------------------------------------------------
     gd_show_credentials
     if [ "$GD_SEC_BACKUP" = true ] && [ -s "$GD_AB_PASS" ]; then
-        gd_msg "🔑 Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+        gd_msg "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
     fi
-    if gd_yesno "💾 Zugangsdaten speichern?" "Sollen die Zugangsdaten zusätzlich in einer Datei gespeichert werden, die nur root lesen kann?\n\n/root/germandactyl-zugangsdaten.txt" 11 70; then
+    if gd_yesno "▣ Zugangsdaten speichern?" "Sollen die Zugangsdaten zusätzlich in einer Datei gespeichert werden, die nur root lesen kann?\n\n/root/germandactyl-zugangsdaten.txt" 11 70; then
         gd_save_credentials
     fi
 
@@ -230,7 +230,7 @@ gd_fresh_install() {
         done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dieses Skript dazu einfach erneut und wähle 'Wings installieren'."
     fi
     [ "$GD_SEC_UFW" = true ] && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du mit 'ufw allow <port>' frei."
-    gd_msg "✅ Installation erfolgreich" "$done_text" 20 78
+    gd_msg "✔ Installation erfolgreich" "$done_text" 20 78
     clear
     echo ""
     echo "FERTIG - - - - - - - - - - - - - - -"
@@ -267,18 +267,18 @@ gd_manage_menu() {
     while true; do
         version="$(gd_panel_installed_version)"
         choice=$(whiptail --title "Pterodactyl Verwaltung/Wartung" --menu "Pterodactyl ist bereits installiert (v${version:-?}).\nWähle eine Aktion:" 24 78 14 \
-            "1"  "🔍 Problembehandlung" \
-            "2"  "🔼 Panel aktualisieren" \
-            "3"  "🐦 Wings installieren/verwalten" \
-            "4"  "🧩 Blueprint (Erweiterungen) verwalten" \
-            "5"  "📦 phpMyAdmin installieren" \
-            "6"  "📂 Backup-Verwaltung" \
-            "7"  "🏢 Database-Host einrichten" \
-            "8"  "💻 SSH-Loginseite einrichten/entfernen" \
-            "9"  "🔄 SWAP-Verwaltung" \
-            "10" "🎨 Theme-Verwaltung" \
-            "11" "🧹 Pterodactyl deinstallieren" \
-            "12" "🚪 Skript beenden" 3>&1 1>&2 2>&3) || choice=12
+            "1"  "✚ Problembehandlung" \
+            "2"  "↑ Panel aktualisieren" \
+            "3"  "⇄ Wings installieren/verwalten" \
+            "4"  "❖ Blueprint (Erweiterungen) verwalten" \
+            "5"  "▤ phpMyAdmin installieren" \
+            "6"  "↺ Backup-Verwaltung" \
+            "7"  "▦ Database-Host einrichten" \
+            "8"  "▸ SSH-Loginseite einrichten/entfernen" \
+            "9"  "⇅ SWAP-Verwaltung" \
+            "10" "✎ Theme-Verwaltung" \
+            "11" "✖ Pterodactyl deinstallieren" \
+            "12" "⊗ Skript beenden" 3>&1 1>&2 2>&3) || choice=12
 
         case "$choice" in
             1)  gd_run problem-verwaltung.sh ;;

@@ -72,7 +72,7 @@ gd_blueprint_ask() {
     if [ "${GD_APPLY_PATCH:-false}" = "true" ]; then
         text+="\n\nHinweis: Blueprint ersetzt einige Dateien der Oberfläche. Die deutsche Übersetzung wird danach angewendet, einzelne Bereiche können aber englisch bleiben."
     fi
-    if gd_yesno "🧩 Blueprint (optional)" "$text" 16 78; then
+    if gd_yesno "❖ Blueprint (optional)" "$text" 16 78; then
         GD_BLUEPRINT=true
     fi
     return 0
@@ -91,7 +91,7 @@ gd_blueprint_menu() {
     while true; do
         if gd_blueprint_installed; then
             ver="$(gd_blueprint_version)"
-            choice=$(whiptail --title "🧩 Blueprint" --menu "Blueprint ist installiert (${ver:-unbekannt}).\n\nErweiterungen (.blueprint-Dateien) lädst du zuerst nach $PTERO_DIR hoch und installierst sie dann hier." 18 78 3 \
+            choice=$(whiptail --title "❖ Blueprint" --menu "Blueprint ist installiert (${ver:-unbekannt}).\n\nErweiterungen (.blueprint-Dateien) lädst du zuerst nach $PTERO_DIR hoch und installierst sie dann hier." 18 78 3 \
                 "1" "Erweiterung installieren" \
                 "2" "Blueprint aktualisieren / erneut anwenden" \
                 "3" "Zurück" 3>&1 1>&2 2>&3) || return 0
@@ -108,18 +108,18 @@ gd_blueprint_menu() {
                     clear
                     echo "Erweiterung $ext wird installiert (die Oberfläche wird neu gebaut)..."
                     if (cd "$PTERO_DIR" && blueprint -install "$ext") 2>&1 | tee -a "$GD_LOG"; then
-                        gd_msg "✅ Erweiterung installiert" "Die Erweiterung $ext wurde installiert." 8 60
+                        gd_msg "✔ Erweiterung installiert" "Die Erweiterung $ext wurde installiert." 8 60
                     else
-                        gd_msg "❌ Fehler" "Die Erweiterung konnte nicht installiert werden. Details: $GD_LOG" 9 70
+                        gd_msg "✖ Fehler" "Die Erweiterung konnte nicht installiert werden. Details: $GD_LOG" 9 70
                     fi ;;
                 2) gd_blueprint_reapply_dialog ;;
                 *) return 0 ;;
             esac
         elif ! gd_blueprint_supported; then
-            gd_msg "🧩 Blueprint nicht verfügbar" "Dieser Server läuft in einem Docker-Container. Blueprint unterstützt diese Umgebung nicht." 9 70
+            gd_msg "❖ Blueprint nicht verfügbar" "Dieser Server läuft in einem Docker-Container. Blueprint unterstützt diese Umgebung nicht." 9 70
             return 0
         else
-            gd_yesno "🧩 Blueprint installieren" "Blueprint ist ein Framework für Erweiterungen und Themes (https://blueprint.zip).\n\nBlueprint ersetzt einige Dateien der Oberfläche. Eine vorhandene deutsche Übersetzung wird danach erneut angewendet, einzelne Bereiche können aber englisch bleiben.\n\nEmpfehlung: Erstelle vorher ein Backup über die Backup-Verwaltung.\n\nJetzt installieren?" 17 78 || return 0
+            gd_yesno "❖ Blueprint installieren" "Blueprint ist ein Framework für Erweiterungen und Themes (https://blueprint.zip).\n\nBlueprint ersetzt einige Dateien der Oberfläche. Eine vorhandene deutsche Übersetzung wird danach erneut angewendet, einzelne Bereiche können aber englisch bleiben.\n\nEmpfehlung: Erstelle vorher ein Backup über die Backup-Verwaltung.\n\nJetzt installieren?" 17 78 || return 0
             gd_blueprint_reapply_dialog
             gd_blueprint_installed || return 0
         fi
@@ -132,7 +132,7 @@ gd_blueprint_reapply_dialog() {
     panel_version="$(gd_panel_installed_version)"
     tag="$(gd_blueprint_tag_for "$panel_version")"
     gd_version="$(gd_conf_get GD_GERMANDACTYL)"
-    gd_gauge_open "🧩 Blueprint" "Blueprint wird vorbereitet..."
+    gd_gauge_open "❖ Blueprint" "Blueprint wird vorbereitet..."
     gd_step 10 "Blueprint ${tag} wird installiert (Oberfläche wird gebaut, dauert einige Minuten)..." gd_blueprint_apply "$tag"
     if [ -n "$gd_version" ] && [ "$gd_version" = "$panel_version" ]; then
         GD_PANEL_VERSION="$panel_version"
@@ -140,5 +140,5 @@ gd_blueprint_reapply_dialog() {
     fi
     gd_progress 100 "Fertig."
     gd_gauge_close
-    gd_msg "✅ Blueprint" "Blueprint ${tag} ist eingerichtet." 8 60
+    gd_msg "✔ Blueprint" "Blueprint ${tag} ist eingerichtet." 8 60
 }

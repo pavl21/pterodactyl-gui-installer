@@ -76,7 +76,7 @@ gd_uninstall() {
     { [ -f "$WINGS_BIN" ] || [ -d /etc/pterodactyl ]; } && has_wings=true
 
     gd_warn_colors_on
-    if ! gd_yesno "⚠️ WARNUNG" "Du bist dabei, Pterodactyl zu entfernen. Dabei können das Panel, die Datenbank und alle Gameserver unwiderruflich gelöscht werden.\n\nMöchtest du fortfahren?" 12 70; then
+    if ! gd_yesno "⚠ WARNUNG" "Du bist dabei, Pterodactyl zu entfernen. Dabei können das Panel, die Datenbank und alle Gameserver unwiderruflich gelöscht werden.\n\nMöchtest du fortfahren?" 12 70; then
         gd_warn_colors_off
         return 1
     fi
@@ -89,25 +89,25 @@ gd_uninstall() {
         gd_msg "Nichts gefunden" "Es wurde weder ein Panel noch Wings gefunden." 8 60
         return 1
     fi
-    sel=$(whiptail --title "🗑️ Was soll entfernt werden?" --checklist "Wähle aus, was entfernt werden soll (Leertaste = an/aus):" 14 78 2 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
+    sel=$(whiptail --title "✖ Was soll entfernt werden?" --checklist "Wähle aus, was entfernt werden soll (Leertaste = an/aus):" 14 78 2 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
     [[ "$sel" == *'"PANEL"'* ]] && remove_panel=true
     [[ "$sel" == *'"WINGS"'* ]] && remove_wings=true
     $remove_panel || $remove_wings || return 1
 
     local do_backup=false
-    if gd_yesno "💾 Sicherung" "Soll vorher eine Sicherung erstellt werden?\n\nGesichert wird das, was du entfernst (Panel mit Datenbank bzw. Gameserver-Daten), nach:\n$GD_BACKUP_ROOT\n\nSchlägt die Sicherung fehl, wird nichts gelöscht." 13 78; then
+    if gd_yesno "▣ Sicherung" "Soll vorher eine Sicherung erstellt werden?\n\nGesichert wird das, was du entfernst (Panel mit Datenbank bzw. Gameserver-Daten), nach:\n$GD_BACKUP_ROOT\n\nSchlägt die Sicherung fehl, wird nichts gelöscht." 13 78; then
         do_backup=true
     fi
 
     local confirm_text="Ich bestätige die Löschung von Pterodactyl"
     while true; do
         local input
-        input="$(gd_input "🗑️ Bestätigung" "Gib zur Bestätigung exakt folgenden Satz ein:\n\n$confirm_text" "" 12 70)" || return 1
+        input="$(gd_input "✖ Bestätigung" "Gib zur Bestätigung exakt folgenden Satz ein:\n\n$confirm_text" "" 12 70)" || return 1
         [ "$input" = "$confirm_text" ] && break
-        gd_msg "❌ Falsche Eingabe" "Die Eingabe stimmt nicht überein. Versuche es erneut." 8 60
+        gd_msg "✖ Falsche Eingabe" "Die Eingabe stimmt nicht überein. Versuche es erneut." 8 60
     done
 
-    gd_gauge_open "🗑️ Deinstallation" "Deinstallation wird vorbereitet..."
+    gd_gauge_open "✖ Deinstallation" "Deinstallation wird vorbereitet..."
     local what="beides"
     $remove_panel && ! $remove_wings && what="panel"
     ! $remove_panel && $remove_wings && what="wings"
@@ -118,6 +118,6 @@ gd_uninstall() {
     gd_gauge_close
     rm -f "$GD_CONF_FILE"
 
-    gd_msg "✅ Deinstallation abgeschlossen" "Pterodactyl wurde entfernt.\n\nWeiterhin installiert bleiben: nginx, MariaDB, PHP, Redis, Docker und vorhandene SSL-Zertifikate, damit andere Dienste auf diesem Server nicht beeinträchtigt werden.$( $do_backup && echo "\n\nDeine Sicherung liegt in: $GD_BACKUP_ROOT (über die Backup-Verwaltung wiederherstellbar)")$( $remove_panel && echo "\n\nHinweis: Datenbanken, die deine Gameserver über einen Database-Host angelegt hatten, bleiben erhalten.")" 15 78
+    gd_msg "✔ Deinstallation abgeschlossen" "Pterodactyl wurde entfernt.\n\nWeiterhin installiert bleiben: nginx, MariaDB, PHP, Redis, Docker und vorhandene SSL-Zertifikate, damit andere Dienste auf diesem Server nicht beeinträchtigt werden.$( $do_backup && echo "\n\nDeine Sicherung liegt in: $GD_BACKUP_ROOT (über die Backup-Verwaltung wiederherstellbar)")$( $remove_panel && echo "\n\nHinweis: Datenbanken, die deine Gameserver über einen Database-Host angelegt hatten, bleiben erhalten.")" 15 78
     return 0
 }

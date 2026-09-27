@@ -347,12 +347,12 @@ fix_php_socket() {
 run_fixes() {
     local items=() i sel
     for i in "${!FIX_DESC[@]}"; do items+=("$i" "${FIX_DESC[$i]}" ON); done
-    sel=$(gd_whip --title "🔧 Probleme beheben" --checklist "Diese Probleme können automatisch behoben werden (Leertaste = an/aus):" 18 86 8 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
+    sel=$(gd_whip --title "⚙ Probleme beheben" --checklist "Diese Probleme können automatisch behoben werden (Leertaste = an/aus):" 18 86 8 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
     sel="$(tr -d '"' <<< "$sel")"
     [ -z "$sel" ] && return 1
     local total done_ok=() done_fail=() n=0
     total="$(wc -w <<< "$sel")"
-    gd_gauge_open "🔧 Probleme werden behoben" "Bitte warten..."
+    gd_gauge_open "⚙ Probleme werden behoben" "Bitte warten..."
     for i in $sel; do
         n=$((n + 1))
         gd_progress $(( n * 100 / (total + 1) )) "${FIX_DESC[$i]}..."
@@ -360,7 +360,7 @@ run_fixes() {
     done
     gd_progress 100 "Fertig."
     gd_gauge_close
-    gd_msg "🔧 Ergebnis" "$(printf '%s\n' "${done_ok[@]}" "${done_fail[@]}")\n\nDie Analyse wird jetzt erneut ausgeführt, um das Ergebnis zu prüfen." 18 86
+    gd_msg "⚙ Ergebnis" "$(printf '%s\n' "${done_ok[@]}" "${done_fail[@]}")\n\nDie Analyse wird jetzt erneut ausgeführt, um das Ergebnis zu prüfen." 18 86
     return 0
 }
 
@@ -369,10 +369,10 @@ run_fixes() {
 # ---------------------------------------------------------------------------
 SPEEDTEST=false
 if ! $TEXT_MODE; then
-    if gd_whip --title "🔍 Analyse" --defaultno --yesno "Die Analyse prüft System, Updates, nginx, SSL-Zertifikate (auch die tatsächlich ausgelieferten), Dienste, Panel, Wings, DNS und Backups.\n\nSoll zusätzlich die Geschwindigkeit der Internetverbindung gemessen werden? (ca. 30 Sekunden)" 14 76; then
+    if gd_whip --title "✚ Analyse" --defaultno --yesno "Die Analyse prüft System, Updates, nginx, SSL-Zertifikate (auch die tatsächlich ausgelieferten), Dienste, Panel, Wings, DNS und Backups.\n\nSoll zusätzlich die Geschwindigkeit der Internetverbindung gemessen werden? (ca. 30 Sekunden)" 14 76; then
         SPEEDTEST=true
     fi
-    gd_gauge_open "🔍 Analyse läuft" "Analyse wird vorbereitet..."
+    gd_gauge_open "✚ Analyse läuft" "Analyse wird vorbereitet..."
 fi
 
 step 5  "System wird geprüft (Speicher, Arbeitsspeicher, Zeit)..."; check_system
@@ -416,8 +416,8 @@ if $TEXT_MODE; then
         done
     fi
 else
-    gd_whip --title "🔍 Ergebnis der Analyse" --scrolltext --textbox "$REPORT" 30 110
-    if [ ${#FIX_DESC[@]} -gt 0 ] && gd_yesno "🔧 Probleme beheben?" "${#FIX_DESC[@]} der gefundenen Probleme können automatisch behoben werden. Möchtest du sie jetzt beheben?" 10 70; then
+    gd_whip --title "✚ Ergebnis der Analyse" --scrolltext --textbox "$REPORT" 30 110
+    if [ ${#FIX_DESC[@]} -gt 0 ] && gd_yesno "⚙ Probleme beheben?" "${#FIX_DESC[@]} der gefundenen Probleme können automatisch behoben werden. Möchtest du sie jetzt beheben?" 10 70; then
         if run_fixes; then
             exec bash "$0" "$@"   # Analyse erneut ausführen
         fi

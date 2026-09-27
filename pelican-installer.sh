@@ -26,8 +26,8 @@ GD_PHP_VERSION="$PELICAN_PHP"
 # Bereits installiert: Aktualisieren
 # ---------------------------------------------------------------------------
 pelican_update() {
-    gd_yesno "⬆️ Pelican aktualisieren" "Pelican wird auf die neueste Version aktualisiert. Das Panel ist dabei kurz nicht erreichbar.\n\nFortfahren?" 10 70 || return
-    gd_gauge_open "⬆️ Pelican wird aktualisiert" "Aktualisierung wird vorbereitet..."
+    gd_yesno "↑ Pelican aktualisieren" "Pelican wird auf die neueste Version aktualisiert. Das Panel ist dabei kurz nicht erreichbar.\n\nFortfahren?" 10 70 || return
+    gd_gauge_open "↑ Pelican wird aktualisiert" "Aktualisierung wird vorbereitet..."
     gd_step 5  "Wartungsmodus wird aktiviert..." bash -c "cd '$PELICAN_DIR' && (php artisan down || true)"
     gd_step 10 "PHP ${PELICAN_PHP} wird sichergestellt..." gd_php_repo
     gd_step 20 "PHP-Pakete werden aktualisiert..." gd_pelican_packages
@@ -37,7 +37,7 @@ pelican_update() {
     gd_step 90 "Dienste werden neu gestartet..." bash -c "cd '$PELICAN_DIR' && php artisan queue:restart; systemctl restart pelican-queue; php artisan up"
     gd_progress 100 "Fertig."
     gd_gauge_close
-    gd_msg "✅ Aktualisierung abgeschlossen" "Pelican wurde aktualisiert." 8 50
+    gd_msg "✔ Aktualisierung abgeschlossen" "Pelican wurde aktualisiert." 8 50
 }
 
 if [ -d "$PELICAN_DIR" ]; then
@@ -56,29 +56,29 @@ fi
 # Neuinstallation
 # ---------------------------------------------------------------------------
 gd_warn_colors_on
-if ! gd_yesno "⚠️ Pelican ist eine Beta-Version" "Pelican ist der Nachfolger von Pterodactyl, befindet sich aber noch in der Beta-Phase. Es kann Fehler enthalten, und Updates können Änderungen erfordern.\n\nPelican bringt die deutsche Sprache bereits mit, GermanDactyl ist dafür nicht nötig. Die Verwaltungsfunktionen dieses Skripts (Backups, Blueprint, phpMyAdmin usw.) sind nur für Pterodactyl vorgesehen.\n\nMöchtest du fortfahren?" 17 76; then
+if ! gd_yesno "⚠ Pelican ist eine Beta-Version" "Pelican ist der Nachfolger von Pterodactyl, befindet sich aber noch in der Beta-Phase. Es kann Fehler enthalten, und Updates können Änderungen erfordern.\n\nPelican bringt die deutsche Sprache bereits mit, GermanDactyl ist dafür nicht nötig. Die Verwaltungsfunktionen dieses Skripts (Backups, Blueprint, phpMyAdmin usw.) sind nur für Pterodactyl vorgesehen.\n\nMöchtest du fortfahren?" 17 76; then
     gd_warn_colors_off
     exit 0
 fi
 gd_warn_colors_off
 
-GD_DOMAIN="$(gd_ask_domain "🌐 Domain für Pelican" "Gib die Domain (FQDN) ein, unter der Pelican erreichbar sein soll, z. B. panel.deinedomain.de.")" || exit 0
-GD_EMAIL="$(gd_ask_email "📧 E-Mail-Adresse" "Gib deine E-Mail-Adresse für das SSL-Zertifikat und dein Administrator-Konto ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
+GD_DOMAIN="$(gd_ask_domain "⌂ Domain für Pelican" "Gib die Domain (FQDN) ein, unter der Pelican erreichbar sein soll, z. B. panel.deinedomain.de.")" || exit 0
+GD_EMAIL="$(gd_ask_email "✉ E-Mail-Adresse" "Gib deine E-Mail-Adresse für das SSL-Zertifikat und dein Administrator-Konto ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
 GD_ADMIN_USER="admin"
 GD_ADMIN_PASSWORD="$(gd_gen_password 24)"
 
 WITH_WINGS=false
-if gd_yesno "🐦 Wings mitinstallieren?" "Soll Wings auf diesem Server gleich mit installiert und automatisch mit Pelican verbunden werden?" 10 70; then
+if gd_yesno "⇄ Wings mitinstallieren?" "Soll Wings auf diesem Server gleich mit installiert und automatisch mit Pelican verbunden werden?" 10 70; then
     WITH_WINGS=true
     while true; do
-        GD_PORT_RANGE="$(gd_input "🎮 Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden? (z. B. 25565-25600)" "$GD_DEFAULT_PORT_RANGE" 10 70)" || exit 0
+        GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden? (z. B. 25565-25600)" "$GD_DEFAULT_PORT_RANGE" 10 70)" || exit 0
         gd_valid_port_range "$GD_PORT_RANGE" && break
         gd_msg "Ungültiger Portbereich" "Bitte gib einen Bereich wie 25565-25600 an." 8 60
     done
 fi
 gd_security_ask
 
-gd_gauge_open "🚀 Pelican wird installiert" "Installation wird vorbereitet..."
+gd_gauge_open "➜ Pelican wird installiert" "Installation wird vorbereitet..."
 gd_step 2  "Paketquellen werden aktualisiert..." gd_apt update
 gd_step 5  "PHP ${PELICAN_PHP}-Paketquelle wird eingerichtet..." gd_php_repo
 gd_step 10 "PHP ${PELICAN_PHP}, nginx und Certbot werden installiert..." gd_pelican_packages
@@ -110,7 +110,7 @@ gd_progress 100 "Installation abgeschlossen."
 gd_gauge_close
 
 gd_conf_set PELICAN_DOMAIN "$GD_DOMAIN"
-whiptail --title "🔑 Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}" 15 78
+whiptail --title "✱ Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}" 15 78
 
 if $WITH_WINGS; then
     text="Pelican und Wings sind eingerichtet und verbunden. Du kannst direkt deinen ersten Server anlegen."
@@ -118,7 +118,7 @@ if $WITH_WINGS; then
 else
     text="Pelican ist eingerichtet: https://${GD_DOMAIN}\n\nFür Gameserver brauchst du noch Wings. Starte das Skript dazu erneut."
 fi
-gd_msg "✅ Installation erfolgreich" "$text" 14 78
+gd_msg "✔ Installation erfolgreich" "$text" 14 78
 clear
 echo "Pelican: https://${GD_DOMAIN}"
 echo "Log:     $GD_LOG"

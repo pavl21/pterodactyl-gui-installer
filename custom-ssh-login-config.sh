@@ -25,10 +25,10 @@ remove_old_version() {
 }
 
 if [ -f "$MOTD_BIN" ] || [ -f /etc/motd.sh ]; then
-    if gd_yesno "🛑 SSH-Loginseite bereits aktiv" "Die GermanDactyl-Loginseite ist bereits eingerichtet. Möchtest du sie entfernen? Danach wird wieder die Standardanzeige deines Systems verwendet." 11 74; then
+    if gd_yesno "✖ SSH-Loginseite bereits aktiv" "Die GermanDactyl-Loginseite ist bereits eingerichtet. Möchtest du sie entfernen? Danach wird wieder die Standardanzeige deines Systems verwendet." 11 74; then
         rm -f "$MOTD_BIN" "$MOTD_HOOK"
         remove_old_version
-        gd_msg "✅ SSH-Loginseite entfernt" "Die Standardanzeige deines Systems wird wieder verwendet." 8 70
+        gd_msg "✔ SSH-Loginseite entfernt" "Die Standardanzeige deines Systems wird wieder verwendet." 8 70
     elif [ -f /etc/motd.sh ]; then
         # Alte, unsichere Installation automatisch auf die neue Variante umstellen
         remove_old_version
@@ -36,12 +36,12 @@ if [ -f "$MOTD_BIN" ] || [ -f /etc/motd.sh ]; then
         printf '%s\n' '# Angelegt von GermanDactyl Setup: Loginseite nur in interaktiven Shells anzeigen' \
             'case $- in *i*) [ -x /usr/local/bin/germandactyl-motd ] && /usr/local/bin/germandactyl-motd ;; esac' > "$MOTD_HOOK"
         chmod 644 "$MOTD_HOOK"
-        gd_msg "🔒 Sicherheitsupdate" "Deine Loginseite wurde auf die neue, sichere Variante umgestellt (vorher war die Datei für alle Benutzer beschreibbar)." 10 74
+        gd_msg "✱ Sicherheitsupdate" "Deine Loginseite wurde auf die neue, sichere Variante umgestellt (vorher war die Datei für alle Benutzer beschreibbar)." 10 74
     fi
     exit 0
 fi
 
-if ! gd_yesno "🐾 GermanDactyl SSH-Login" "Wenn du diesen Server nur für Pterodactyl verwendest, ist diese Loginseite für dich eventuell praktisch: Nach dem Anmelden per SSH siehst du den aktuellen Zustand des Servers (Updates, Laufzeit, Netzwerk, letzter Login).\n\nDu kannst sie jederzeit über denselben Menüpunkt wieder entfernen.\n\nMöchtest du fortfahren?" 15 78; then
+if ! gd_yesno "❖ GermanDactyl SSH-Login" "Wenn du diesen Server nur für Pterodactyl verwendest, ist diese Loginseite für dich eventuell praktisch: Nach dem Anmelden per SSH siehst du den aktuellen Zustand des Servers (Updates, Laufzeit, Netzwerk, letzter Login).\n\nDu kannst sie jederzeit über denselben Menüpunkt wieder entfernen.\n\nMöchtest du fortfahren?" 15 78; then
     exit 0
 fi
 
@@ -59,7 +59,7 @@ printf '%s\n' '# Angelegt von GermanDactyl Setup: Loginseite nur in interaktiven
     'case $- in *i*) [ -x /usr/local/bin/germandactyl-motd ] && /usr/local/bin/germandactyl-motd ;; esac' > "$MOTD_HOOK"
 chmod 644 "$MOTD_HOOK"
 
-gd_msg "🎉 SSH-Loginseite aktiviert" "Die Loginseite wurde eingerichtet und erscheint ab der nächsten SSH-Anmeldung. Wenn sie dir nicht gefällt, kannst du sie über denselben Menüpunkt wieder entfernen." 11 74
+gd_msg "★ SSH-Loginseite aktiviert" "Die Loginseite wurde eingerichtet und erscheint ab der nächsten SSH-Anmeldung. Wenn sie dir nicht gefällt, kannst du sie über denselben Menüpunkt wieder entfernen." 11 74
 "$MOTD_BIN"
 echo ""
 read -r -p "Drücke Enter, um zum Menü zurückzukehren..." _ < /dev/tty
