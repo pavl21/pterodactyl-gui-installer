@@ -1,490 +1,121 @@
 #!/bin/bash
+# Pfad: pelican-installer.sh
+# Pelican Panel (Beta) + optional Wings installieren bzw. aktualisieren.
 
-# Überprüfen, ob /var/www/pelican existiert
-if [ -d "/var/www/pelican" ]; then
-    # Whiptail-Menü für Pelican Panel Verwaltung/Wartung anzeigen
-    choice=$(whiptail --title "Pelican Panel Verwaltung/Wartung" \
-        --menu "Pelican ist bereits installiert. Was möchtest du tun?" 15 70 2 \
+# Gemeinsame Bibliotheken laden (vom Hauptskript übergeben, lokal oder aus dem Repository)
+_gd_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -z "${GD_LIB_DIR:-}" ] && [ -f "$_gd_dir/lib/common.sh" ]; then GD_LIB_DIR="$_gd_dir/lib"; GD_LOCAL_DIR="$_gd_dir"; fi
+if [ -n "${GD_LIB_DIR:-}" ] && [ -f "$GD_LIB_DIR/common.sh" ]; then
+    . "$GD_LIB_DIR/common.sh"
+else
+    _gd_c="$(mktemp)"
+    curl -fsSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH:-main}/lib/common.sh" -o "$_gd_c" \
+        || { echo "Die Bibliothek lib/common.sh konnte nicht geladen werden."; exit 1; }
+    . "$_gd_c"; rm -f "$_gd_c"
+fi
+gd_require_root
+gd_source_lib security
+gd_source_lib panel
+gd_source_lib wings
+gd_source_lib pelican
+GD_PHP_VERSION="$PELICAN_PHP"
+
+# ---------------------------------------------------------------------------
+# Bereits installiert: Aktualisieren
+# ---------------------------------------------------------------------------
+pelican_update() {
+    gd_yesno "⬆️ Pelican aktualisieren" "Pelican wird auf die neueste Version aktualisiert. Das Panel ist dabei kurz nicht erreichbar.\n\nFortfahren?" 10 70 || return
+    gd_gauge_open "⬆️ Pelican wird aktualisiert" "Aktualisierung wird vorbereitet..."
+    gd_step 5  "Wartungsmodus wird aktiviert..." bash -c "cd '$PELICAN_DIR' && (php artisan down || true)"
+    gd_step 10 "PHP ${PELICAN_PHP} wird sichergestellt..." gd_php_repo
+    gd_step 20 "PHP-Pakete werden aktualisiert..." gd_pelican_packages
+    gd_step 35 "Neueste Version wird heruntergeladen und Abhängigkeiten installiert..." gd_pelican_download
+    gd_step 70 "Datenbank wird aktualisiert..." bash -c "cd '$PELICAN_DIR' && php artisan migrate --seed --force && php artisan optimize:clear && php artisan filament:optimize"
+    gd_step 85 "Berechtigungen werden gesetzt..." bash -c "chmod -R 755 '$PELICAN_DIR'/storage/* '$PELICAN_DIR'/bootstrap/cache/ && chown -R www-data:www-data '$PELICAN_DIR'"
+    gd_step 90 "Dienste werden neu gestartet..." bash -c "cd '$PELICAN_DIR' && php artisan queue:restart; systemctl restart pelican-queue; php artisan up"
+    gd_progress 100 "Fertig."
+    gd_gauge_close
+    gd_msg "✅ Aktualisierung abgeschlossen" "Pelican wurde aktualisiert." 8 50
+}
+
+if [ -d "$PELICAN_DIR" ]; then
+    choice=$(whiptail --title "Pelican Verwaltung" --menu "Pelican ist bereits installiert. Was möchtest du tun?" 13 70 3 \
         "1" "Panel aktualisieren" \
-        3>&1 1>&2 2>&3)
-
-    # Fallunterscheidung basierend auf der Benutzerwahl
-    case $choice in
-        1)
-            # Panel aktualisieren
-            clear
-            echo ""
-            echo ""
-            echo "STATUS - - - - - - - - - - - - - - -"
-            echo ""
-            echo "Update wird heruntergeladen..."
-            sleep 2
-            cd /var/www/pelican > /dev/null 2>&1
-            curl -Lo panel.tar.gz https://github.com/pelican-dev/panel/archive/refs/heads/main.zip
-            clear
-            echo ""
-            echo ""
-            echo "STATUS - - - - - - - - - - - - - - -"
-            echo ""
-            echo "Update wird angewendet..."
-            tar -xzvf panel.tar.gz > /dev/null 2>&1
-            mkdir -p /var/www/pelican/storage/framework/cache
-            mkdir -p /var/www/pelican/storage/framework/views
-            mkdir -p /var/www/pelican/storage/framework/sessions
-            mkdir -p /var/www/pelican/bootstrap/cache
-            touch /var/www/pelican/storage/framework/cache/.gitignore
-            touch /var/www/pelican/storage/framework/views/.gitignore
-            touch /var/www/pelican/storage/framework/sessions/.gitignore
-            touch /var/www/pelican/bootstrap/cache/.gitignore
-            chmod -R 755 storage/* bootstrap/cache/
-            sudo chown -R www-data:www-data /var/www/pelican
-            rm panel.tar.gz
-            systemctl restart nginx
-            installed_version=$(cat "/var/www/pelican/config/app.php" 2> /dev/null | grep "'version' =>" | cut -d\' -f4 | sed 's/^/v/') > /dev/null 2>&1
-            clear
-            echo ""
-            echo ""
-            echo "UPDATE INTEGRIERT - - - - - - - - - - - - - - -"
-            echo ""
-            echo "Das neueste Update wurde nun bereitgestellt"
-            echo "Installierte Version: $installed_version"
-            exit 0
-            ;;
-        *)
-            echo "Abbruch."
-            ;;
+        "2" "Wings installieren/verwalten" \
+        "3" "Zurück" 3>&1 1>&2 2>&3) || exit 0
+    case "$choice" in
+        1) pelican_update ;;
+        2) gd_run wings-pelican.sh ;;
     esac
-else
-    clear
-fi
-
-
-
-# Kopfzeile für die Pelican Panel Installation anzeigen
-clear
-clear
-echo "----------------------------------"
-echo "GermanDactyl Setup - Pelican Panel [Alpha]"
-echo "Erstellt von Pavl21, basierend auf GermanDactyl Setup für Pterodactyl "
-echo "----------------------------------"
-sleep 3  # 3 Sekunden warten, bevor das Skript fortgesetzt wird
-
-# Überprüfen, ob der Benutzer Root-Rechte hat
-if [ "$(id -u)" != "0" ]; then
-    echo "Abgebrochen: Für die Installation werden Root-Rechte benötigt, damit benötigte Pakete installiert werden können. Falls du nicht der Administrator des Servers bist, bitte ihn, dir temporär Zugriff zu erteilen."
-    exit 1
-fi
-
-# Wings installieren
-install_wings() {
-    clear
-    echo "Weiterleitung zu Wings..."
-    curl -sSfL https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/wings-pelican.sh | bash
     exit 0
-}
+fi
 
-# Whiptail Menü Antworten auf Deutsch Einstellungen
-export TEXTDOMAIN=dialog
-export LANGUAGE=de_DE.UTF-8
+# ---------------------------------------------------------------------------
+# Neuinstallation
+# ---------------------------------------------------------------------------
+gd_warn_colors_on
+if ! gd_yesno "⚠️ Pelican ist eine Beta-Version" "Pelican ist der Nachfolger von Pterodactyl, befindet sich aber noch in der Beta-Phase. Es kann Fehler enthalten, und Updates können Änderungen erfordern.\n\nPelican bringt die deutsche Sprache bereits mit, GermanDactyl ist dafür nicht nötig. Die Verwaltungsfunktionen dieses Skripts (Backups, Blueprint, phpMyAdmin usw.) sind nur für Pterodactyl vorgesehen.\n\nMöchtest du fortfahren?" 17 76; then
+    gd_warn_colors_off
+    exit 0
+fi
+gd_warn_colors_off
 
-# Funktion, um den Benutzer neu anzulegen
-recreate_user() {
-    {
-        echo "10"; sleep 1
-        echo "Benutzer löschen..."
-        cd /var/www/pelican && echo -e "1\n1\nyes" | php artisan p:user:delete
-        echo "30"; sleep 1
-        echo "Benutzer anlegen... Mit der Mail: $admin_email und dem Passwort: $user_password"
-        cd /var/www/pelican && php artisan p:user:make --email="$admin_email" --username=admin --password="$user_password" --admin=1
-        echo "100"; sleep 1
-    } | whiptail --gauge "Benutzer wird angelegt..." 8 50 0
-}
+GD_DOMAIN="$(gd_ask_domain "🌐 Domain für Pelican" "Gib die Domain (FQDN) ein, unter der Pelican erreichbar sein soll, z. B. panel.deinedomain.de.")" || exit 0
+GD_EMAIL="$(gd_ask_email "📧 E-Mail-Adresse" "Gib deine E-Mail-Adresse für das SSL-Zertifikat und dein Administrator-Konto ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
+GD_ADMIN_USER="admin"
+GD_ADMIN_PASSWORD="$(gd_gen_password 24)"
 
-# Notwendige Pakete installieren - Vorbereitung
-clear
-echo ""
-echo ""
-echo "STATUS - - - - - - - - - - - - - - -"
-echo ""
-
-# Eine verbesserte Ladeanimation, während alles Nötige installiert wird (Vorbereitung)
-show_spinner() {
-    local pid=$1
-    local delay=0.45
-    local spinstr='|/-\\'
-    local msg="Zusätzliche Pakete werden für Pelican Panel vorbereitet..."
-    while [ "$(ps a | awk '{print $1}' | grep -w $pid)" ]; do
-        local temp=${spinstr#?}
-        printf " [%c]  $msg" "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\r"
-        for i in $(seq 1 $((${#msg} + 10))); do  # Korrigiert
-            printf " "
-        done
-        printf "\r"
+WITH_WINGS=false
+if gd_yesno "🐦 Wings mitinstallieren?" "Soll Wings auf diesem Server gleich mit installiert und automatisch mit Pelican verbunden werden?" 10 70; then
+    WITH_WINGS=true
+    while true; do
+        GD_PORT_RANGE="$(gd_input "🎮 Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden? (z. B. 25565-25600)" "$GD_DEFAULT_PORT_RANGE" 10 70)" || exit 0
+        gd_valid_port_range "$GD_PORT_RANGE" && break
+        gd_msg "Ungültiger Portbereich" "Bitte gib einen Bereich wie 25565-25600 an." 8 60
     done
-    printf "                                             \r"
-}
-
-# Starte die Installation im Hintergrund und leite die Ausgabe um
-(
-    dpkg --configure -a
-    sudo apt update
-    sudo apt install apt-transport-https lsb-release ca-certificates wget -y
-    sudo wget -O /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg
-    sudo sh -c 'echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list'
-    sudo apt update
-    sudo apt upgrade -y
-    sudo apt install curl whiptail tar jq php8.2-cli php8.2-fpm php8.2-common php8.2-mysql php8.2-zip php8.2-gd dnsutils php8.2-mbstring php8.2-curl php8.2-xml php8.2-bcmath php8.2-intl php8.2-redis php8.2-sqlite3 sqlite3 mariadb-server software-properties-common gpg php-intl nginx btop dmidecode ncdu certbot -y
-    sudo apt update
-    sudo apt full-upgrade -y
-    curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer
-) > /dev/null 2>&1 &
-
-PID=$!
-
-# Zeige die verbesserte Spinner-Animation, während die Installation läuft
-show_spinner $PID
-
-# Warte, bis die Installation abgeschlossen ist
-wait $PID
-exit_status=$?
-
-# Überprüfe den Exit-Status
-if [ $exit_status -ne 0 ]; then
-    echo "Ein Fehler ist während der Vorbereitung aufgetreten. Einige Pakete scheinen entweder nicht zu existieren, die Aktualisierung der Pakete ist wegen fehlerhafter Quellen in apt nicht möglich, oder es läuft im Hintergrund bereits ein Installations- oder Updateprozess. Im zweiten Fall muss gewartet werden, bis es abgeschlossen ist. Die Vorbereitung und Installation wurde abgebrochen."
-    exit $exit_status
 fi
+gd_security_ask
 
-clear
-echo ""
-echo ""
-echo "STATUS - - - - - - - - - - - - - - - -"
-echo ""
-echo "Vorbereitung abgeschlossen."
-sleep 2
-clear
+gd_gauge_open "🚀 Pelican wird installiert" "Installation wird vorbereitet..."
+gd_step 2  "Paketquellen werden aktualisiert..." gd_apt update
+gd_step 5  "PHP ${PELICAN_PHP}-Paketquelle wird eingerichtet..." gd_php_repo
+gd_step 10 "PHP ${PELICAN_PHP}, nginx und Certbot werden installiert..." gd_pelican_packages
+gd_step 20 "Composer wird installiert..." gd_composer_install
+gd_step 25 "Pelican wird heruntergeladen, Abhängigkeiten werden installiert..." gd_pelican_download
+gd_step 40 "Webserver wird für das SSL-Zertifikat vorbereitet..." gd_pelican_nginx "$GD_DOMAIN" http
+gd_step 43 "SSL-Zertifikat wird bei Let's Encrypt angefordert..." gd_pelican_certbot "$GD_DOMAIN" "$GD_EMAIL"
+gd_step 46 "Webserver wird mit SSL eingerichtet..." gd_pelican_nginx "$GD_DOMAIN" ssl
+gd_step 47 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
+gd_step 50 "Pelican wird konfiguriert, Administrator wird angelegt..." gd_pelican_configure "$GD_DOMAIN" "$GD_EMAIL" "$GD_ADMIN_USER" "$GD_ADMIN_PASSWORD"
+gd_step 58 "Cronjob und Queue-Dienst werden eingerichtet..." gd_pelican_services
+gd_step 62 "Pelican wird auf Erreichbarkeit geprüft..." gd_pelican_healthcheck "$GD_DOMAIN"
+if $WITH_WINGS; then
+    gd_step 65 "Docker wird installiert..." gd_docker_install
+    gd_step 75 "Wings wird heruntergeladen..." gd_pelican_wings_binary
+    gd_step 78 "Wings-Dienst wird eingerichtet..." gd_pelican_wings_service
+    gd_step 80 "Node wird angelegt und Wings konfiguriert..." gd_pelican_node "$GD_DOMAIN"
+    gd_progress 84 "Ports ${GD_PORT_RANGE} werden freigegeben..."
+    if gd_pelican_allocations "$GD_PORT_RANGE" >> "$GD_LOG" 2>&1; then
+        ALLOC_OK=true
+    else
+        ALLOC_OK=false
+    fi
+    gd_step 86 "Wings wird gestartet..." gd_wings_start
+fi
+gd_security_steps 90 "$WITH_WINGS" "${GD_PORT_RANGE:-}"
+gd_progress 100 "Installation abgeschlossen."
+gd_gauge_close
 
-# Erstmal Moin sagen
-if whiptail --title "Willkommen!" --yesno "Dieses Script hilft dir dabei, das Pelican Panel zu installieren. Es basiert auf den empfohlenen Angaben der Entwickler, welche Dienste verwendet werden. Es kann also passieren, dass die Installation zu einem späteren Zeitpunkt nicht mehr kompatibel ist.
+gd_conf_set PELICAN_DOMAIN "$GD_DOMAIN"
+whiptail --title "🔑 Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}" 15 78
 
-Möchtest du fortfahren?" 15 70; then
-    # Benutzer hat 'Ja' ausgewählt, das Skript fortsetzen
-    echo "Benutzer möchte fortsetzen..."
-    clear
+if $WITH_WINGS; then
+    text="Pelican und Wings sind eingerichtet und verbunden. Du kannst direkt deinen ersten Server anlegen."
+    [ "${ALLOC_OK:-false}" = "true" ] || text+="\n\nDie Ports konnten nicht automatisch angelegt werden. Füge sie im Panel unter 'Nodes' → deine Node → 'Allocations' hinzu (${GD_PORT_RANGE})."
 else
-    # Benutzer hat 'Nein' ausgewählt, das Skript beenden
-    echo "Installation abgelehnt. Abbrechen..."
-    clear
-    echo "STATUS - - - - - - - - - - - - - - - -"
-    echo ""
-    echo "Die Installation wurde abgebrochen, du hast die möglichen Fehler nicht akzeptiert."
-    sleep 1
-    exit 0
+    text="Pelican ist eingerichtet: https://${GD_DOMAIN}\n\nFür Gameserver brauchst du noch Wings. Starte das Skript dazu erneut."
 fi
-
-
-# Warnung wegen Inkompatibiltät von GermanDactyl
-# Setze NEWT_COLORS nur für dieses spezifische Fenster
-OLD_NEWT_COLORS=$NEWT_COLORS
-export NEWT_COLORS='
-root=,red
-window=,red
-border=white,red
-textbox=white,red
-button=black,white
-entry=,red
-checkbox=,red
-compactbutton=,red
-'
-
-# Warnung am Anfang - GermanDactyl <-> Pelican Panel -> Pterodactyl
-whiptail --title "Inkompatibilitätswarnung" --yesno "GermanDactyl ist aktuell nicht für das Pelican Panel vorgesehen, weswegen es nicht übersetzt werden kann. Das Script installiert dir somit die originale Version. Laut erster Ansichten des Codes sollen aber von Haus aus mehrere Sprachen direkt integriert werden. Andere Features zu diesem Script funktionieren hier auch aktuell nicht! Bist du damit einverstanden?" 20 70
-
-# Überprüfe die Antwort des Benutzers
-if [ $? -eq 0 ]; then
-    # Benutzer hat zugestimmt, das Skript fortsetzen
-    echo "Fortfahren mit der Installation..."
-else
-    # Benutzer hat abgelehnt, das Skript beenden
-    echo "Die Installation wurde abgelehnt. Abbrechen..."
-    exit 0
-fi
-
-# Stelle die ursprünglichen NEWT_COLORS nach dem Aufruf wieder her
-export NEWT_COLORS=$OLD_NEWT_COLORS
-
-
-
-# Passt alles? Dann ab zu den Eingabefragen
-while true; do
-    panel_domain=$(whiptail --title "Pelican Panel Installation" --inputbox "Bitte gebe die Domain/FQDN für das Panel ein, die du nutzen möchtest. Im nächsten Schritt wird geprüft, ob die Domain mit diesem Server als DNS-Eintrag verbunden ist." 12 60 3>&1 1>&2 2>&3)
-
-    # Prüfen, ob der Benutzer die Eingabe abgebrochen hat
-    if [ $? -ne 0 ]; then
-        echo "Die Installation wurde abgebrochen."
-        exit 1
-    fi
-
-    # Überprüfen, ob die eingegebene Domain einem gültigen Muster entspricht
-    if [[ $panel_domain =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        break
-    else
-        whiptail --title "Domain ist ungültig" --msgbox "Bitte gib eine gültige Domain ein und prüfe auf Schreibfehler." 10 50
-    fi
-done
-
-# IP-Adresse des Servers ermitteln
-server_ip=$(hostname -I | awk '{print $1}')
-
-# IP-Adresse aus dem DNS-A-Eintrag der Domain extrahieren
-dns_ip=$(dig +short $panel_domain)
-
-# Überprüfung, ob die Domain korrekt verknüpft ist
-if [ "$dns_ip" == "$server_ip" ]; then
-    whiptail --title "Domain-Überprüfung" --msgbox "✅ Die Domain $panel_domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft. Die Installation wird fortgesetzt." 8 78
-else
-    whiptail --title "Domain-Überprüfung" --msgbox "❌ Die Domain $panel_domain ist mit einer anderen IP-Adresse verbunden ($dns_ip).\n\nPrüfe, ob die DNS-Einträge richtig sind, dass sich kein Schreibfehler eingeschlichen hat und ob du in Cloudflare (falls du es nutzt) den Proxy deaktiviert hast. Die Installation wird abgebrochen." 15 80
-    exit 1
-fi
-
-
-# Funktion zur Überprüfung einer E-Mail-Adresse
-validate_email() {
-    if [[ $1 =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,10}$ ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Schleife, die so lange läuft, bis eine gültige E-Mail-Adresse eingegeben wird. Soll ja schließlich später beim Certbot nicht schief gehen.
-while true; do
-    admin_email=$(whiptail --title "Pelican Panel Installation" --inputbox "Bitte gebe die E-Mail-Adresse für das SSL-Zertifikat und den Admin-Benutzer ein. Durch Eingabe bestätigst du die Nutzungsbedingungen von Let's Encrypt.\n\nLink zu den Nutzungsbedingungen: https://community.letsencrypt.org/tos" 12 60 3>&1 1>&2 2>&3)
-
-
-    # Prüfen, ob whiptail erfolgreich war
-    if [ $? -ne 0 ]; then
-        echo "Die Installation wurde vom Nutzer abgebrochen."
-        exit 1
-    fi
-
-    # Prüfen, ob die E-Mail-Adresse gültig ist. Sowas wie provider@sonstwas.de
-    if validate_email "$admin_email"; then
-        break
-    else
-        whiptail --title "E-Mail Adresse ungültig" --msgbox  "Prüfe bitte die E-Mail und versuche es erneut." 10 50
-    fi
-done
-
-# Funktion zum Generieren eines 32 Zeichen langen zufälligen Passworts ohne Sonderzeichen - Benutzerpasswort
-generate_userpassword() {
-    < /dev/urandom tr -dc A-Za-z0-9 | head -c32
-}
-
-user_password=$(generate_userpassword)
-
-
-
-# Funktion zum Generieren eines 64 Zeichen langen zufälligen Passworts ohne Sonderzeichen für Datenbank - Braucht keiner wisssen, weil die Datenbank sowieso nicht angerührt werden muss.
-generate_dbpassword() {
-    tr -dc 'A-Za-z0-9' </dev/urandom | head -c64
-}
-
-database_password=$(generate_dbpassword)
-
-TITLE="STARTVORGANG"
-MESSAGE="Bitte warte, bis die Installation abgeschlossen ist. Das kann je nach Leistung deines Servers einige Minuten dauern..."
-TOTAL_TIME=10
-STEP_DURATION=$((TOTAL_TIME * 1000 / 100)) # in Millisekunden
-{
-    for ((i=100; i>=0; i--)); do
-        # Ausgabe des Fortschritts
-        echo $i
-        sleep 0.05
-    done
-} | whiptail --gauge "$MESSAGE" 8 78 0
-
-
-# Installationsprozess ANFANG
-
-# Funktion zur Aktualisierung des Fortschrittsbalkens mit Whiptail
-update_progress() {
-    percentage=$1
-    message=$2
-    echo -e "XXX\n$percentage\n$message\nXXX"
-}
-
-# Fortschrittsanzeige in einer Subshell starten und Pipe zur Whiptail nutzen
-{
-update_progress 0 "Vorbereitung der Installation..."
-sleep 1
-
-# Composer installieren
-update_progress 10 "Composer wird installiert..."
-curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer > /dev/null 2>&1
-
-# Verzeichnisse erstellen und bereitstellen
-sudo mkdir -p /var/www/pelican
-update_progress 25 "Verzeichnisse werden erstellt..."
-cd /var/www/pelican
-curl -Lo panel.tar.gz https://github.com/pelican-dev/panel/releases/latest/download/panel.tar.gz > /dev/null 2>&1
-tar -xzvf panel.tar.gz > /dev/null 2>&1
-rm panel.tar.gz
-update_progress 40 "Verzeichnisse erstellt und bereitgestellt."
-
-# Composer einrichten
-update_progress 50 "Composer wird eingerichtet..."
-yes | COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader > /dev/null 2>&1
-
-# Umgebungskonfiguration vorbereiten und Datenbank initialisieren
-update_progress 62 "Key wird generiert (kann dauern)..."
-sudo php artisan key:generate --force > /dev/null 2>&1
-update_progress 70 "Datenbank für Panel wird aufgesetzt..."
-sudo php artisan p:environment:setup <<EOF > /dev/null 2>&1
-$panel_domain
-file
-file
-sync
-yes
-EOF
-
-sleep 1
-
-# Datenbank erstellen
-update_progress 79 "Datenbank für Panel wird vorbereitet..."
-if /usr/bin/mariadb -u root -p"password" -e "CREATE USER 'pelican'@'127.0.0.1' IDENTIFIED BY '$database_password'; GRANT ALL PRIVILEGES ON *.* TO 'pelican'@'127.0.0.1' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>&1 | tee /dev/tty | grep -q "ERROR"; then
-    echo "Fehler beim Erstellen von Datenbankbenutzer und -datenbank." > /dev/null 2>&1
-else
-    if /usr/bin/mariadb -u root -p"password" -e "CREATE DATABASE IF NOT EXISTS panel; GRANT ALL PRIVILEGES ON panel.* TO 'pelican'@'127.0.0.1' IDENTIFIED BY '$database_password'; FLUSH PRIVILEGES;" 2>&1 | tee /dev/tty | grep -q "ERROR"; then
-        echo "Fehler beim Erstellen von Datenbankbenutzer und -datenbank." > /dev/null 2>&1
-    else
-        update_progress 85 "Datenbankbenutzer und -datenbank erfolgreich erstellt."
-        sleep 1
-    fi
-fi
-
-sleep 1
-
-# Umgebungskonfiguration für die Datenbank vorbereiten
-update_progress 90 "Datenbank für Panel wird eingerichtet..."
-sudo php artisan p:environment:database <<EOF > /dev/null 2>&1
-mysql
-127.0.0.1
-3306
-panel
-pelican
-$database_password
-EOF
-
-# Migration durchführen
-update_progress 92 "Migration wird durchgeführt..."
-sudo php artisan migrate --seed --force > /dev/null 2>&1
-sleep 1
-
-# Webserver konfigurieren
-update_progress 94 "Webserver wird konfiguriert."
-sleep 1
-rm /etc/nginx/sites-enabled/default > /dev/null 2>&1
-
-# Herunterladen der Konfigurationsdatei und Ersetzen der Platzhalter
-curl -s https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/main/pelican.conf | sed "s/<domain>/$panel_domain/g" > /etc/nginx/sites-available/pelican.conf
-
-sudo ln -s /etc/nginx/sites-available/pelican.conf /etc/nginx/sites-enabled/pelican.conf
-chown -R www-data:www-data /var/www/pelican/*
-fuser -k 80/tcp > /dev/null 2>&1
-fuser -k 443/tcp > /dev/null 2>&1
-sudo systemctl restart nginx > /dev/null 2>&1
-
-# Admin-Account erstellen
-update_progress 99 "Admin Account wird angelegt..."
-sleep 1
-sudo php artisan p:user:make <<EOF > /dev/null 2>&1
-yes
-$admin_email
-admin
-$user_password
-EOF
-
-
-} | whiptail --title "Pelican Panel wird installiert" --gauge "Vorbereitung der Installation..." 7 50 0
-
-# Schließe das Fortschrittsbalken-Fenster
-whiptail --clear
-cd /var/www/pelican
-mkdir -p /var/www/pelican/storage/framework/cache
-mkdir -p /var/www/pelican/storage/framework/views
-mkdir -p /var/www/pelican/storage/framework/sessions
-mkdir -p /var/www/pelican/bootstrap/cache
-touch /var/www/pelican/storage/framework/cache/.gitignore
-touch /var/www/pelican/storage/framework/views/.gitignore
-touch /var/www/pelican/storage/framework/sessions/.gitignore
-touch /var/www/pelican/bootstrap/cache/.gitignore
-chmod -R 755 storage/* bootstrap/cache/
-sudo chown -R www-data:www-data /var/www/pelican
+gd_msg "✅ Installation erfolgreich" "$text" 14 78
 clear
-echo ""
-echo ""
-echo "STATUS - - - - - - - - - - - - - - -"
-echo ""
-echo "SSL Zertifikat wird ausgestellt..."
-certbot certonly --standalone -d $panel_domain --email $admin_email --agree-tos --non-interactive
-systemctl restart nginx
-clear
-
-# Hintergrundaktivitäten
-crontab -l > /dev/null 2>&1 | { cat; echo "* * * * * php /var/www/pelican/artisan schedule:run >> /dev/null 2>&1"; } | crontab - > /dev/null 2>&1
-clear
-
-# Installationsprozess ENDE
-
-# ----------------
-# Zum Schluss:
-# Funktion, um die Zugangsdaten anzuzeigen
-show_access_data() {
-    whiptail --title "Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten ab und ändere sie zeitnah, damit die Sicherheit deines Accounts gewährleistet ist.\n\nDeine Domain für das Panel: $panel_domain\n\n Benutzername: admin\n E-Mail-Adresse: $admin_email\n Passwort (32 Zeichen): $user_password \n\nDieses Fenster wird sich nicht nochmals öffnen, speichere dir jetzt die Zugangsdaten ab." 22 80
-}
-
-# Info: Installation abgeschlossen
-# Diese Pfade scheinen zu fehlen, die werden hier manuell nachgefertigt
-cd /var/www/pelican
-mkdir -p /var/www/pelican/storage/framework/cache
-mkdir -p /var/www/pelican/storage/framework/views
-mkdir -p /var/www/pelican/storage/framework/sessions
-mkdir -p /var/www/pelican/bootstrap/cache
-touch /var/www/pelican/storage/framework/cache/.gitignore
-touch /var/www/pelican/storage/framework/views/.gitignore
-touch /var/www/pelican/storage/framework/sessions/.gitignore
-touch /var/www/pelican/bootstrap/cache/.gitignore
-chmod -R 755 storage/* bootstrap/cache/
-sudo chown -R www-data:www-data /var/www/pelican
-echo $panel_domain > /var/.panel_domain
-clear
-whiptail --title "Installation erfolgreich" --msgbox "Das Pelican Panel sollte nun verfügbar sein. Du kannst dich nun einloggen, die generierten Zugangsdaten werden im nächsten Fenster angezeigt, wenn du dieses schließt.\n\nHinweis: Pelican Panel ist noch nicht vollständig eingerichtet. Du musst noch Wings einrichten und eine Node anlegen, damit du Server aufsetzen kannst. Im Panel findest du das Erstellen einer Node hier: https://$panel_domain/admin/nodes/new. Damit du dort hinkommst, musst du aber vorher angemeldet sein." 22 80
-
-# Hauptlogik für die Zugangsdaten und die Entscheidung zur Installation von Wings
-while true; do
-    show_access_data
-
-    if whiptail --title "Noch ne Frage" --yesno "Hast du die Zugangsdaten gespeichert?" 10 60; then
-        if whiptail --title "Zugang geht?" --yesno "Funktionieren die Zugangsdaten?" 10 60; then
-            if whiptail --title "Bereit für den nächsten Schritt" --yesno "Alles ist bereit! Als nächstes musst du Wings installieren, um Server aufsetzen zu können. Möchtest du Wings jetzt installieren? Beachte, bei Pelican ist das etwas anders!" 10 60; then
-                clear
-                install_wings
-                exit 0
-            else
-                whiptail --title "Installation abgebrochen" --msgbox "Wings-Installation wurde abgebrochen. Du kannst das Skript später erneut ausführen, um Wings zu installieren." 10 60
-                exit 0
-            fi
-        else
-            recreate_user
-        fi
-    else
-        # Verlasse die Schleife, wenn "Nein" gewählt wird
-        break
-    fi
-done
-
-clear
-echo "Fertig"
+echo "Pelican: https://${GD_DOMAIN}"
+echo "Log:     $GD_LOG"

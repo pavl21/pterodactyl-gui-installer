@@ -1,107 +1,85 @@
 #!/bin/bash
+# Pfad: wings-pelican.sh
+# Wings für Pelican installieren. Liegt Pelican auf demselben Server, wird die Node automatisch angelegt,
+# sonst wird die im Panel erzeugte Konfiguration abgefragt.
 
-# Systemvoraussetzungen überprüfen
-echo "Überprüfe Systemvoraussetzungen..."
-kernel=$(uname -r)
-if [[ "$kernel" != *"-grs-ipv6-64" && "$kernel" != *"-mod-std-ipv6-64" ]]; then
-    echo "Kernel wird unterstützt."
+# Gemeinsame Bibliotheken laden (vom Hauptskript übergeben, lokal oder aus dem Repository)
+_gd_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -z "${GD_LIB_DIR:-}" ] && [ -f "$_gd_dir/lib/common.sh" ]; then GD_LIB_DIR="$_gd_dir/lib"; GD_LOCAL_DIR="$_gd_dir"; fi
+if [ -n "${GD_LIB_DIR:-}" ] && [ -f "$GD_LIB_DIR/common.sh" ]; then
+    . "$GD_LIB_DIR/common.sh"
 else
-    echo "WARNUNG: Möglicherweise nicht unterstützter Kernel: $kernel"
+    _gd_c="$(mktemp)"
+    curl -fsSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH:-main}/lib/common.sh" -o "$_gd_c" \
+        || { echo "Die Bibliothek lib/common.sh konnte nicht geladen werden."; exit 1; }
+    . "$_gd_c"; rm -f "$_gd_c"
+fi
+gd_require_root
+gd_source_lib security
+gd_source_lib panel
+gd_source_lib wings
+gd_source_lib pelican
+
+if [ -f "$PELICAN_WINGS_CONFIG" ] && [ -x "$PELICAN_WINGS_BIN" ]; then
+    if gd_yesno "🐦 Wings ist installiert" "Wings ist bereits eingerichtet (Status: $(systemctl is-active wings)).\n\nSoll Wings auf die neueste Version aktualisiert und neu gestartet werden?" 11 70; then
+        gd_gauge_open "⬆️ Wings wird aktualisiert" "Bitte warten..."
+        gd_step 30 "Wings wird heruntergeladen..." gd_pelican_wings_binary
+        gd_step 80 "Wings wird neu gestartet..." gd_wings_start
+        gd_progress 100 "Fertig."
+        gd_gauge_close
+    fi
+    exit 0
 fi
 
-# Überprüfen der Virtualisierungstechnologie
-virt_type=$(systemd-detect-virt)
-if [[ "$virt_type" != "openvz" && "$virt_type" != "lxc" ]]; then
-    echo "Virtualisierungstechnologie wird unterstützt."
-else
-    echo "WARNUNG: Möglicherweise nicht unterstützte Virtualisierungstechnologie: $virt_type"
+if [ -f "$PELICAN_DIR/artisan" ]; then
+    # Pelican liegt auf diesem Server -> automatisch einrichten
+    domain="$(gd_conf_get PELICAN_DOMAIN)"
+    while true; do
+        GD_PORT_RANGE="$(gd_input "🎮 Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden? (z. B. 25565-25600)" "$GD_DEFAULT_PORT_RANGE" 10 70)" || exit 0
+        gd_valid_port_range "$GD_PORT_RANGE" && break
+    done
+    gd_gauge_open "🐦 Wings wird eingerichtet" "Bitte warten..."
+    gd_step 5  "Docker wird installiert..." gd_docker_install
+    gd_step 40 "Wings wird heruntergeladen..." gd_pelican_wings_binary
+    gd_step 50 "Wings-Dienst wird eingerichtet..." gd_pelican_wings_service
+    gd_step 60 "Node wird angelegt und Wings konfiguriert..." gd_pelican_node "$domain"
+    gd_progress 75 "Ports werden freigegeben..."
+    gd_pelican_allocations "$GD_PORT_RANGE" >> "$GD_LOG" 2>&1 || ALLOC_FAIL=true
+    gd_step 85 "Wings wird gestartet..." gd_wings_start
+    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+        gd_step 95 "Firewall wird angepasst..." gd_firewall_setup true "$GD_PORT_RANGE"
+    fi
+    gd_progress 100 "Fertig."
+    gd_gauge_close
+    gd_msg "🟢 Wings ist einsatzbereit" "Wings ist mit Pelican verbunden.$( [ "${ALLOC_FAIL:-false}" = true ] && echo "\n\nDie Ports konnten nicht automatisch angelegt werden. Füge sie im Panel unter 'Nodes' → 'Allocations' hinzu.")" 11 74
+    exit 0
 fi
 
-# Systemhersteller überprüfen
-manufacturer=$(sudo dmidecode -s system-manufacturer)
-echo "Systemhersteller: $manufacturer"
+# Pelican liegt auf einem anderen Server -> Konfiguration aus dem Panel einfügen
+GD_WINGS_FQDN="$(gd_ask_domain "🐦 Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de. Der DNS-Eintrag muss auf diesen Server zeigen.")" || exit 0
+GD_EMAIL="$(gd_ask_email "📧 E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
+gd_gauge_open "🐦 Wings wird installiert" "Bitte warten..."
+gd_step 5  "Paketquellen werden aktualisiert..." gd_apt update
+gd_step 15 "Docker wird installiert..." gd_docker_install
+gd_step 60 "Wings wird heruntergeladen..." gd_pelican_wings_binary
+gd_step 75 "Wings-Dienst wird eingerichtet..." gd_pelican_wings_service
+gd_step 85 "SSL-Zertifikat für Wings wird angefordert..." gd_wings_certificate "$GD_WINGS_FQDN" "$GD_EMAIL"
+gd_step 95 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
+gd_progress 100 "Fertig."
+gd_gauge_close
 
-echo "Überprüfung abgeschlossen. Die Installation kann fortgesetzt werden. 🚀"
-sleep 5
-clear
-
-# Funktion zur Aktualisierung des Fortschrittsbalkens mit Whiptail
-update_progress() {
-    percentage=$1
-    message=$2
-    echo -e "XXX\n$percentage\n$message\nXXX"
-}
-
-# Installationsprozess mit Fortschrittsbalken
-{
-    update_progress 2 "Vorbereitung der Installation..."
-    sleep 1
-    panel_domain=$(cat /var/.panel_domain) > /dev/null 2>&1
-    update_progress 15 "Docker wird installiert..."
-    curl -sSL https://get.docker.com/ | CHANNEL=stable sh > /dev/null 2>&1
-    update_progress 30 "Docker wird aktiviert..."
-    sudo systemctl enable --now docker > /dev/null 2>&1
-    update_progress 65 "Wings-Verzeichnis wird erstellt..."
-    sudo mkdir -p /etc/pelican
-    sleep 1
-    update_progress 70 "Wings-Code wird heruntergeladen..."
-    curl -L -o /usr/local/bin/wings "https://github.com/pelican-dev/wings/releases/latest/download/wings_linux_$([[ "$(uname -m)" == "x86_64" ]] && echo "amd64" || echo "arm64")" > /dev/null 2>&1
-    sleep 1
-    update_progress 85 "Berechtigungen werden zugewiesen..."
-    sudo chmod u+x /usr/local/bin/wings > /dev/null 2>&1
-    systemctl enable --now wings > /dev/null 2>&1
-    sleep 1
-} | whiptail --title "Wings wird vorbereitet" --gauge "Bitte warten..." 7 50 0
-
-# Systemd-Dienstdatei erstellen
-cat <<EOF > /etc/systemd/system/wings.service
-[Unit]
-Description=Wings Daemon
-After=docker.service
-Requires=docker.service
-PartOf=docker.service
-
-[Service]
-User=root
-WorkingDirectory=/etc/pelican
-LimitNOFILE=4096
-PIDFile=/var/run/wings/daemon.pid
-ExecStart=/usr/local/bin/wings
-Restart=on-failure
-StartLimitInterval=180
-StartLimitBurst=30
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Konfigurationsdatei einrichten
-whiptail --title "Config integrieren" --msgbox "Wings wurde vorbereitet, nun wird eine Config benötigt. Diese Config wird erstellt, indem du eine Node im Panel erstellst. In dem Falle wird dieser Server als Node aufgesetzt.\n\nFolgende Angaben kannst du integrieren:\nDomain Name: Domain vom Panel\nPort: 8080\n\nNach dem Erstellen der Node wird die Config erstellt. Im folgenden Fenster kannst du sie einfügen. Bestätige, wenn du fortfahren kannst." 17 90
+gd_msg "Konfiguration einfügen" "Wings ist vorbereitet, jetzt fehlt noch die Konfiguration.\n\n1. Lege im Pelican-Panel unter 'Nodes' eine neue Node an (Domain: ${GD_WINGS_FQDN}, Port 8080, SSL aktiviert).\n2. Öffne danach den Reiter 'Configuration File' und kopiere den Inhalt.\n3. Im nächsten Schritt öffnet sich der Editor nano: Füge den Inhalt ein, speichere mit Strg + O und schließe mit Strg + X." 16 78
 
 while true; do
-    clear
-    echo "HANDLUNG NOTWENDIG - - - - - - - - - - -"
-    echo ""
-    echo ""
-    echo "Füge bitte die Konfiguration im folgenden Editor ein, der Editor wird geöffnet..."
-    # Pfad zur Datei definieren
-    file_path="/etc/pelican/config.yml"
-
-    # Startet den nano Editor zur Bearbeitung der Datei
-    nano "$file_path"
-
-    # Überprüfen, ob die Datei Inhalt hat
-    if [ -s "$file_path" ]; then
-        clear
-        systemctl daemon reload
-        systemctl restart nginx
-        systemctl restart wings
-        whiptail --title "Wings ist betriebsbereit" --msgbox "Wings ist nun online und bereit für die Nutzung. Beachte bitte, dass das Pelican Panel und Wings instabil sein kann. " 10 60
-        clear
+    nano "$PELICAN_WINGS_CONFIG" < /dev/tty > /dev/tty
+    if [ -s "$PELICAN_WINGS_CONFIG" ] && grep -q '^token:' "$PELICAN_WINGS_CONFIG"; then
+        chmod 600 "$PELICAN_WINGS_CONFIG"
+        if gd_wings_start >> "$GD_LOG" 2>&1; then
+            gd_msg "🟢 Wings läuft" "Wings ist gestartet und sollte im Panel als verbunden angezeigt werden." 9 70
+        else
+            gd_msg "🔴 Wings startet nicht" "Wings konnte nicht gestartet werden. Prüfe die Konfiguration und das SSL-Zertifikat.\n\nFehlermeldungen: journalctl -u wings -n 50" 11 74
+        fi
         exit 0
-        clear
-    else
-        whiptail --title "Datenstruktur fehlt" --msgbox "Die Konfigurationsdatei darf nicht leer sein. Bitte fülle sie aus." 10 50
     fi
+    gd_msg "Konfiguration fehlt" "Die Datei ist leer oder unvollständig (es fehlt die Zeile 'token:'). Bitte füge die komplette Konfiguration ein." 10 70
 done
