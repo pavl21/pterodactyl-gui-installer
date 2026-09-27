@@ -1,115 +1,99 @@
 #!/bin/bash
+# Pfad: database-host-config.sh
+# Database-Host für Pterodactyl einrichten, damit Gameserver eigene MySQL-Datenbanken erhalten können.
 
-# Sicherheitshinweis anzeigen
-if ! whiptail --title "⚠️ Sicherheitshinweis" --yesno "Dieses Script beinhaltet möglicherweise ein Sicherheitsrisiko, wofür du alleine verantwortlich bist wenn du keine weiteren Sicherheitsvorkehrungen triffst.\n\nDurch diesen Script wird ein Datenbank-Host angelegt, die für alle öffentlich erreichbar ist. Der direkte Zugriff verweigert nur das nötige Passwort.\n\nUm es unautorisierten Nutzern schwer zu machen, wird ein 256-stelliges Passwort verwendet. Das Passwort wirst du nach Abschluss der Konfiguration nicht mehr brauchen.\n\nDiese wird rein zufällig generiert.\n\nMöchtest du fortfahren?" 22 78; then
-    echo "Benutzer hat abgebrochen."
-    curl -sSL https://setup.germandactyl.de/ | sudo bash -s --
+# Gemeinsame Bibliotheken laden (vom Hauptskript übergeben, lokal oder aus dem Repository)
+_gd_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -z "${GD_LIB_DIR:-}" ] && [ -f "$_gd_dir/lib/common.sh" ]; then GD_LIB_DIR="$_gd_dir/lib"; GD_LOCAL_DIR="$_gd_dir"; fi
+if [ -n "${GD_LIB_DIR:-}" ] && [ -f "$GD_LIB_DIR/common.sh" ]; then
+    . "$GD_LIB_DIR/common.sh"
+else
+    _gd_c="$(mktemp)"
+    curl -fsSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH:-main}/lib/common.sh" -o "$_gd_c" \
+        || { echo "Die Bibliothek lib/common.sh konnte nicht geladen werden."; exit 1; }
+    . "$_gd_c"; rm -f "$_gd_c"
+fi
+gd_require_root
+
+MARIADB_CONF="/etc/mysql/mariadb.conf.d/99-germandactyl.cnf"
+
+if ! gd_yesno "⚠️ Sicherheitshinweis" "Mit diesem Skript wird ein Database-Host eingerichtet. Dafür wird MariaDB für Verbindungen von außen geöffnet, damit deine Gameserver ihre Datenbanken erreichen können.\n\nDen direkten Zugriff schützt dann nur noch das Passwort. Deshalb wird ein zufälliges Passwort mit 64 Zeichen erzeugt, und die Firewall lässt Verbindungen standardmäßig nur von diesem Server und seinen Gameservern zu.\n\nMöchtest du fortfahren?" 17 78; then
+    exit 0
+fi
+
+command -v mariadb >/dev/null 2>&1 || command -v mysql >/dev/null 2>&1 || {
+    gd_msg "MariaDB fehlt" "Auf diesem Server ist kein MariaDB/MySQL installiert." 8 60
+    exit 1
+}
+
+# Adresse, unter der Panel und Gameserver die Datenbank erreichen. Hinter NAT (nur private IP am Server)
+# wird die lokale IP genutzt, da Verbindungen über die öffentliche IP dort meist nicht zurückkommen.
+IP_ADDRESS="$(gd_local_ip)"
+if [ -z "$IP_ADDRESS" ] || ! gd_is_private_ip "$IP_ADDRESS"; then
+    IP_ADDRESS="$(gd_public_ip)"
+fi
+if [ -z "$IP_ADDRESS" ]; then
+    gd_msg "Fehler" "Die IP-Adresse dieses Servers konnte nicht ermittelt werden." 8 70
     exit 1
 fi
 
-clear
-echo ""
-echo ""
-echo "### Passwortgenerierung gestartet ###"
-sleep 0.5
-### Prüfe, ob notwendige Pakete vorhanden sind* ###
-apt install jq curl lolcat -y
+USERNAME="gd_dbhost_$(tr -dc 'a-z0-9' < /dev/urandom | head -c 6)"
+PASSWORD="$(gd_gen_password 64)"
 
-# Funktion zur Passwortgenerierung
-generate_password() {
-    tr -dc '[:alnum:]' </dev/urandom | head -c 256
-}
-
-# Fortschrittsanzeige-Funktion mit Passwortanzeige - Is unnötig, aber funny. :D
-show_progress() {
-    for ((i = 0; i <= 100; i++)); do
-        sleep 0.125  # Kurze Wartezeit zwischen den Iterationen
-        password=$(generate_password)
-        echo $i
-        echo "XXX"
-        echo "Generiere Passwort: $password"
-    done
-}
-
-{
-    show_progress
-} | whiptail --title "🔑 Passwortgenerator läuft gerade" --gauge "Generiere Passwort..." 8 78 0
-
-PASSWORD=$(generate_password)
-echo "Passwort wurde generiert: $PASSWORD"
-sleep 0.5
-
-echo "### Benutzernamengenerierung gestartet ###"
-USERNAME=$(curl -s 'https://randomuser.me/api/?nat=de' | jq -r '.results[0].name.first + .results[0].name.last' | tr -d 'äöü')
-echo "Benutzername generiert: $USERNAME"
-sleep 0.5
-
-echo "### Ermittlung der öffentlichen IP-Adresse ###"
-IP_ADDRESS=$(curl -s http://ipinfo.io/ip)
-echo "Öffentliche IP-Adresse: $IP_ADDRESS"
-sleep 0.5
-
-echo "### MySQL-Benutzer und Berechtigungen werden erstellt ###"
-sudo mysql -e "CREATE USER '${USERNAME}'@'${IP_ADDRESS}' IDENTIFIED BY '${PASSWORD}';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '${USERNAME}'@'${IP_ADDRESS}' WITH GRANT OPTION;"
-sudo mysql -e "FLUSH PRIVILEGES;"
-echo "MySQL-Benutzer und Berechtigungen erstellt."
-sleep 0.5
-
-echo "### MySQL-Konfiguration wird angepasst und MySQL neu gestartet ###"
-echo -e "[mysqld]\nbind-address=0.0.0.0" | sudo tee -a /etc/mysql/my.cnf
-sudo systemctl restart mysql
-echo "MySQL-Konfiguration angepasst und MySQL neu gestartet."
-sleep 0.5
-
-# Zugangsdaten anzeigen
-clear
-whiptail --title "🎉 Database Host angelegt" --msgbox "Der Database Host wurde erfolgreich erstellt und steht nun zur Einrichtung zur Verfügung. Navigiere nun in deinem Admin Panel auf das Menü namens 'Alle Datenbanken'. Klicke auf Erstellen, wenn du soweit bist, bestätige es DANN ERST mit ENTER. Dir werden dann einmalig die angelegten Zugangsdaten angezeigt, die hinzugefügt werden können." 20 78
-
-# Zugangsdaten des Database Host
-whiptail --title "🔐 Zugangsdaten des Database Host" --msgbox "Hier sind die Zugangsdaten des MySQL Host, sobald es erfolgreich erstellt wurde brauchst du die Daten nicht mehr.\n\nName: (Darfst du selbst benennen)\nHost: ${IP_ADDRESS}\nPort: 3306\nBenutzername: ${USERNAME}\nPasswort: (wird nach Bestätigung extra gezeigt)\n\nUnter Linked Node musst du nichts verändern.\nDrücke Enter, um das Passwort zu sehen." 20 78
-
-# Passwort in der Konsole ausgeben
-clear
-echo ""
-echo ""
-echo "PASSWORT FREIGEGEBEN - - - - - - - - - - - - - - -"
-echo -e "\nPasswort zum Kopieren:"
-echo -e "$PASSWORD\n" | /usr/games/lolcat
-echo "Sobald du es kopiert und eingefügt hast, drücke bitte ERST DANN die Taste 'ENTER'."
-echo ""
-echo "-> Warte auf Eingabe der Taste Enter..."
-read -r  # Warten auf Eingabe des Benutzers
-
-# Marker für das Ende dieses Skriptteils
-echo -e "\n### Passwortgenerierung und Anzeige abgeschlossen ###\n"
-
-
-# Erfolgsmeldung und Datenlöschung bei Fehlschlag, wenn man sagt will nicht
-if ! whiptail --title "✅ Erreichbarkeit prüfen" --yesno "Hat die Einrichtung des Database Hosts geklappt?" 20 78; then
-    whiptail --title "❗ Fehler" --msgbox "Bitte überprüfe die Eingaben auf mögliche Schreibfehler und versuche es erneut. Die Daten werden dann aus Sicherheitsgründen gelöscht." 20 78
-
-    clear
-    echo ""
-    echo ""
-    echo "### Einrichtung fehlgeschlagen ###"
-    echo "Benutzer $USERNAME und zugehörige Daten werden gelöscht..."
-    sleep 0.5
-
-    # Befehl zum Löschen des Datenbankbenutzers
-    sudo mysql -e "DROP USER '${USERNAME}'@'${IP_ADDRESS}';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
-
-    echo "Datenbankbenutzer $USERNAME wurde gelöscht."
-    whiptail --title "Vorgang zurückgesetzt" --msgbox "Da der Vorgang laut Eingabe nicht erfolgreich war, wurden sämtliche Änderungen rückgänig gemacht." 20 78
-else
-    whiptail --title "🎊 Erfolg" --msgbox "Super! Nun ist der Database Host eingerichtet und du kannst deine eigenen Datenbanken erstellen." 20 78
+OPEN_WORLD=false
+if whiptail --title "🌍 Zugriff aus dem Internet?" --defaultno --yesno "Sollen sich auch externe Programme (z. B. dein PC mit HeidiSQL) direkt mit den Gameserver-Datenbanken verbinden können?\n\n'Nein' (empfohlen): Nur dieser Server und seine Gameserver haben Zugriff.\n'Ja': Port 3306 wird für das gesamte Internet geöffnet." 14 78; then
+    OPEN_WORLD=true
 fi
 
 clear
-echo ""
-echo ""
-echo "================== Aufgabe beendet =================="
-sleep 1
-sudo bash -c "$(curl -sSL https://setup.germandactyl.de/)"
+echo "### Database-Host wird eingerichtet ###"
 
+# Benutzer für das Panel (verbindet sich über die öffentliche IP)
+if ! gd_mysql <<SQL >> "$GD_LOG" 2>&1
+CREATE USER '${USERNAME}'@'${IP_ADDRESS}' IDENTIFIED BY '${PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${USERNAME}'@'${IP_ADDRESS}' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+SQL
+then
+    gd_msg "Fehler" "Der Datenbank-Benutzer konnte nicht angelegt werden. Details: $GD_LOG" 9 70
+    exit 1
+fi
+echo "Datenbank-Benutzer ${USERNAME} wurde angelegt."
+
+# MariaDB auf allen Schnittstellen lauschen lassen (eigene Datei, wird nicht bei jedem Lauf erneut angehängt)
+mkdir -p "$(dirname "$MARIADB_CONF")"
+printf '%s\n' '# Angelegt von GermanDactyl Setup (Database-Host)' '[mysqld]' 'bind-address = 0.0.0.0' > "$MARIADB_CONF"
+systemctl restart mariadb 2>/dev/null || systemctl restart mysql
+echo "MariaDB wurde neu gestartet."
+
+# Firewall: nur wenn UFW aktiv ist
+if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+    if $OPEN_WORLD; then
+        ufw allow 3306/tcp comment 'MariaDB (Database-Host)' >> "$GD_LOG" 2>&1
+    else
+        ufw allow from "$IP_ADDRESS" to any port 3306 proto tcp comment 'MariaDB (Panel)' >> "$GD_LOG" 2>&1
+        ufw allow from 172.16.0.0/12 to any port 3306 proto tcp comment 'MariaDB (Gameserver-Container)' >> "$GD_LOG" 2>&1
+    fi
+    echo "Firewall-Regeln für Port 3306 wurden gesetzt."
+fi
+
+gd_msg "🎉 Database-Host angelegt" "Der Database-Host ist eingerichtet. Öffne jetzt in deinem Panel: Admin → Databases → Create New.\n\nIm nächsten Fenster siehst du die Daten, die du dort eintragen musst." 12 78
+gd_msg "🔐 Zugangsdaten des Database-Hosts" "Name:          frei wählbar, z. B. Hauptdatenbank\nHost:          ${IP_ADDRESS}\nPort:          3306\nBenutzername:  ${USERNAME}\nPasswort:      wird im nächsten Schritt angezeigt\nLinked Node:   deine Node auswählen\n\nDrücke Enter, um das Passwort anzuzeigen." 16 78
+
+clear
+echo ""
+echo "PASSWORT - - - - - - - - - - - - - - -"
+echo ""
+echo "Passwort zum Kopieren:"
+echo ""
+echo "$PASSWORD"
+echo ""
+echo "Trage es im Panel ein und drücke ERST DANN die Taste Enter."
+read -r _ < /dev/tty
+
+if gd_yesno "✅ Einrichtung prüfen" "Konnte der Database-Host im Panel erfolgreich angelegt werden?" 9 70; then
+    gd_msg "🎊 Erfolg" "Super! Der Database-Host ist eingerichtet. Deine Gameserver können jetzt im Reiter 'Databases' eigene Datenbanken anlegen." 10 70
+else
+    gd_mysql -e "DROP USER IF EXISTS '${USERNAME}'@'${IP_ADDRESS}'; FLUSH PRIVILEGES;" >> "$GD_LOG" 2>&1
+    gd_msg "Vorgang zurückgesetzt" "Der Datenbank-Benutzer wurde aus Sicherheitsgründen wieder gelöscht. Prüfe deine Eingaben auf Schreibfehler und versuche es erneut." 10 74
+fi
