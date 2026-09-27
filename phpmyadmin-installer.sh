@@ -78,11 +78,19 @@ location ^~ /phpmyadmin {
     }
 }
 EOF
+    cp "$PANEL_NGINX" "$GD_TMP/pterodactyl.conf.bak"
     if ! grep -q "germandactyl-phpmyadmin.conf" "$PANEL_NGINX"; then
         # Nach "index index.php;" im HTTPS-Block einfügen
         sed -i '0,/^\s*index index.php;/s##    index index.php;\n    include snippets/germandactyl-phpmyadmin.conf;#' "$PANEL_NGINX"
+        grep -q "germandactyl-phpmyadmin.conf" "$PANEL_NGINX" || { echo "Einfügestelle in $PANEL_NGINX nicht gefunden."; return 1; }
     fi
-    nginx -t && systemctl reload nginx
+    if ! nginx -t; then
+        # Fehlerhafte Konfiguration sofort zurücknehmen, sonst startet nginx (und damit das Panel) nicht mehr
+        cp "$GD_TMP/pterodactyl.conf.bak" "$PANEL_NGINX"
+        rm -f "$PMA_SNIPPET"
+        return 1
+    fi
+    systemctl reload nginx
     gd_conf_set PHPMYADMIN_VERSION "$version"
 }
 

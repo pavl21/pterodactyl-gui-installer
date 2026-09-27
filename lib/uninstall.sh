@@ -3,23 +3,20 @@
 # Eigene Deinstallation von Panel und/oder Wings. Entfernt gezielt nur Pterodactyl –
 # nginx, MariaDB, PHP, Docker und fremde Container bleiben unangetastet.
 
-GD_BACKUP_DIR="/opt/pterodactyl/backups"
-
 gd_uninstall_backup() {
-    # Sicherung der Server-Daten und der Panel-Datenbank vor dem Löschen
-    local stamp db
-    stamp="$(date +%Y-%m-%d_%H-%M)"
-    mkdir -p "$GD_BACKUP_DIR"
-    if [ -d /var/lib/pterodactyl/volumes ]; then
-        tar -czf "$GD_BACKUP_DIR/Deinstallation_${stamp}_Server.tar.gz" -C /var/lib/pterodactyl volumes || return 1
+    # Sicherung vor dem Löschen – im selben Format wie die Backup-Verwaltung, damit sie dort
+    # später auch wiederhergestellt werden kann. Schlägt ein Teil fehl, wird die Deinstallation abgebrochen.
+    gd_backup_prepare
+    if [ "${1:-}" = "panel" ] || [ "${1:-}" = "beides" ]; then
+        gd_backup_panel_create "$GD_BACKUP_PANEL/$(gd_backup_name)" false || return 1
     fi
-    if [ -f "$PTERO_DIR/.env" ]; then
-        db="$(gd_panel_env DB_DATABASE)"
-        mysqldump --single-transaction "${db:-panel}" | gzip > "$GD_BACKUP_DIR/Deinstallation_${stamp}_Datenbank.sql.gz" || return 1
-        cp "$PTERO_DIR/.env" "$GD_BACKUP_DIR/Deinstallation_${stamp}_panel.env"
-        chmod 600 "$GD_BACKUP_DIR"/Deinstallation_"${stamp}"_*
+    if [ "${1:-}" = "wings" ] || [ "${1:-}" = "beides" ]; then
+        if [ -d "$GD_VOLUMES_DIR" ]; then
+            gd_backup_stop_servers
+            gd_backup_server_create "$GD_BACKUP_SERVER/$(gd_backup_name)" false || return 1
+        fi
     fi
-    ls -lh "$GD_BACKUP_DIR"
+    ls -lhR "$GD_BACKUP_ROOT"
 }
 
 gd_uninstall_panel() {
@@ -36,6 +33,20 @@ gd_uninstall_panel() {
     if [ -n "$dbuser" ]; then
         gd_mysql -e "DROP USER IF EXISTS '${dbuser}'@'127.0.0.1'; DROP USER IF EXISTS '${dbuser}'@'localhost'; FLUSH PRIVILEGES;"
     fi
+    # Von GermanDactyl Setup angelegte Datenbankbenutzer mit Vollrechten entfernen
+    # (phpMyAdmin: gd_admin_*, Database-Host: gd_dbhost_*) – sie würden sonst ungenutzt offen bleiben
+    gd_mysql -N -e "SELECT CONCAT('DROP USER IF EXISTS \\'', User, '\\'@\\'', Host, '\\';') FROM mysql.user WHERE User LIKE 'gd\\_admin\\_%' OR User LIKE 'gd\\_dbhost\\_%';" 2>/dev/null \
+        | gd_mysql
+    # MariaDB wieder nur lokal lauschen lassen, falls der Database-Host sie geöffnet hatte
+    if [ -f /etc/mysql/mariadb.conf.d/99-germandactyl.cnf ]; then
+        rm -f /etc/mysql/mariadb.conf.d/99-germandactyl.cnf
+        systemctl restart mariadb 2>/dev/null || systemctl restart mysql 2>/dev/null
+    fi
+    # phpMyAdmin (nur wenn von GermanDactyl Setup installiert)
+    if grep -qs "GermanDactyl" /usr/share/phpmyadmin/config.inc.php; then
+        rm -rf /usr/share/phpmyadmin
+    fi
+    rm -f /etc/nginx/snippets/germandactyl-phpmyadmin.conf
     rm -f /etc/nginx/sites-enabled/pterodactyl.conf /etc/nginx/sites-available/pterodactyl.conf
     nginx -t 2>/dev/null && systemctl reload nginx
     rm -rf "$PTERO_DIR"
@@ -82,7 +93,7 @@ gd_uninstall() {
     $remove_panel || $remove_wings || return 1
 
     local do_backup=false
-    if gd_yesno "💾 Sicherung" "Soll vorher eine Sicherung erstellt werden?\n\nGesichert werden die Gameserver-Daten sowie die Panel-Datenbank und die Panel-Konfiguration (.env) nach:\n$GD_BACKUP_DIR" 13 78; then
+    if gd_yesno "💾 Sicherung" "Soll vorher eine Sicherung erstellt werden?\n\nGesichert wird das, was du entfernst (Panel mit Datenbank bzw. Gameserver-Daten), nach:\n$GD_BACKUP_ROOT\n\nSchlägt die Sicherung fehl, wird nichts gelöscht." 13 78; then
         do_backup=true
     fi
 
@@ -95,13 +106,16 @@ gd_uninstall() {
     done
 
     gd_gauge_open "🗑️ Deinstallation" "Deinstallation wird vorbereitet..."
-    $do_backup && gd_step 10 "Sicherung wird erstellt (kann bei vielen Servern dauern)..." gd_uninstall_backup
+    local what="beides"
+    $remove_panel && ! $remove_wings && what="panel"
+    ! $remove_panel && $remove_wings && what="wings"
+    $do_backup && gd_step 10 "Sicherung wird erstellt und geprüft (kann bei vielen Servern dauern)..." gd_uninstall_backup "$what"
     $remove_wings && gd_step 40 "Wings und Gameserver werden entfernt..." gd_uninstall_wings
     $remove_panel && gd_step 70 "Panel und Datenbank werden entfernt..." gd_uninstall_panel
     gd_progress 100 "Deinstallation abgeschlossen."
     gd_gauge_close
     rm -f "$GD_CONF_FILE"
 
-    gd_msg "✅ Deinstallation abgeschlossen" "Pterodactyl wurde entfernt.\n\nWeiterhin installiert bleiben: nginx, MariaDB, PHP, Redis, Docker und vorhandene SSL-Zertifikate, damit andere Dienste auf diesem Server nicht beeinträchtigt werden.$( $do_backup && echo "\n\nDeine Sicherung liegt in: $GD_BACKUP_DIR")" 15 78
+    gd_msg "✅ Deinstallation abgeschlossen" "Pterodactyl wurde entfernt.\n\nWeiterhin installiert bleiben: nginx, MariaDB, PHP, Redis, Docker und vorhandene SSL-Zertifikate, damit andere Dienste auf diesem Server nicht beeinträchtigt werden.$( $do_backup && echo "\n\nDeine Sicherung liegt in: $GD_BACKUP_ROOT (über die Backup-Verwaltung wiederherstellbar)")$( $remove_panel && echo "\n\nHinweis: Datenbanken, die deine Gameserver über einen Database-Host angelegt hatten, bleiben erhalten.")" 15 78
     return 0
 }

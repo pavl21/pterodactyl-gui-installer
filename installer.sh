@@ -21,7 +21,7 @@ fi
 # ---------------------------------------------------------------------------
 # Bibliotheken laden: aus einem lokalen Checkout oder aus dem Repository
 # ---------------------------------------------------------------------------
-GD_LIBS=(common germandactyl security panel wings blueprint uninstall)
+GD_LIBS=(common germandactyl security panel wings blueprint backup uninstall)
 _gd_self="${BASH_SOURCE[0]:-}"
 if [ -n "$_gd_self" ] && [ -f "$_gd_self" ] && [ -f "$(dirname "$_gd_self")/lib/common.sh" ]; then
     GD_LOCAL_DIR="$(cd "$(dirname "$_gd_self")" && pwd)"

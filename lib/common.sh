@@ -74,14 +74,24 @@ gd_die() {
 # ---------------------------------------------------------------------------
 # whiptail-Helfer
 # ---------------------------------------------------------------------------
+gd_whip() {
+    # whiptail zeichnet auf die Standardausgabe. Wird ein Dialog innerhalb von $(...) aufgerufen
+    # (z. B. in gd_ask_domain), wäre er unsichtbar und das Skript würde hängen – daher dann direkt aufs Terminal.
+    if [ -t 1 ] || [ ! -w /dev/tty ]; then
+        whiptail "$@"
+    else
+        whiptail "$@" > /dev/tty
+    fi
+}
+
 gd_msg() {
     # gd_msg "Titel" "Text" [höhe] [breite]
-    whiptail --title "$1" --msgbox "$2" "${3:-12}" "${4:-70}"
+    gd_whip --title "$1" --msgbox "$2" "${3:-12}" "${4:-70}"
 }
 
 gd_yesno() {
     # gd_yesno "Titel" "Text" [höhe] [breite]  -> Rückgabe 0 = Ja
-    whiptail --title "$1" --yesno "$2" "${3:-12}" "${4:-70}"
+    gd_whip --title "$1" --yesno "$2" "${3:-12}" "${4:-70}"
 }
 
 gd_input() {
@@ -158,7 +168,7 @@ gd_fail() {
     local tail_text
     tail_text="$(tail -n 12 "$GD_LOG" 2>/dev/null | cut -c1-110)"
     gd_log "FEHLGESCHLAGEN: $1"
-    whiptail --title "❌ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 26 118
+    gd_whip --title "❌ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 26 118
     clear
     gd_die "Schritt fehlgeschlagen: $1"
 }
@@ -234,6 +244,15 @@ gd_mysql() {
         mariadb "$@"
     else
         mysql "$@"
+    fi
+}
+
+gd_mysqldump() {
+    # Datenbank-Dump: MariaDB 11 liefert "mysqldump" nicht mehr in jedem Fall mit
+    if command -v mariadb-dump >/dev/null 2>&1; then
+        mariadb-dump "$@"
+    else
+        mysqldump "$@"
     fi
 }
 

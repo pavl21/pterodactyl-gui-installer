@@ -26,9 +26,14 @@ command -v mariadb >/dev/null 2>&1 || command -v mysql >/dev/null 2>&1 || {
     exit 1
 }
 
-IP_ADDRESS="$(gd_public_ip)"
+# Adresse, unter der Panel und Gameserver die Datenbank erreichen. Hinter NAT (nur private IP am Server)
+# wird die lokale IP genutzt, da Verbindungen über die öffentliche IP dort meist nicht zurückkommen.
+IP_ADDRESS="$(gd_local_ip)"
+if [ -z "$IP_ADDRESS" ] || ! gd_is_private_ip "$IP_ADDRESS"; then
+    IP_ADDRESS="$(gd_public_ip)"
+fi
 if [ -z "$IP_ADDRESS" ]; then
-    gd_msg "Fehler" "Die öffentliche IP-Adresse dieses Servers konnte nicht ermittelt werden." 8 70
+    gd_msg "Fehler" "Die IP-Adresse dieses Servers konnte nicht ermittelt werden." 8 70
     exit 1
 fi
 
