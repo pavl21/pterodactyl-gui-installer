@@ -124,6 +124,8 @@ gd_pelican_env_set() {
     if grep -q "^$1=" "$file"; then
         sed -i "s|^$1=.*|$1=$2|" "$file"
     else
+        # Die .env endet oft ohne Zeilenumbruch – sonst würde der neue Eintrag an die letzte Zeile angehängt
+        [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ] && echo >> "$file"
         echo "$1=$2" >> "$file"
     fi
 }

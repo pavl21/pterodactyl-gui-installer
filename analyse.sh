@@ -206,7 +206,7 @@ check_certificates() {
 check_services() {
     local svc php_fpm
     php_fpm="$(systemctl list-units --type=service --all 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}' | sed 's/\.service$//' | sort -V | tail -n1)"
-    for svc in mariadb redis-server "$php_fpm" pteroq wings docker; do
+    for svc in mariadb redis-server "$php_fpm" pteroq wings docker fail2ban; do
         [ -z "$svc" ] && continue
         systemctl cat "${svc}.service" >/dev/null 2>&1 || continue
         if systemctl is-active --quiet "$svc"; then ok "Dienst $svc läuft"

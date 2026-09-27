@@ -70,7 +70,8 @@ EOF
 }
 
 gd_fail2ban_setup() {
-    gd_apt_install fail2ban || return 1
+    # python3-systemd wird für "backend = systemd" benötigt (nur "empfohlen" – ohne startet fail2ban nicht)
+    gd_apt_install fail2ban python3-systemd || return 1
     local ports
     ports="$(gd_ssh_ports | paste -sd, -)"
     cat > /etc/fail2ban/jail.d/germandactyl.local <<EOF
@@ -83,7 +84,9 @@ maxretry = 5
 findtime = 10m
 bantime  = 1h
 EOF
-    systemctl enable --now fail2ban && systemctl restart fail2ban
+    systemctl enable --now fail2ban && systemctl restart fail2ban || return 1
+    sleep 2
+    systemctl is-active --quiet fail2ban || { journalctl -u fail2ban -n 20 --no-pager; return 1; }
 }
 
 gd_unattended_upgrades_setup() {
@@ -126,5 +129,7 @@ gd_security_steps() {
         # Täglich 04:00 Uhr, lokal, Gameserver nur mit Wings auf diesem Server
         gd_step $((p + 4)) "Automatische Backups werden eingerichtet..." gd_ab_setup "$GD_BACKUP_ROOT/restic" "$with_wings" "04:00"
         gd_step $((p + 4)) "jq wird installiert..." gd_apt_install jq
+        # Erstes Backup sofort erstellen (auf einem neuen Server geht das schnell)
+        gd_step $((p + 5)) "Erstes Backup wird erstellt..." "$GD_AB_SCRIPT"
     fi
 }
