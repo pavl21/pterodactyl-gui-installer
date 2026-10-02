@@ -28,16 +28,40 @@ gd_docker_install() {
     systemctl enable --now docker
 }
 
+gd_wings_fetch() {
+    # gd_wings_fetch <url> <ziel> – Wings herunterladen, prüfen und installieren.
+    # Wings veröffentlicht keine Prüfsummen-Datei; daher wird geprüft, dass ein vollständiges,
+    # auf dieser Architektur lauffähiges Programm angekommen ist (statt z. B. einer HTML-Fehlerseite).
+    local url="$1" dest="$2" tmp="$GD_TMP/wings.download" size
+    rm -f "$tmp"
+    curl -fL --retry 3 --retry-delay 3 --connect-timeout 20 "$url" -o "$tmp" \
+        || { echo "Download fehlgeschlagen: $url"; return 1; }
+    size="$(stat -c %s "$tmp" 2>/dev/null || echo 0)"
+    if [ "$size" -lt 5000000 ] || [ "$(head -c 4 "$tmp" | od -An -c | tr -d ' ')" != "177ELF" ]; then
+        echo "Die heruntergeladene Datei ist kein gültiges Wings-Programm (${size} Bytes)."
+        return 1
+    fi
+    chmod 0755 "$tmp"
+    # "wings version" gibt es seit Wings 1.0 (ein Flag "--version" gibt es nicht); "--help" als Rückfallebene
+    if ! timeout 20 "$tmp" version >/dev/null 2>&1 && ! timeout 20 "$tmp" --help >/dev/null 2>&1; then
+        echo "Das heruntergeladene Wings-Programm lässt sich auf diesem Server nicht ausführen (Architektur: $(gd_arch))."
+        return 1
+    fi
+    # install ersetzt die Datei atomar – funktioniert auch, während Wings läuft (Update)
+    install -m 0755 "$tmp" "$dest" || return 1
+    rm -f "$tmp"
+    echo "Installiert: Wings v$("$dest" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -n1)"
+    return 0
+}
+
 gd_wings_binary() {
     local arch version
     arch="$(gd_arch)"
     case "$arch" in amd64|arm64) ;; *) echo "Nicht unterstützte Architektur: $arch"; return 1 ;; esac
     version="$(gd_latest_release pterodactyl/wings)" || { echo "Die aktuelle Wings-Version konnte nicht ermittelt werden."; return 1; }
     mkdir -p /etc/pterodactyl /var/lib/pterodactyl/volumes
-    curl -fL "https://github.com/pterodactyl/wings/releases/download/v${version}/wings_linux_${arch}" -o "$GD_TMP/wings" || return 1
-    install -m 0755 "$GD_TMP/wings" "$WINGS_BIN" || return 1
+    gd_wings_fetch "https://github.com/pterodactyl/wings/releases/download/v${version}/wings_linux_${arch}" "$WINGS_BIN" || return 1
     gd_conf_set WINGS_VERSION "$version"
-    "$WINGS_BIN" --version
 }
 
 gd_wings_service() {
@@ -53,7 +77,7 @@ PartOf=docker.service
 User=root
 WorkingDirectory=/etc/pterodactyl
 LimitNOFILE=4096
-PIDFile=/var/run/wings/daemon.pid
+PIDFile=/run/wings/daemon.pid
 ExecStart=/usr/local/bin/wings
 Restart=on-failure
 StartLimitInterval=180
@@ -80,6 +104,22 @@ gd_wings_certificate() {
     fi
 }
 
+gd_wings_network_prepare() {
+    # Wings legt sein Docker-Netzwerk immer mit IPv6 an. Auf Servern ohne IPv6 (z. B. ipv6.disable=1)
+    # scheitert das ("Cannot read IPv6 setup for bridge"), und Wings startet nicht. Ein vorhandenes
+    # Netzwerk gleichen Namens verwendet Wings weiter – deshalb hier vorab ein reines IPv4-Netzwerk anlegen.
+    # gd_wings_network_prepare [config.yml] [netzwerkname] [bridge-name]
+    local cfg="${1:-$WINGS_CONFIG}" name="${2:-pterodactyl_nw}" bridge="${3:-pterodactyl0}" subnet gateway
+    [ -e /proc/net/if_inet6 ] && return 0
+    command -v docker >/dev/null 2>&1 || return 0
+    docker network inspect "$name" >/dev/null 2>&1 && return 0
+    subnet="$(awk '/v4:/{f=1} f && $1=="subnet:" {print $2; exit}' "$cfg" 2>/dev/null | tr -d "'\"")"
+    gateway="$(awk '/v4:/{f=1} f && $1=="gateway:" {print $2; exit}' "$cfg" 2>/dev/null | tr -d "'\"")"
+    echo "Server ohne IPv6: Docker-Netzwerk $name wird ohne IPv6 angelegt."
+    docker network create --driver bridge --subnet "${subnet:-172.18.0.0/16}" --gateway "${gateway:-172.18.0.1}" \
+        -o "com.docker.network.bridge.name=${bridge}" "$name"
+}
+
 gd_wings_start() {
     systemctl restart wings || return 1
     local i
@@ -87,15 +127,16 @@ gd_wings_start() {
         systemctl is-active --quiet wings && return 0
         sleep 2
     done
-    journalctl -u wings -n 30 --no-pager
+    journalctl -u wings -n 30 --no-pager -o cat
     return 1
 }
 
 gd_wings_verify() {
     # Fragt die Wings-API mit dem Node-Token ab – entspricht dem "grünen Herz" im Panel
-    local fqdn="$1" token port code i
-    token="$(awk '$1=="token:"{print $2; exit}' "$WINGS_CONFIG" | tr -d "'\"")"
-    port="$(awk '/^api:/{a=1} a && $1=="port:"{print $2; exit}' "$WINGS_CONFIG")"
+    # gd_wings_verify <fqdn> [config.yml] – Standard: Pterodactyl-Wings
+    local fqdn="$1" cfg="${2:-$WINGS_CONFIG}" token port code i
+    token="$(awk '$1=="token:"{print $2; exit}' "$cfg" | tr -d "'\"")"
+    port="$(awk '/^api:/{a=1} a && $1=="port:"{print $2; exit}' "$cfg")"
     port="${port:-8080}"
     for i in $(seq 1 10); do
         code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${fqdn}:${port}:127.0.0.1" \
@@ -164,7 +205,7 @@ gd_wings_node_create() {
         --uploadSize=100 --daemonListeningPort=8080 --daemonSFTPPort=2022 \
         --daemonBase=/var/lib/pterodactyl/volumes)" || { echo "$out"; return 1; }
     echo "$out"
-    GD_NODE_ID="$(grep -oE 'id of [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
+    GD_NODE_ID="$(grep -oiE '(id of|id) [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
     [ -z "$GD_NODE_ID" ] && GD_NODE_ID="$(gd_panel_sql "SELECT id FROM nodes WHERE fqdn='${fqdn}' ORDER BY id DESC LIMIT 1;")"
     [ -n "$GD_NODE_ID" ]
 }
@@ -176,31 +217,39 @@ gd_wings_config_write() {
     install -m 600 "$GD_TMP/config.yml" "$WINGS_CONFIG"
 }
 
-gd_wings_allocations() {
-    # gd_wings_allocations <portbereich> – Ports für Gameserver im Panel freigeben
-    local range="$1" ip alias_ip="" a b port values=""
-    ip="$(gd_local_ip)"
-    if [ -n "$ip" ] && gd_is_private_ip "$ip"; then
+gd_allocation_ip() {
+    # Setzt GD_ALLOC_IP und GD_ALLOC_ALIAS: lokale IP (bei NAT mit öffentlicher IP als Alias)
+    GD_ALLOC_IP="$(gd_local_ip)"; GD_ALLOC_ALIAS=""
+    if [ -n "$GD_ALLOC_IP" ] && gd_is_private_ip "$GD_ALLOC_IP"; then
         # Server hinter NAT: Docker bindet an die lokale IP, Spieler verbinden sich über die öffentliche
-        alias_ip="$(gd_public_ip)"
+        GD_ALLOC_ALIAS="$(gd_public_ip)"
     fi
-    [ -z "$ip" ] && ip="$(gd_public_ip)"
-    [ -z "$ip" ] && { echo "IP-Adresse konnte nicht ermittelt werden."; return 1; }
+    [ -z "$GD_ALLOC_IP" ] && GD_ALLOC_IP="$(gd_public_ip)"
+    [ -n "$GD_ALLOC_IP" ]
+}
 
-    local alias_php="null"
+gd_allocations_add() {
+    # gd_allocations_add <node-id> <ip> <alias oder leer> <port oder bereich> – Ports im Panel anlegen
+    local node="$1" ip="$2" alias_ip="$3" range="$4" a b port values="" alias_php="null"
     [ -n "$alias_ip" ] && alias_php="'${alias_ip}'"
-    if gd_artisan_www tinker --execute="app(\\Pterodactyl\\Services\\Allocations\\AssignmentService::class)->handle(\\Pterodactyl\\Models\\Node::findOrFail(${GD_NODE_ID}), ['allocation_ip' => '${ip}', 'allocation_alias' => ${alias_php}, 'allocation_ports' => ['${range}']]); echo 'OK';" | grep -q 'OK'; then
+    if gd_artisan_www tinker --execute="app(\\Pterodactyl\\Services\\Allocations\\AssignmentService::class)->handle(\\Pterodactyl\\Models\\Node::findOrFail(${node}), ['allocation_ip' => '${ip}', 'allocation_alias' => ${alias_php}, 'allocation_ports' => ['${range}']]); echo 'OK';" | grep -q 'OK'; then
         echo "Ports ${range} für ${ip} angelegt (über das Panel)."
     else
         # Rückfallebene: direkt in die Datenbank schreiben (doppelte Einträge werden ignoriert)
         a="${range%-*}"; b="${range#*-}"
         for port in $(seq "$a" "$b"); do
-            values+="(${GD_NODE_ID},'${ip}',$( [ -n "$alias_ip" ] && echo "'${alias_ip}'" || echo NULL ),${port},NOW(),NOW()),"
+            values+="(${node},'${ip}',$( [ -n "$alias_ip" ] && echo "'${alias_ip}'" || echo NULL ),${port},NOW(),NOW()),"
         done
         gd_panel_sql "INSERT IGNORE INTO allocations (node_id, ip, ip_alias, port, created_at, updated_at) VALUES ${values%,};" || return 1
         echo "Ports ${range} für ${ip} angelegt (direkt in der Datenbank)."
     fi
-    gd_conf_set WINGS_PORT_RANGE "$range"
+}
+
+gd_wings_allocations() {
+    # gd_wings_allocations <portbereich> – Ports der neu angelegten Node freigeben (Installation)
+    gd_allocation_ip || { echo "IP-Adresse konnte nicht ermittelt werden."; return 1; }
+    gd_allocations_add "$GD_NODE_ID" "$GD_ALLOC_IP" "$GD_ALLOC_ALIAS" "$1" || return 1
+    gd_conf_set WINGS_PORT_RANGE "$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -209,16 +258,18 @@ gd_wings_allocations() {
 gd_wings_local_steps() {
     # Wings auf demselben Server wie das Panel – vollautomatisch.
     # Erwartet: GD_WINGS_FQDN, GD_EMAIL, GD_PORT_RANGE
-    local p="${1:-72}"
-    gd_step "$p"        "Docker wird installiert..." gd_docker_install
-    gd_step $((p + 6))  "Wings wird heruntergeladen..." gd_wings_binary
-    gd_step $((p + 8))  "Wings-Dienst wird eingerichtet..." gd_wings_service
-    gd_step $((p + 9))  "SSL-Zertifikat für Wings wird geprüft..." gd_wings_certificate "$GD_WINGS_FQDN" "$GD_EMAIL"
-    gd_step $((p + 10)) "Node wird im Panel angelegt..." gd_wings_node_create "$GD_WINGS_FQDN"
-    gd_step $((p + 12)) "Wings-Konfiguration wird geschrieben..." gd_wings_config_write
-    gd_step $((p + 13)) "Ports ${GD_PORT_RANGE} werden für Gameserver freigegeben..." gd_wings_allocations "$GD_PORT_RANGE"
-    gd_step $((p + 15)) "Wings wird gestartet..." gd_wings_start
-    gd_step $((p + 17)) "Verbindung zwischen Panel und Wings wird geprüft..." gd_wings_verify "$GD_WINGS_FQDN"
+    # gd_wings_local_steps [start-prozent] [spanne] – die Schritte werden auf die Spanne verteilt
+    local p="${1:-72}" span="${2:-17}"
+    gd_step "$p" "Docker wird installiert..." gd_docker_install
+    gd_step $((p + 6 * span / 17)) "Wings wird heruntergeladen..." gd_wings_binary
+    gd_step $((p + 8 * span / 17)) "Wings-Dienst wird eingerichtet..." gd_wings_service
+    gd_step $((p + 9 * span / 17)) "SSL-Zertifikat für Wings wird geprüft..." gd_wings_certificate "$GD_WINGS_FQDN" "$GD_EMAIL"
+    gd_step $((p + 10 * span / 17)) "Node wird im Panel angelegt..." gd_wings_node_create "$GD_WINGS_FQDN"
+    gd_step $((p + 12 * span / 17)) "Wings-Konfiguration wird geschrieben..." gd_wings_config_write
+    gd_step $((p + 13 * span / 17)) "Ports ${GD_PORT_RANGE} werden für Gameserver freigegeben..." gd_wings_allocations "$GD_PORT_RANGE"
+    gd_step $((p + 14 * span / 17)) "Docker-Netzwerk für Gameserver wird vorbereitet..." gd_wings_network_prepare
+    gd_step $((p + 15 * span / 17)) "Wings wird gestartet..." gd_wings_start
+    gd_step $((p + 17 * span / 17)) "Verbindung zwischen Panel und Wings wird geprüft..." gd_wings_verify "$GD_WINGS_FQDN"
     gd_conf_set WINGS_FQDN "$GD_WINGS_FQDN"
     gd_conf_set WINGS_NODE_ID "$GD_NODE_ID"
 }
@@ -239,9 +290,9 @@ gd_wings_remote_steps() {
 gd_wings_configure_remote() {
     # Den im Panel erzeugten Befehl "wings configure ..." abfragen und ausführen (ersetzt das Bearbeiten der config.yml)
     local cmd url token node
-    gd_msg "🔗 Wings mit dem Panel verbinden" "So verbindest du Wings mit deinem Panel:\n\n1. Öffne im Panel: Admin → Nodes → Create New\n   FQDN: ${GD_WINGS_FQDN}, 'Communicate Over SSL' aktivieren.\n2. Öffne nach dem Anlegen den Reiter 'Configuration'.\n3. Klicke rechts auf 'Generate Token'.\n4. Kopiere den angezeigten Befehl und füge ihn im nächsten Fenster ein\n   (mit der rechten Maustaste bzw. Strg + Umschalt + V)." 18 78
+    gd_msg "⇄ Wings mit dem Panel verbinden" "So verbindest du Wings mit deinem Panel:\n\n1. Öffne im Panel: Admin → Nodes → Create New\n   FQDN: ${GD_WINGS_FQDN}, 'Communicate Over SSL' aktivieren.\n2. Öffne nach dem Anlegen den Reiter 'Configuration'.\n3. Klicke rechts auf 'Generate Token'.\n4. Kopiere den angezeigten Befehl und füge ihn im nächsten Fenster ein\n   (mit der rechten Maustaste bzw. Strg + Umschalt + V)." 18 78
     while true; do
-        cmd="$(gd_input "🔗 Befehl einfügen" "Füge hier den Befehl aus dem Panel ein:" "" 10 78)" || return 1
+        cmd="$(gd_input "⇄ Befehl einfügen" "Füge hier den Befehl aus dem Panel ein:" "" 10 78)" || return 1
         url="$(grep -oE -- '--panel-url +https?://[^ ]+' <<< "$cmd" | awk '{print $2}')"
         token="$(grep -oE -- '--token +[A-Za-z0-9._-]+' <<< "$cmd" | awk '{print $2}')"
         node="$(grep -oE -- '--node +[0-9]+' <<< "$cmd" | awk '{print $2}')"
@@ -253,22 +304,22 @@ gd_wings_configure_remote() {
     clear
     echo "Wings wird mit dem Panel verbunden..."
     if (cd /etc/pterodactyl && "$WINGS_BIN" configure --panel-url "$url" --token "$token" --node "$node" --override) >> "$GD_LOG" 2>&1 \
-        && gd_wings_start >> "$GD_LOG" 2>&1; then
+        && gd_wings_network_prepare >> "$GD_LOG" 2>&1 && gd_wings_start >> "$GD_LOG" 2>&1; then
         gd_conf_set WINGS_PANEL_URL "$url"
         return 0
     fi
-    gd_msg "❌ Verbindung fehlgeschlagen" "Wings konnte nicht mit dem Panel verbunden werden.\n\nPrüfe, ob das Panel erreichbar ist und der Token noch gültig ist (er kann nur einmal verwendet werden).\n\nLog: $GD_LOG" 14 78
+    gd_msg "✖ Verbindung fehlgeschlagen" "Wings konnte nicht mit dem Panel verbunden werden.\n\nPrüfe, ob das Panel erreichbar ist und der Token noch gültig ist (er kann nur einmal verwendet werden).\n\nLog: $GD_LOG" 14 78
     return 1
 }
 
 gd_wings_update() {
     # Wings auf die neueste Version aktualisieren
-    gd_gauge_open "⬆️ Wings wird aktualisiert" "Aktualisierung wird vorbereitet..."
+    gd_gauge_open "↑ Wings wird aktualisiert" "Aktualisierung wird vorbereitet..."
     gd_step 20 "Neueste Wings-Version wird heruntergeladen..." gd_wings_binary
     gd_step 80 "Wings wird neu gestartet..." gd_wings_start
     gd_progress 100 "Fertig."
     gd_gauge_close
-    gd_msg "✅ Wings aktualisiert" "Wings wurde auf v$(gd_conf_get WINGS_VERSION) aktualisiert und neu gestartet." 9 60
+    gd_msg "✔ Wings aktualisiert" "Wings wurde auf v$(gd_conf_get WINGS_VERSION) aktualisiert und neu gestartet." 9 60
 }
 
 gd_swap_create() {

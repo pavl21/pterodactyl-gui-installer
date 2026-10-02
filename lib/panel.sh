@@ -225,6 +225,8 @@ gd_env_set() {
     if grep -q "^$1=" "$file"; then
         sed -i "s|^$1=.*|$1=$2|" "$file"
     else
+        # Die .env endet oft ohne Zeilenumbruch – sonst würde der neue Eintrag an die letzte Zeile angehängt
+        [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ] && echo >> "$file"
         echo "$1=$2" >> "$file"
     fi
 }
@@ -399,10 +401,10 @@ gd_panel_update() {
     local installed
     installed="$(gd_panel_installed_version)"
     gd_choose_panel_version || return 1
-    gd_yesno "⬆️ Panel aktualisieren" "Installiert: v${installed:-unbekannt}\nZiel: v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(mit deutscher Übersetzung)' || echo '(Englisch)')\n\nDas Panel ist während der Aktualisierung einige Minuten nicht erreichbar. Änderungen an Dateien des Panels (Themes/Addons) werden dabei überschrieben.\n\nEmpfehlung: Erstelle vorher ein Backup über die Backup-Verwaltung.\n\nMöchtest du fortfahren?" 18 78 || return 1
-    gd_gauge_open "⬆️ Panel wird aktualisiert" "Aktualisierung wird vorbereitet..."
+    gd_yesno "↑ Panel aktualisieren" "Installiert: v${installed:-unbekannt}\nZiel: v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(mit deutscher Übersetzung)' || echo '(Englisch)')\n\nDas Panel ist während der Aktualisierung einige Minuten nicht erreichbar. Änderungen an Dateien des Panels (Themes/Addons) werden dabei überschrieben.\n\nEmpfehlung: Erstelle vorher ein Backup über die Backup-Verwaltung.\n\nMöchtest du fortfahren?" 18 78 || return 1
+    gd_gauge_open "↑ Panel wird aktualisiert" "Aktualisierung wird vorbereitet..."
     gd_panel_update_steps
     gd_progress 100 "Aktualisierung abgeschlossen."
     gd_gauge_close
-    gd_msg "✅ Aktualisierung abgeschlossen" "Das Panel wurde auf v${GD_PANEL_VERSION} aktualisiert$(gd_blueprint_installed && echo ', Blueprint wurde erneut angewendet').\n\nFalls dein Browser noch die alte Oberfläche anzeigt, lade die Seite mit Strg + F5 neu." 12 70
+    gd_msg "✔ Aktualisierung abgeschlossen" "Das Panel wurde auf v${GD_PANEL_VERSION} aktualisiert$(gd_blueprint_installed && echo ', Blueprint wurde erneut angewendet').\n\nFalls dein Browser noch die alte Oberfläche anzeigt, lade die Seite mit Strg + F5 neu." 12 70
 }

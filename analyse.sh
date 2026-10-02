@@ -77,8 +77,9 @@ check_updates() {
     list="$(apt list --upgradable 2>/dev/null | grep -vE '^(Listing|Auflistung)')"
     count="$(grep -c . <<< "$list")"
     sec="$(grep -ci -- '-security' <<< "$list")"
-    if [ "$sec" -gt 0 ]; then warn "Offene Updates: $count Pakete, davon $sec Sicherheitsupdates (apt upgrade)"
-    elif [ "$count" -gt 0 ]; then warn "Offene Updates: $count Pakete (apt upgrade)"
+    local pk="Pakete"; [ "$count" -eq 1 ] && pk="Paket"
+    if [ "$sec" -gt 0 ]; then warn "Offene Updates: $count $pk, davon $sec mit Sicherheitsupdates (apt upgrade)"
+    elif [ "$count" -gt 0 ]; then warn "Offene Updates: $count $pk (apt upgrade)"
     else ok "Alle Pakete sind aktuell"; fi
 }
 
@@ -206,7 +207,7 @@ check_certificates() {
 check_services() {
     local svc php_fpm
     php_fpm="$(systemctl list-units --type=service --all 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}' | sed 's/\.service$//' | sort -V | tail -n1)"
-    for svc in mariadb redis-server "$php_fpm" pteroq wings docker; do
+    for svc in mariadb redis-server "$php_fpm" pteroq wings docker fail2ban; do
         [ -z "$svc" ] && continue
         systemctl cat "${svc}.service" >/dev/null 2>&1 || continue
         if systemctl is-active --quiet "$svc"; then ok "Dienst $svc läuft"
@@ -258,7 +259,7 @@ check_panel() {
 check_wings() {
     [ -x /usr/local/bin/wings ] || return
     local installed latest token port domain code
-    installed="$(/usr/local/bin/wings --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+    installed="$(/usr/local/bin/wings version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
     latest="$(gd_latest_release pterodactyl/wings)"
     if [ -z "$latest" ]; then warn "Wings v$installed – die neueste Version konnte nicht abgefragt werden"
     elif [ "$installed" = "$latest" ] || gd_version_ge "$installed" "$latest"; then ok "Wings v$installed ist aktuell"
@@ -347,12 +348,12 @@ fix_php_socket() {
 run_fixes() {
     local items=() i sel
     for i in "${!FIX_DESC[@]}"; do items+=("$i" "${FIX_DESC[$i]}" ON); done
-    sel=$(gd_whip --title "🔧 Probleme beheben" --checklist "Diese Probleme können automatisch behoben werden (Leertaste = an/aus):" 18 86 8 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
+    sel=$(gd_whip --title "⚙ Probleme beheben" --checklist "Diese Probleme können automatisch behoben werden (Leertaste = an/aus):" 18 86 8 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
     sel="$(tr -d '"' <<< "$sel")"
     [ -z "$sel" ] && return 1
     local total done_ok=() done_fail=() n=0
     total="$(wc -w <<< "$sel")"
-    gd_gauge_open "🔧 Probleme werden behoben" "Bitte warten..."
+    gd_gauge_open "⚙ Probleme werden behoben" "Bitte warten..."
     for i in $sel; do
         n=$((n + 1))
         gd_progress $(( n * 100 / (total + 1) )) "${FIX_DESC[$i]}..."
@@ -360,7 +361,7 @@ run_fixes() {
     done
     gd_progress 100 "Fertig."
     gd_gauge_close
-    gd_msg "🔧 Ergebnis" "$(printf '%s\n' "${done_ok[@]}" "${done_fail[@]}")\n\nDie Analyse wird jetzt erneut ausgeführt, um das Ergebnis zu prüfen." 18 86
+    gd_msg "⚙ Ergebnis" "$(printf '%s\n' "${done_ok[@]}" "${done_fail[@]}")\n\nDie Analyse wird jetzt erneut ausgeführt, um das Ergebnis zu prüfen." 18 86
     return 0
 }
 
@@ -369,10 +370,11 @@ run_fixes() {
 # ---------------------------------------------------------------------------
 SPEEDTEST=false
 if ! $TEXT_MODE; then
-    if gd_whip --title "🔍 Analyse" --defaultno --yesno "Die Analyse prüft System, Updates, nginx, SSL-Zertifikate (auch die tatsächlich ausgelieferten), Dienste, Panel, Wings, DNS und Backups.\n\nSoll zusätzlich die Geschwindigkeit der Internetverbindung gemessen werden? (ca. 30 Sekunden)" 14 76; then
+    # Beim erneuten Lauf nach einer Behebung nicht noch einmal nach dem Geschwindigkeitstest fragen
+    if [ -z "${GD_ANALYSE_RERUN:-}" ] && gd_whip --title "✚ Analyse" --defaultno --yesno "Die Analyse prüft System, Updates, nginx, SSL-Zertifikate (auch die tatsächlich ausgelieferten), Dienste, Panel, Wings, DNS und Backups.\n\nSoll zusätzlich die Geschwindigkeit der Internetverbindung gemessen werden? (ca. 30 Sekunden)" 14 76; then
         SPEEDTEST=true
     fi
-    gd_gauge_open "🔍 Analyse läuft" "Analyse wird vorbereitet..."
+    gd_gauge_open "✚ Analyse läuft" "Analyse wird vorbereitet..."
 fi
 
 step 5  "System wird geprüft (Speicher, Arbeitsspeicher, Zeit)..."; check_system
@@ -416,10 +418,10 @@ if $TEXT_MODE; then
         done
     fi
 else
-    gd_whip --title "🔍 Ergebnis der Analyse" --scrolltext --textbox "$REPORT" 30 110
-    if [ ${#FIX_DESC[@]} -gt 0 ] && gd_yesno "🔧 Probleme beheben?" "${#FIX_DESC[@]} der gefundenen Probleme können automatisch behoben werden. Möchtest du sie jetzt beheben?" 10 70; then
+    gd_whip --title "✚ Ergebnis der Analyse" --scrolltext --textbox "$REPORT" 30 110
+    if [ ${#FIX_DESC[@]} -gt 0 ] && gd_yesno "⚙ Probleme beheben?" "$( [ ${#FIX_DESC[@]} -eq 1 ] && echo "1 gefundenes Problem kann" || echo "${#FIX_DESC[@]} gefundene Probleme können") automatisch behoben werden. Möchtest du das jetzt tun?" 10 70; then
         if run_fixes; then
-            exec bash "$0" "$@"   # Analyse erneut ausführen
+            GD_ANALYSE_RERUN=1 exec bash "$0" "$@"   # Analyse erneut ausführen (ohne erneute Rückfrage)
         fi
     fi
 fi

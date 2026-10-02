@@ -18,6 +18,11 @@ gd_require_root
 gd_source_lib security
 gd_source_lib panel
 gd_source_lib wings
+gd_source_lib blueprint
+gd_source_lib backup
+gd_source_lib autobackup
+gd_source_lib uninstall
+gd_source_lib manage
 
 # ---------------------------------------------------------------------------
 # Wings ist bereits installiert: Status, Neustart, Aktualisierung
@@ -27,11 +32,11 @@ gd_wings_manage() {
     while true; do
         state="$(systemctl is-active wings 2>/dev/null)"
         case "$state" in
-            active) state="🟢 läuft" ;;
-            failed) state="🔴 fehlgeschlagen" ;;
-            *) state="⚪ gestoppt ($state)" ;;
+            active) state="✔ läuft" ;;
+            failed) state="✖ fehlgeschlagen" ;;
+            *) state="○ gestoppt ($state)" ;;
         esac
-        choice=$(whiptail --title "🐦 Wings-Verwaltung" --menu "Wings ist installiert: $("$WINGS_BIN" --version 2>/dev/null | head -n1)\nStatus: $state" 17 78 5 \
+        choice=$(whiptail --title "⇄ Wings-Verwaltung" --menu "Wings ist installiert: v$("$WINGS_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)\nStatus: $state" 17 78 5 \
             "1" "Wings neu starten" \
             "2" "Wings aktualisieren" \
             "3" "Letzte Log-Einträge anzeigen" \
@@ -41,9 +46,9 @@ gd_wings_manage() {
             1)
                 clear; echo "Wings wird neu gestartet..."
                 if gd_wings_start >> "$GD_LOG" 2>&1; then
-                    gd_msg "🟢 Wings läuft" "Wings wurde erfolgreich neu gestartet. Die Server sollten in Kürze wieder erreichbar sein." 9 70
+                    gd_msg "✔ Wings läuft" "Wings wurde erfolgreich neu gestartet. Die Server sollten in Kürze wieder erreichbar sein." 9 70
                 else
-                    gd_msg "🔴 Wings startet nicht" "Wings konnte nicht gestartet werden. Häufige Ursachen:\n- Port 8080 oder 2022 wird von einem anderen Programm belegt\n- Das SSL-Zertifikat ist abgelaufen oder fehlt\n- /etc/pterodactyl/config.yml fehlt oder ist fehlerhaft\n\nMit 'Letzte Log-Einträge anzeigen' siehst du die genaue Fehlermeldung." 15 78
+                    gd_msg "✖ Wings startet nicht" "Wings konnte nicht gestartet werden. Häufige Ursachen:\n- Port 8080 oder 2022 wird von einem anderen Programm belegt\n- Das SSL-Zertifikat ist abgelaufen oder fehlt\n- /etc/pterodactyl/config.yml fehlt oder ist fehlerhaft\n\nMit 'Letzte Log-Einträge anzeigen' siehst du die genaue Fehlermeldung." 15 78
                 fi ;;
             2) gd_wings_update ;;
             3)
@@ -86,16 +91,16 @@ gd_wings_install_local() {
     [ -z "$email" ] && email="$(gd_panel_env APP_SERVICE_AUTHOR)"
 
     GD_WINGS_FQDN="$domain"
-    if ! gd_yesno "🐦 Domain für Wings" "Wings nutzt standardmäßig die Domain des Panels:\n\n${domain} (Port 8080)\n\nMöchtest du diese Domain verwenden? Bei 'Nein' kannst du eine eigene Subdomain angeben." 13 74; then
-        GD_WINGS_FQDN="$(gd_ask_domain "🐦 Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
+    if ! gd_yesno "⇄ Domain für Wings" "Wings nutzt standardmäßig die Domain des Panels:\n\n${domain} (Port 8080)\n\nMöchtest du diese Domain verwenden? Bei 'Nein' kannst du eine eigene Subdomain angeben." 13 74; then
+        GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
     fi
     if ! gd_valid_email "$email"; then
-        email="$(gd_ask_email "📧 E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:")" || return 1
+        email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:")" || return 1
     fi
     GD_EMAIL="$email"
 
     while true; do
-        GD_PORT_RANGE="$(gd_input "🎮 Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024)." "$GD_DEFAULT_PORT_RANGE" 13 74)" || return 1
+        GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024)." "$GD_DEFAULT_PORT_RANGE" 13 74)" || return 1
         gd_valid_port_range "$GD_PORT_RANGE" && break
         gd_msg "Ungültiger Portbereich" "Bitte gib einen Bereich wie 25565-25600 an." 8 60
     done
@@ -103,39 +108,39 @@ gd_wings_install_local() {
     GD_SEC_UFW=false
     if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
         GD_SEC_UFW=true   # Firewall ist bereits aktiv -> Wings-Ports ergänzen
-    elif gd_yesno "🛡️ Firewall" "Soll die Firewall (UFW) aktiviert werden? Dein SSH-Port sowie 80, 443, 8080, 2022 und die Gameserver-Ports werden automatisch freigegeben." 11 74; then
+    elif gd_yesno "✚ Firewall" "Soll die Firewall (UFW) aktiviert werden? Dein SSH-Port sowie 80, 443, 8080, 2022 und die Gameserver-Ports werden automatisch freigegeben." 11 74; then
         GD_SEC_UFW=true
     fi
 
-    gd_gauge_open "🐦 Wings wird eingerichtet" "Einrichtung wird vorbereitet..."
+    gd_gauge_open "⇄ Wings wird eingerichtet" "Einrichtung wird vorbereitet..."
     gd_step 2 "Paketquellen werden aktualisiert..." gd_apt update
-    gd_wings_local_steps 5
-    gd_step 25 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
+    gd_wings_local_steps 5 80
+    gd_step 88 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
     if [ "$GD_SEC_UFW" = "true" ]; then
-        gd_step 28 "Firewall wird eingerichtet..." gd_firewall_setup true "$GD_PORT_RANGE"
+        gd_step 94 "Firewall wird eingerichtet..." gd_firewall_setup true "$GD_PORT_RANGE"
     fi
     gd_progress 100 "Wings ist eingerichtet."
     gd_gauge_close
 
-    gd_msg "🟢 Wings ist einsatzbereit" "Wings ist installiert, als Node im Panel eingetragen und verbunden.\n\nDu kannst jetzt direkt im Panel unter 'Admin' → 'Servers' → 'Create New' deinen ersten Gameserver anlegen.\n\nFreigegebene Ports: ${GD_PORT_RANGE}" 14 78
+    gd_msg "✔ Wings ist einsatzbereit" "Wings ist installiert, als Node im Panel eingetragen und verbunden.\n\nDu kannst jetzt direkt im Panel unter 'Admin' → 'Servers' → 'Create New' deinen ersten Gameserver anlegen.\n\nFreigegebene Ports: ${GD_PORT_RANGE}" 14 78
     gd_swap_dialog
 }
 
 gd_wings_install_remote() {
     # Panel liegt auf einem anderen Server -> Installation + Verbindung per Token-Befehl aus dem Panel
-    GD_WINGS_FQDN="$(gd_ask_domain "🐦 Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de.\n\nDer DNS-Eintrag muss auf diesen Server zeigen.")" || return 1
-    GD_EMAIL="$(gd_ask_email "📧 E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu. Das Zertifikat wird automatisch erneuert.")" || return 1
+    GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de.\n\nDer DNS-Eintrag muss auf diesen Server zeigen.")" || return 1
+    GD_EMAIL="$(gd_ask_email "✉ E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu. Das Zertifikat wird automatisch erneuert.")" || return 1
 
-    gd_gauge_open "🐦 Wings wird installiert" "Installation wird vorbereitet..."
+    gd_gauge_open "⇄ Wings wird installiert" "Installation wird vorbereitet..."
     gd_wings_remote_steps 5
     gd_progress 100 "Wings ist installiert."
     gd_gauge_close
 
     if gd_wings_configure_remote; then
-        if gd_yesno "🛡️ Firewall" "Soll die Firewall (UFW) aktiviert werden? Freigegeben werden dein SSH-Port sowie 8080 und 2022.\n\nDie Ports deiner Gameserver gibst du danach mit 'ufw allow <port>' frei." 12 74; then
+        if gd_yesno "✚ Firewall" "Soll die Firewall (UFW) aktiviert werden? Freigegeben werden dein SSH-Port sowie 8080 und 2022.\n\nDie Ports deiner Gameserver gibst du danach mit 'ufw allow <port>' frei." 12 74; then
             gd_firewall_setup true "" >> "$GD_LOG" 2>&1
         fi
-        gd_msg "🟢 Wings ist verbunden" "Wings läuft und ist mit deinem Panel verbunden. In der Node-Übersicht sollte nun ein grünes Herz zu sehen sein.\n\nLege im Panel unter der Node im Reiter 'Allocation' noch die Ports für deine Gameserver an." 13 78
+        gd_msg "✔ Wings ist verbunden" "Wings läuft und ist mit deinem Panel verbunden. In der Node-Übersicht sollte nun ein grünes Herz zu sehen sein.\n\nLege im Panel unter der Node im Reiter 'Allocation' noch die Ports für deine Gameserver an." 13 78
         gd_swap_dialog
     fi
 }
@@ -150,3 +155,6 @@ elif [ -f "$PTERO_DIR/artisan" ]; then
 else
     gd_wings_install_remote
 fi
+# Kurzbefehl für die Verwaltung (auch auf reinen Wings-Servern)
+[ -f "$WINGS_CONFIG" ] && gd_shortcut_install >> "$GD_LOG" 2>&1
+exit 0

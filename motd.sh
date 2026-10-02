@@ -33,20 +33,25 @@ UPDATES="$(apt list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^Au
 UPDATE_COUNT="$(grep -c . <<< "$UPDATES")"
 CRITICAL_UPDATE="$(grep -cE '^(containerd|docker)' <<< "$UPDATES")"
 if [ "$CRITICAL_UPDATE" -gt 0 ]; then
-    echo -e "\n📦 Es liegen $UPDATE_COUNT Updates vor, darunter Updates für Docker.\nInstalliere sie bei Gelegenheit – dabei werden alle Gameserver kurz neu gestartet." | $LOLCAT
+    echo -e "\n▤ Es liegen $UPDATE_COUNT Updates vor, darunter Updates für Docker.\nInstalliere sie bei Gelegenheit – dabei werden alle Gameserver kurz neu gestartet." | $LOLCAT
 elif [ "$UPDATE_COUNT" -gt 0 ]; then
-    echo -e "\n📦 Es liegen $UPDATE_COUNT Updates vor. Du kannst sie bei Gelegenheit installieren." | $LOLCAT
+    if [ "$UPDATE_COUNT" -eq 1 ]; then
+        UPDATE_TEXT="Es liegt 1 Update vor. Du kannst es bei Gelegenheit installieren."
+    else
+        UPDATE_TEXT="Es liegen $UPDATE_COUNT Updates vor. Du kannst sie bei Gelegenheit installieren."
+    fi
+    echo -e "\n▤ ${UPDATE_TEXT}" | $LOLCAT
 else
-    echo -e "\n📦 Keine Paketupdates verfügbar." | $LOLCAT
+    echo -e "\n▤ Keine Paketupdates verfügbar." | $LOLCAT
 fi
 
 # Fehlgeschlagene SSH-Logins der letzten 24 Stunden (nur als root lesbar)
 if [ "$(id -u)" = "0" ]; then
     FAILED="$(journalctl -u ssh -u sshd --since '24 hours ago' --no-pager 2>/dev/null | grep -cE 'Failed password|Invalid user')"
     if [ "${FAILED:-0}" -lt 1000 ]; then
-        echo -e "\n🔓 Fehlgeschlagene SSH-Logins (24 h): ${FAILED:-0} – keine Auffälligkeiten." | $LOLCAT
+        echo -e "\n✱ Fehlgeschlagene SSH-Logins (24 h): ${FAILED:-0} – keine Auffälligkeiten." | $LOLCAT
     else
-        echo -e "\n⚠️  In den letzten 24 Stunden gab es ${FAILED} fehlgeschlagene SSH-Logins. Die aktivsten Absender:" | $LOLCAT
+        echo -e "\n⚠  In den letzten 24 Stunden gab es ${FAILED} fehlgeschlagene SSH-Logins. Die aktivsten Absender:" | $LOLCAT
         journalctl -u ssh -u sshd --since '24 hours ago' --no-pager 2>/dev/null | grep -E 'Failed password|Invalid user' \
             | grep -oE 'from [0-9a-fA-F.:]+' | awk '{print $2}' | sort | uniq -c | sort -nr | head -3 \
             | awk '{print "Platz " NR ": " $2 " -> " $1 " Versuche"}' | $LOLCAT
@@ -58,9 +63,9 @@ fi
 UPTIME_DAYS=$(( $(cut -d. -f1 /proc/uptime) / 86400 ))
 UPTIME="$(uptime -p | sed 's/^up /seit /; s/ years\?/ J./; s/ weeks\?/ Wo./; s/ days\?/ Tg./; s/ hours\?/ Std./; s/ minutes\?/ Min./')"
 if [ "$UPTIME_DAYS" -ge 30 ]; then
-    echo -e "\n⏱  Laufzeit: $UPTIME\nDer Server läuft seit über 30 Tagen. Ein Neustart bei Gelegenheit spielt z. B. Kernel-Updates ein." | $LOLCAT
+    echo -e "\n◷  Laufzeit: $UPTIME\nDer Server läuft seit über 30 Tagen. Ein Neustart bei Gelegenheit spielt z. B. Kernel-Updates ein." | $LOLCAT
 else
-    echo -e "\n⏱  Laufzeit: $UPTIME" | $LOLCAT
+    echo -e "\n◷  Laufzeit: $UPTIME" | $LOLCAT
 fi
 
 # Netzwerkdaten (Schnittstelle der Standardroute)
@@ -68,11 +73,11 @@ INTERFACE="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if 
 if command -v vnstat >/dev/null 2>&1 && [ -n "$INTERFACE" ]; then
     NETWORK_USAGE="$(vnstat -i "$INTERFACE" --oneline 2>/dev/null)"
     if [[ -z "$NETWORK_USAGE" || "$NETWORK_USAGE" == *"Not enough data"* || "$NETWORK_USAGE" == *"Error"* ]]; then
-        echo -e "\n📶 Netzwerk ($INTERFACE): Es liegen noch nicht genügend Daten vor." | $LOLCAT
+        echo -e "\n⇅ Netzwerk ($INTERFACE): Es liegen noch nicht genügend Daten vor." | $LOLCAT
     else
         # Format: 1;iface;tag;rx;tx;total;rate;monat;rx;tx;total;rate;...
         IFS=';' read -r _ _ _ TODAY_RX TODAY_TX _ _ _ MONTH_RX MONTH_TX _ <<< "$NETWORK_USAGE"
-        echo -e "\n📶 Netzwerk ($INTERFACE):\nHeute:        ↓ ${TODAY_RX}  ↑ ${TODAY_TX}\nDieser Monat: ↓ ${MONTH_RX}  ↑ ${MONTH_TX}" | $LOLCAT
+        echo -e "\n⇅ Netzwerk ($INTERFACE):\nHeute:        ↓ ${TODAY_RX}  ↑ ${TODAY_TX}\nDieser Monat: ↓ ${MONTH_RX}  ↑ ${MONTH_TX}" | $LOLCAT
     fi
 fi
 echo "IP-Adresse: $(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')" | $LOLCAT
@@ -81,16 +86,16 @@ echo "IP-Adresse: $(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i
 STATUS_LINE=""
 for svc in nginx pteroq wings; do
     if systemctl list-unit-files "${svc}.service" >/dev/null 2>&1 && systemctl cat "${svc}.service" >/dev/null 2>&1; then
-        if systemctl is-active --quiet "$svc"; then STATUS_LINE+="🟢 $svc  "; else STATUS_LINE+="🔴 $svc  "; fi
+        if systemctl is-active --quiet "$svc"; then STATUS_LINE+="✔ $svc  "; else STATUS_LINE+="✖ $svc  "; fi
     fi
 done
-[ -n "$STATUS_LINE" ] && echo -e "\n🧩 Dienste: $STATUS_LINE" | $LOLCAT
+[ -n "$STATUS_LINE" ] && echo -e "\n❖ Dienste: $STATUS_LINE" | $LOLCAT
 
 # Letzter erfolgreicher Login (vor der aktuellen Sitzung)
 LAST_LOGIN="$(last -i -n 2 -w 2>/dev/null | sed -n '2p')"
 if [ -n "$LAST_LOGIN" ] && [[ "$LAST_LOGIN" != wtmp* ]]; then
     read -r L_USER _ L_IP L_REST <<< "$LAST_LOGIN"
-    echo -e "\n🔑 Vorheriger Login: $L_USER von $L_IP ($(awk '{print $1, $2, $3, $4}' <<< "$L_REST"))" | $LOLCAT
+    echo -e "\n✱ Vorheriger Login: $L_USER von $L_IP ($(awk '{print $1, $2, $3, $4}' <<< "$L_REST"))" | $LOLCAT
 fi
 
 # Trenner

@@ -25,7 +25,7 @@ fi
 # Deploy-Hook sicherstellen (ältere Installationen hatten keinen)
 gd_certbot_hook
 
-gd_msg "🔓 Zertifikate erneuern" "Es werden alle Zertifikate geprüft und erneuert, die in den nächsten 30 Tagen ablaufen. Die Webseiten bleiben dabei erreichbar." 10 70
+gd_msg "✱ Zertifikate erneuern" "Es werden alle Zertifikate geprüft und erneuert, die in den nächsten 30 Tagen ablaufen. Die Webseiten bleiben dabei erreichbar." 10 70
 
 clear
 echo "Zertifikate werden geprüft und bei Bedarf erneuert..."
@@ -34,7 +34,7 @@ echo "$renew_output" >> "$GD_LOG"
 
 text=""
 if grep -q "failed" <<< "$renew_output"; then
-    title="⚠️ Probleme bei der Erneuerung"
+    title="⚠ Probleme bei der Erneuerung"
     text="Mindestens ein Zertifikat konnte nicht erneuert werden:\n\n"
     while IFS= read -r line; do
         domain="$(grep -oE '/etc/letsencrypt/live/[^/]+' <<< "$line" | cut -d/ -f5)"
@@ -52,7 +52,7 @@ if grep -q "failed" <<< "$renew_output"; then
     fi
     text+="\n\nDas vollständige Protokoll findest du hier: $GD_LOG"
 else
-    title="✅ Erneuerung abgeschlossen"
+    title="✔ Erneuerung abgeschlossen"
     text="Alle Zertifikate wurden geprüft und bei Bedarf erneuert. Es wurden keine Probleme festgestellt.\n\n"
 fi
 

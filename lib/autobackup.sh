@@ -75,6 +75,16 @@ elif command -v "$SQL" >/dev/null 2>&1; then
         fi
     done
 fi
+# Pelican nutzt standardmäßig SQLite: konsistente Kopie über die SQLite-Backup-API statt der laufenden Datei
+PELICAN_SQLITE=/var/www/pelican/database/database.sqlite
+if [ -f "$PELICAN_SQLITE" ]; then
+    if php -r '$s = new SQLite3($argv[1], SQLITE3_OPEN_READONLY); $d = new SQLite3($argv[2]); exit($s->backup($d) ? 0 : 1);' \
+        "$PELICAN_SQLITE" "$DUMPS/pelican-database.sqlite" 2>>"$LOG"; then
+        log "Datenbank gesichert: Pelican (SQLite, $(du -h "$DUMPS/pelican-database.sqlite" | cut -f1))"
+    else
+        log "FEHLER: Pelican-Datenbank (SQLite) konnte nicht gesichert werden"; rc=1
+    fi
+fi
 
 # 2) Dateien sichern (restic speichert nur Änderungen seit dem letzten Backup)
 paths=()

@@ -73,9 +73,35 @@ gd_die() {
 # whiptail-Helfer
 # ---------------------------------------------------------------------------
 whiptail() {
-    # Deutsche Beschriftung der Buttons nur für whiptail setzen – global würde es die Ausgabe von
-    # Programmen wie "free" übersetzen ("Speicher:" statt "Mem:") und deren Auswertung zerstören.
-    LANGUAGE=de_DE.UTF-8:de command whiptail "$@"
+    # Deutsche Beschriftung der Buttons direkt setzen: Übersetzungen über die Spracheinstellung greifen
+    # nur, wenn eine deutsche Locale installiert ist (auf VPS-Images meist nicht). Eigene Angaben des
+    # Aufrufers (z. B. --ok-button) stehen danach und haben Vorrang.
+    # Größe an das Terminal anpassen: Zu große Dialoge schneidet whiptail sonst einfach ab
+    # (z. B. in kleinen SSH-Fenstern mit 80x24). Wird gekürzt, wird der Text scrollbar.
+    local args=("$@") i rows=24 cols=80 size extra=()
+    size="$(stty size < /dev/tty 2>/dev/null)" && read -r rows cols <<< "$size"
+    [ "${rows:-0}" -ge 10 ] 2>/dev/null || rows=24
+    [ "${cols:-0}" -ge 40 ] 2>/dev/null || cols=80
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        case "${args[i]}" in
+            --msgbox|--yesno|--inputbox|--passwordbox|--textbox|--gauge|--menu|--checklist|--radiolist|--infobox)
+                local h="${args[i+2]:-0}" w="${args[i+3]:-0}"
+                if [[ "$h" =~ ^[0-9]+$ ]] && [ "$h" -gt $((rows - 1)) ]; then
+                    args[i+2]=$((rows - 1))
+                    case "${args[i]}" in --msgbox|--yesno) extra=(--scrolltext) ;; esac
+                    # Listenhöhe von Menüs mitverkleinern
+                    if [[ "${args[i]}" =~ ^--(menu|checklist|radiolist)$ ]] && [[ "${args[i+4]:-}" =~ ^[0-9]+$ ]] \
+                        && [ "${args[i+4]}" -gt $((rows - 9)) ]; then
+                        args[i+4]=$((rows - 9))
+                    fi
+                fi
+                if [[ "$w" =~ ^[0-9]+$ ]] && [ "$w" -gt $((cols - 2)) ]; then
+                    args[i+3]=$((cols - 2))
+                fi
+                break ;;
+        esac
+    done
+    command whiptail --yes-button "Ja" --no-button "Nein" --ok-button "OK" --cancel-button "Abbrechen" "${extra[@]}" "${args[@]}"
 }
 
 gd_whip() {
@@ -140,7 +166,7 @@ gd_progress() {
         # und nicht die laufende Installation. Danach wird ohne Balken weitergearbeitet.
         if ! ( printf 'XXX\n%d\n%s\nXXX\n' "$1" "$2" >&7 ) 2>/dev/null; then
             GD_GAUGE_OPEN=0
-            exec 7>&- 2>/dev/null
+            { exec 7>&-; } 2>/dev/null   # nur den Balken schließen, stderr des Skripts unverändert lassen
             echo "[$1%] $2"
         fi
     else
@@ -170,9 +196,10 @@ gd_step() {
 gd_fail() {
     gd_gauge_close
     local tail_text
-    tail_text="$(tail -n 12 "$GD_LOG" 2>/dev/null | cut -c1-110)"
+    tail_text="$(tail -n "$( [ -n "${GD_FAIL_HINT:-}" ] && echo 8 || echo 12)" "$GD_LOG" 2>/dev/null | tr -d '\r' | cut -c1-110)"
     gd_log "FEHLGESCHLAGEN: $1"
-    gd_whip --title "❌ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 26 118
+    # GD_FAIL_HINT: zusätzlicher Hinweis, z. B. wenn das Panel bereits fertig ist und nur ein späterer Schritt scheitert
+    gd_whip --title "✖ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1${GD_FAIL_HINT:+\n\n$GD_FAIL_HINT}\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 30 118
     clear
     gd_die "Schritt fehlgeschlagen: $1"
 }
@@ -186,6 +213,21 @@ gd_require_root() {
         echo "Falls du nicht der Administrator des Servers bist, bitte ihn, dir temporär Zugriff zu erteilen."
         exit 1
     fi
+    gd_ensure_base_tools
+}
+
+gd_ensure_base_tools() {
+    # Fehlen auf Minimal-Systemen Grundwerkzeuge (z. B. wenn ein Unterskript direkt gestartet wird),
+    # werden sie still nachinstalliert – sonst scheitern DNS-/IP-Prüfungen mit irreführenden Meldungen
+    local miss=() c
+    for c in whiptail:whiptail curl:curl dig:dnsutils jq:jq ip:iproute2 gpg:gnupg fuser:psmisc; do
+        command -v "${c%%:*}" >/dev/null 2>&1 || miss+=("${c#*:}")
+    done
+    [ ${#miss[@]} -eq 0 ] && return 0
+    echo "Benötigte Grundpakete werden installiert: ${miss[*]} ..."
+    { gd_apt update && gd_apt_install "${miss[@]}"; } >/dev/null 2>&1 \
+        || echo "Hinweis: Nicht alle Grundpakete konnten installiert werden (${miss[*]})."
+    return 0
 }
 
 gd_wait_for_apt() {
@@ -436,12 +478,12 @@ gd_dns_check_dialog() {
     dns_ips="$(gd_resolve_a "$domain")"
 
     if [ -z "$dns_ips" ]; then
-        gd_msg "❌ Domain-Überprüfung" "Für die Domain $domain wurde kein A-Eintrag (IPv4) gefunden.\n\nLege bei deinem Domain-Anbieter einen A-Eintrag an, der auf die IP-Adresse dieses Servers zeigt:\n\n$server_ip\n\nDNS-Änderungen können einige Minuten dauern." 16 78
+        gd_msg "✖ Domain-Überprüfung" "Für die Domain $domain wurde kein A-Eintrag (IPv4) gefunden.\n\nLege bei deinem Domain-Anbieter einen A-Eintrag an, der auf die IP-Adresse dieses Servers zeigt:\n\n$server_ip\n\nDNS-Änderungen können einige Minuten dauern." 16 78
         return 1
     fi
 
     if grep -qxF "$server_ip" <<< "$dns_ips"; then
-        gd_msg "✅ Domain-Überprüfung" "Die Domain $domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft." 10 78
+        gd_msg "✔ Domain-Überprüfung" "Die Domain $domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft." 10 78
         return 0
     fi
 
@@ -450,7 +492,7 @@ gd_dns_check_dialog() {
     if gd_is_cloudflare_ip "$first_ip"; then
         hint="\n\nDie Domain zeigt auf Cloudflare. Deaktiviere in Cloudflare den Proxy (graue Wolke, 'DNS only'), sonst können weder das SSL-Zertifikat noch Wings funktionieren."
     fi
-    gd_msg "❌ Domain-Überprüfung" "Die Domain $domain zeigt auf eine andere IP-Adresse.\n\nDNS-Eintrag: $(tr '\n' ' ' <<< "$dns_ips")\nDieser Server: $server_ip\n\nPrüfe die DNS-Einträge auf Schreibfehler.${hint}" 18 78
+    gd_msg "✖ Domain-Überprüfung" "Die Domain $domain zeigt auf eine andere IP-Adresse.\n\nDNS-Eintrag: $(tr '\n' ' ' <<< "$dns_ips")\nDieser Server: $server_ip\n\nPrüfe die DNS-Einträge auf Schreibfehler.${hint}" 18 78
     return 1
 }
 

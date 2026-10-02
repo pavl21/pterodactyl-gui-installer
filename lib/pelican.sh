@@ -124,6 +124,8 @@ gd_pelican_env_set() {
     if grep -q "^$1=" "$file"; then
         sed -i "s|^$1=.*|$1=$2|" "$file"
     else
+        # Die .env endet oft ohne Zeilenumbruch – sonst würde der neue Eintrag an die letzte Zeile angehängt
+        [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ] && echo >> "$file"
         echo "$1=$2" >> "$file"
     fi
 }
@@ -147,9 +149,28 @@ gd_pelican_configure() {
 }
 
 gd_pelican_services() {
-    local cron_line="* * * * * php ${PELICAN_DIR}/artisan schedule:run >> /dev/null 2>&1"
+    local cron_line="* * * * * /usr/bin/php${PELICAN_PHP} ${PELICAN_DIR}/artisan schedule:run >> /dev/null 2>&1"
     { crontab -l 2>/dev/null | grep -vF "${PELICAN_DIR}/artisan schedule:run"; echo "$cron_line"; } | crontab - || return 1
-    (cd "$PELICAN_DIR" && php artisan p:environment:queue-service --service-name=pelican-queue --user=www-data --group=www-data --overwrite) || return 1
+    # Entspricht "php artisan p:environment:queue-service", aber direkt geschrieben: der Befehl
+    # weicht bei vorhandener /.dockerenv auf supervisor aus und liefert bei Fehlern trotzdem Exit-Code 0
+    cat > /etc/systemd/system/pelican-queue.service <<EOF_SVC || return 1
+# Pelican Queue File – angelegt von GermanDactyl Setup
+[Unit]
+Description=Pelican Queue Service
+After=redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=/usr/bin/php${PELICAN_PHP} ${PELICAN_DIR}/artisan queue:work --tries=3
+StartLimitInterval=180
+StartLimitBurst=30
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF_SVC
     systemctl daemon-reload
     systemctl enable --now pelican-queue
 }
@@ -177,8 +198,7 @@ gd_pelican_wings_binary() {
     arch="$(gd_arch)"
     case "$arch" in amd64|arm64) ;; *) echo "Nicht unterstützte Architektur: $arch"; return 1 ;; esac
     mkdir -p /etc/pelican /var/lib/pelican/volumes
-    curl -fL "https://github.com/pelican/wings/releases/latest/download/wings_linux_${arch}" -o "$GD_TMP/wings" || return 1
-    install -m 0755 "$GD_TMP/wings" "$PELICAN_WINGS_BIN"
+    gd_wings_fetch "https://github.com/pelican/wings/releases/latest/download/wings_linux_${arch}" "$PELICAN_WINGS_BIN"
 }
 
 gd_pelican_wings_service() {
@@ -194,7 +214,7 @@ PartOf=docker.service
 User=root
 WorkingDirectory=/etc/pelican
 LimitNOFILE=4096
-PIDFile=/var/run/wings/daemon.pid
+PIDFile=/run/wings/daemon.pid
 ExecStart=/usr/local/bin/wings
 Restart=on-failure
 StartLimitInterval=180
@@ -220,7 +240,8 @@ gd_pelican_node() {
         --daemonConnectingPort=8080 --daemonSFTPPort=2022 --daemonSFTPAlias="" --daemonBase=/var/lib/pelican/volumes)" \
         || { echo "$out"; return 1; }
     echo "$out"
-    GD_NODE_ID="$(grep -oE 'id of [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
+    # Meldung ist übersetzt (APP_LOCALE=de: "... hat die ID 1", englisch: "... has an id of 1")
+    GD_NODE_ID="$(grep -oiE '(id of|id) [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
     [ -n "$GD_NODE_ID" ] || return 1
     gd_pelican_artisan_www p:node:configuration "$GD_NODE_ID" --format=yaml > "$GD_TMP/pelican-config.yml" || return 1
     grep -q '^token:' "$GD_TMP/pelican-config.yml" || return 1

@@ -70,7 +70,8 @@ EOF
 }
 
 gd_fail2ban_setup() {
-    gd_apt_install fail2ban || return 1
+    # python3-systemd wird für "backend = systemd" benötigt (nur "empfohlen" – ohne startet fail2ban nicht)
+    gd_apt_install fail2ban python3-systemd || return 1
     local ports
     ports="$(gd_ssh_ports | paste -sd, -)"
     cat > /etc/fail2ban/jail.d/germandactyl.local <<EOF
@@ -83,19 +84,25 @@ maxretry = 5
 findtime = 10m
 bantime  = 1h
 EOF
-    systemctl enable --now fail2ban && systemctl restart fail2ban
+    systemctl enable --now fail2ban && systemctl restart fail2ban || return 1
+    sleep 2
+    systemctl is-active --quiet fail2ban || { journalctl -u fail2ban -n 20 --no-pager; return 1; }
 }
 
 gd_unattended_upgrades_setup() {
     gd_apt_install unattended-upgrades apt-listchanges || return 1
     echo 'unattended-upgrades unattended-upgrades/enable_auto_updates boolean true' | debconf-set-selections
     dpkg-reconfigure -f noninteractive unattended-upgrades
+    # Direkt setzen: dpkg-reconfigure überschreibt eine bereits geänderte Datei nicht
+    printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' > /etc/apt/apt.conf.d/20auto-upgrades
+    systemctl enable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
+    return 0
 }
 
 gd_security_ask() {
     # Fragt die optionalen Sicherheitsfunktionen ab. Setzt GD_SEC_UFW, GD_SEC_FAIL2BAN, GD_SEC_UPDATES (true/false)
     local sel
-    sel=$(whiptail --title "🛡️ Absicherung des Servers" --checklist "Welche Schutzmaßnahmen sollen eingerichtet werden? (Leertaste = an/aus)\n\nDie Firewall gibt automatisch deinen SSH-Port frei, damit du dich nicht aussperrst." 19 80 4 \
+    sel=$(whiptail --title "✚ Absicherung des Servers" --checklist "Welche Schutzmaßnahmen sollen eingerichtet werden? (Leertaste = an/aus)\n\nDie Firewall gibt automatisch deinen SSH-Port frei, damit du dich nicht aussperrst." 19 80 4 \
         "UFW" "Firewall aktivieren und benötigte Ports freigeben" ON \
         "FAIL2BAN" "Angriffe auf SSH automatisch sperren" ON \
         "UPDATES" "Sicherheitsupdates automatisch installieren" ON \
@@ -111,8 +118,11 @@ gd_security_ask() {
 gd_security_steps() {
     # gd_security_steps <start-prozent> <mit_wings> [portbereich] – innerhalb eines offenen Fortschrittsbalkens
     local p="$1" with_wings="$2" range="${3:-}"
-    gd_step "$p" "Sicherheit: Datenbank wird abgesichert..." gd_mariadb_harden
-    gd_step "$p" "Sicherheit: Redis wird geprüft..." gd_redis_check
+    # Pelican nutzt standardmäßig SQLite – MariaDB/Redis nur prüfen, wenn sie installiert sind
+    if command -v mariadb >/dev/null 2>&1 || command -v mysql >/dev/null 2>&1; then
+        gd_step "$p" "Sicherheit: Datenbank wird abgesichert..." gd_mariadb_harden
+    fi
+    [ -f /etc/redis/redis.conf ] && gd_step "$p" "Sicherheit: Redis wird geprüft..." gd_redis_check
     if [ "${GD_SEC_UFW:-false}" = "true" ]; then
         gd_step $((p + 1)) "Sicherheit: Firewall wird eingerichtet..." gd_firewall_setup "$with_wings" "$range"
     fi
@@ -126,5 +136,7 @@ gd_security_steps() {
         # Täglich 04:00 Uhr, lokal, Gameserver nur mit Wings auf diesem Server
         gd_step $((p + 4)) "Automatische Backups werden eingerichtet..." gd_ab_setup "$GD_BACKUP_ROOT/restic" "$with_wings" "04:00"
         gd_step $((p + 4)) "jq wird installiert..." gd_apt_install jq
+        # Erstes Backup sofort erstellen (auf einem neuen Server geht das schnell)
+        gd_step $((p + 5)) "Erstes Backup wird erstellt..." "$GD_AB_SCRIPT"
     fi
 }
