@@ -198,8 +198,7 @@ gd_pelican_wings_binary() {
     arch="$(gd_arch)"
     case "$arch" in amd64|arm64) ;; *) echo "Nicht unterstützte Architektur: $arch"; return 1 ;; esac
     mkdir -p /etc/pelican /var/lib/pelican/volumes
-    curl -fL "https://github.com/pelican/wings/releases/latest/download/wings_linux_${arch}" -o "$GD_TMP/wings" || return 1
-    install -m 0755 "$GD_TMP/wings" "$PELICAN_WINGS_BIN"
+    gd_wings_fetch "https://github.com/pelican/wings/releases/latest/download/wings_linux_${arch}" "$PELICAN_WINGS_BIN"
 }
 
 gd_pelican_wings_service() {

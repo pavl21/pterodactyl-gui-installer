@@ -196,9 +196,10 @@ gd_step() {
 gd_fail() {
     gd_gauge_close
     local tail_text
-    tail_text="$(tail -n 12 "$GD_LOG" 2>/dev/null | cut -c1-110)"
+    tail_text="$(tail -n "$( [ -n "${GD_FAIL_HINT:-}" ] && echo 8 || echo 12)" "$GD_LOG" 2>/dev/null | tr -d '\r' | cut -c1-110)"
     gd_log "FEHLGESCHLAGEN: $1"
-    gd_whip --title "✖ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 26 118
+    # GD_FAIL_HINT: zusätzlicher Hinweis, z. B. wenn das Panel bereits fertig ist und nur ein späterer Schritt scheitert
+    gd_whip --title "✖ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1${GD_FAIL_HINT:+\n\n$GD_FAIL_HINT}\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 30 118
     clear
     gd_die "Schritt fehlgeschlagen: $1"
 }

@@ -118,6 +118,42 @@ gd_show_credentials() {
     whiptail --title "✱ Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
 }
 
+GD_PENDING_CREDENTIALS="/etc/germandactyl/zugangsdaten-ausstehend"
+
+gd_pending_credentials_save() {
+    # Zugangsdaten zwischenspeichern (nur root), bis sie am Ende angezeigt wurden
+    mkdir -p "$(dirname "$GD_PENDING_CREDENTIALS")"
+    ( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
+        "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_PASSWORD" > "$GD_PENDING_CREDENTIALS" )
+}
+
+gd_resume_install() {
+    # Panel ist fertig, ein späterer Schritt (Wings oder Absicherung) wurde nicht abgeschlossen
+    local mode text
+    mode="$(gd_conf_get INSTALL_MODE)"
+    if [ "$mode" = "panel_wings" ] && [ ! -f /etc/pterodactyl/config.yml ]; then
+        text="Dein Panel ist installiert, aber die Einrichtung von Wings wurde nicht abgeschlossen.\n\nSoll Wings jetzt fertig eingerichtet werden? Das Panel bleibt dabei unverändert."
+    else
+        text="Dein Panel ist installiert, aber die letzten Schritte (z. B. Absicherung) wurden nicht abgeschlossen.\n\nFirewall, fail2ban, automatische Updates und Backups kannst du in der Verwaltung unter 'Server & Sicherheit' bzw. 'Backups' einrichten."
+        mode="panel"
+    fi
+    if [ -s "$GD_PENDING_CREDENTIALS" ]; then
+        # shellcheck disable=SC1090
+        . "$GD_PENDING_CREDENTIALS"
+        gd_show_credentials
+    fi
+    if [ "$mode" = "panel_wings" ]; then
+        gd_yesno "⇄ Einrichtung fortsetzen" "$text" 13 76 || return 0
+        gd_run wings-installer.sh
+        [ -f /etc/pterodactyl/config.yml ] || return 0
+    else
+        gd_msg "⇄ Einrichtung fortsetzen" "$text" 13 76
+    fi
+    gd_conf_set INSTALL_STATE fertig
+    rm -f "$GD_PENDING_CREDENTIALS"
+    gd_shortcut_install >> "$GD_LOG" 2>&1
+}
+
 gd_save_credentials() {
     local file="/root/germandactyl-zugangsdaten.txt"
     umask 077
@@ -206,13 +242,21 @@ gd_fresh_install() {
 
     gd_gauge_open "➜ Pterodactyl wird installiert" "Installation wird vorbereitet..."
     gd_panel_install_steps
+    # Ab hier ist das Panel nutzbar. Scheitert ein späterer Schritt (Wings, Absicherung), gehen die
+    # Zugangsdaten nicht verloren und der nächste Start setzt die Einrichtung fort, statt neu zu installieren.
+    gd_conf_set INSTALL_STATE panel_fertig
+    gd_conf_set INSTALL_MODE "$mode"
+    gd_pending_credentials_save
+    GD_FAIL_HINT="Das Panel selbst ist fertig installiert: https://${GD_DOMAIN}\nBenutzername: ${GD_ADMIN_USER}   Passwort: ${GD_ADMIN_PASSWORD}\nStarte das Skript erneut, um die Einrichtung fortzusetzen."
     if $with_wings; then
         gd_wings_local_steps 72
     fi
     gd_security_steps 91 "$with_wings" "${GD_PORT_RANGE:-}"
     gd_progress 100 "Installation abgeschlossen."
     gd_gauge_close
+    GD_FAIL_HINT=""
     gd_conf_set INSTALL_STATE fertig
+    rm -f "$GD_PENDING_CREDENTIALS"
     gd_shortcut_install >> "$GD_LOG" 2>&1
 
     # --- Abschluss ------------------------------------------------------------
@@ -291,6 +335,10 @@ if [ -d "$PTERO_DIR" ] && [ "$(gd_conf_get INSTALL_STATE)" = "laeuft" ]; then
         gd_conf_set INSTALL_STATE neu
     fi
     gd_warn_colors_off
+fi
+
+if [ -d "$PTERO_DIR" ] && [ "$(gd_conf_get INSTALL_STATE)" = "panel_fertig" ]; then
+    gd_resume_install
 fi
 
 if [ -d "$PTERO_DIR" ] || [ -f /etc/pterodactyl/config.yml ]; then

@@ -28,16 +28,40 @@ gd_docker_install() {
     systemctl enable --now docker
 }
 
+gd_wings_fetch() {
+    # gd_wings_fetch <url> <ziel> – Wings herunterladen, prüfen und installieren.
+    # Wings veröffentlicht keine Prüfsummen-Datei; daher wird geprüft, dass ein vollständiges,
+    # auf dieser Architektur lauffähiges Programm angekommen ist (statt z. B. einer HTML-Fehlerseite).
+    local url="$1" dest="$2" tmp="$GD_TMP/wings.download" size
+    rm -f "$tmp"
+    curl -fL --retry 3 --retry-delay 3 --connect-timeout 20 "$url" -o "$tmp" \
+        || { echo "Download fehlgeschlagen: $url"; return 1; }
+    size="$(stat -c %s "$tmp" 2>/dev/null || echo 0)"
+    if [ "$size" -lt 5000000 ] || [ "$(head -c 4 "$tmp" | od -An -c | tr -d ' ')" != "177ELF" ]; then
+        echo "Die heruntergeladene Datei ist kein gültiges Wings-Programm (${size} Bytes)."
+        return 1
+    fi
+    chmod 0755 "$tmp"
+    # "wings version" gibt es seit Wings 1.0 (ein Flag "--version" gibt es nicht); "--help" als Rückfallebene
+    if ! timeout 20 "$tmp" version >/dev/null 2>&1 && ! timeout 20 "$tmp" --help >/dev/null 2>&1; then
+        echo "Das heruntergeladene Wings-Programm lässt sich auf diesem Server nicht ausführen (Architektur: $(gd_arch))."
+        return 1
+    fi
+    # install ersetzt die Datei atomar – funktioniert auch, während Wings läuft (Update)
+    install -m 0755 "$tmp" "$dest" || return 1
+    rm -f "$tmp"
+    echo "Installiert: Wings v$("$dest" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -n1)"
+    return 0
+}
+
 gd_wings_binary() {
     local arch version
     arch="$(gd_arch)"
     case "$arch" in amd64|arm64) ;; *) echo "Nicht unterstützte Architektur: $arch"; return 1 ;; esac
     version="$(gd_latest_release pterodactyl/wings)" || { echo "Die aktuelle Wings-Version konnte nicht ermittelt werden."; return 1; }
     mkdir -p /etc/pterodactyl /var/lib/pterodactyl/volumes
-    curl -fL "https://github.com/pterodactyl/wings/releases/download/v${version}/wings_linux_${arch}" -o "$GD_TMP/wings" || return 1
-    install -m 0755 "$GD_TMP/wings" "$WINGS_BIN" || return 1
+    gd_wings_fetch "https://github.com/pterodactyl/wings/releases/download/v${version}/wings_linux_${arch}" "$WINGS_BIN" || return 1
     gd_conf_set WINGS_VERSION "$version"
-    "$WINGS_BIN" version
 }
 
 gd_wings_service() {
@@ -234,17 +258,18 @@ gd_wings_allocations() {
 gd_wings_local_steps() {
     # Wings auf demselben Server wie das Panel – vollautomatisch.
     # Erwartet: GD_WINGS_FQDN, GD_EMAIL, GD_PORT_RANGE
-    local p="${1:-72}"
-    gd_step "$p"        "Docker wird installiert..." gd_docker_install
-    gd_step $((p + 6))  "Wings wird heruntergeladen..." gd_wings_binary
-    gd_step $((p + 8))  "Wings-Dienst wird eingerichtet..." gd_wings_service
-    gd_step $((p + 9))  "SSL-Zertifikat für Wings wird geprüft..." gd_wings_certificate "$GD_WINGS_FQDN" "$GD_EMAIL"
-    gd_step $((p + 10)) "Node wird im Panel angelegt..." gd_wings_node_create "$GD_WINGS_FQDN"
-    gd_step $((p + 12)) "Wings-Konfiguration wird geschrieben..." gd_wings_config_write
-    gd_step $((p + 13)) "Ports ${GD_PORT_RANGE} werden für Gameserver freigegeben..." gd_wings_allocations "$GD_PORT_RANGE"
-    gd_step $((p + 14)) "Docker-Netzwerk für Gameserver wird vorbereitet..." gd_wings_network_prepare
-    gd_step $((p + 15)) "Wings wird gestartet..." gd_wings_start
-    gd_step $((p + 17)) "Verbindung zwischen Panel und Wings wird geprüft..." gd_wings_verify "$GD_WINGS_FQDN"
+    # gd_wings_local_steps [start-prozent] [spanne] – die Schritte werden auf die Spanne verteilt
+    local p="${1:-72}" span="${2:-17}"
+    gd_step "$p" "Docker wird installiert..." gd_docker_install
+    gd_step $((p + 6 * span / 17)) "Wings wird heruntergeladen..." gd_wings_binary
+    gd_step $((p + 8 * span / 17)) "Wings-Dienst wird eingerichtet..." gd_wings_service
+    gd_step $((p + 9 * span / 17)) "SSL-Zertifikat für Wings wird geprüft..." gd_wings_certificate "$GD_WINGS_FQDN" "$GD_EMAIL"
+    gd_step $((p + 10 * span / 17)) "Node wird im Panel angelegt..." gd_wings_node_create "$GD_WINGS_FQDN"
+    gd_step $((p + 12 * span / 17)) "Wings-Konfiguration wird geschrieben..." gd_wings_config_write
+    gd_step $((p + 13 * span / 17)) "Ports ${GD_PORT_RANGE} werden für Gameserver freigegeben..." gd_wings_allocations "$GD_PORT_RANGE"
+    gd_step $((p + 14 * span / 17)) "Docker-Netzwerk für Gameserver wird vorbereitet..." gd_wings_network_prepare
+    gd_step $((p + 15 * span / 17)) "Wings wird gestartet..." gd_wings_start
+    gd_step $((p + 17 * span / 17)) "Verbindung zwischen Panel und Wings wird geprüft..." gd_wings_verify "$GD_WINGS_FQDN"
     gd_conf_set WINGS_FQDN "$GD_WINGS_FQDN"
     gd_conf_set WINGS_NODE_ID "$GD_NODE_ID"
 }

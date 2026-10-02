@@ -114,10 +114,10 @@ gd_wings_install_local() {
 
     gd_gauge_open "⇄ Wings wird eingerichtet" "Einrichtung wird vorbereitet..."
     gd_step 2 "Paketquellen werden aktualisiert..." gd_apt update
-    gd_wings_local_steps 5
-    gd_step 25 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
+    gd_wings_local_steps 5 80
+    gd_step 88 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
     if [ "$GD_SEC_UFW" = "true" ]; then
-        gd_step 28 "Firewall wird eingerichtet..." gd_firewall_setup true "$GD_PORT_RANGE"
+        gd_step 94 "Firewall wird eingerichtet..." gd_firewall_setup true "$GD_PORT_RANGE"
     fi
     gd_progress 100 "Wings ist eingerichtet."
     gd_gauge_close

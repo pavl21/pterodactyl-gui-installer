@@ -116,7 +116,7 @@ gd_uninstall() {
     $remove_panel && gd_step 70 "Panel und Datenbank werden entfernt..." gd_uninstall_panel
     gd_progress 100 "Deinstallation abgeschlossen."
     gd_gauge_close
-    rm -f "$GD_CONF_FILE"
+    rm -f "$GD_CONF_FILE" /etc/germandactyl/zugangsdaten-ausstehend
 
     gd_msg "✔ Deinstallation abgeschlossen" "Pterodactyl wurde entfernt.\n\nWeiterhin installiert bleiben: nginx, MariaDB, PHP, Redis, Docker und vorhandene SSL-Zertifikate, damit andere Dienste auf diesem Server nicht beeinträchtigt werden.$( $do_backup && echo "\n\nDeine Sicherung liegt in: $GD_BACKUP_ROOT (über die Backup-Verwaltung wiederherstellbar)")$( $remove_panel && echo "\n\nHinweis: Datenbanken, die deine Gameserver über einen Database-Host angelegt hatten, bleiben erhalten.")" 15 78
     return 0
