@@ -27,6 +27,8 @@ case "${LC_ALL:-${LANG:-}}" in
     *) export LC_ALL=C.UTF-8 LANG=C.UTF-8 ;;
 esac
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+# Ohne gültiges TERM verweigert whiptail jeden Dialog (jede Ja/Nein-Frage gälte dann als "Nein")
+case "${TERM:-}" in ""|dumb|unknown) export TERM=xterm ;; esac
 # Nach "su" (ohne "-") fehlen unter Debian die sbin-Verzeichnisse – dann wären nginx, sshd, ufw usw. nicht auffindbar
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
@@ -82,7 +84,9 @@ whiptail() {
     # (z. B. in kleinen SSH-Fenstern mit 80x24). Wird gekürzt, wird der Text scrollbar.
     local args=("$@") i rows=24 cols=80 size extra=()
     size="$(stty size < /dev/tty 2>/dev/null)" && read -r rows cols <<< "$size"
-    [ "${rows:-0}" -ge 10 ] 2>/dev/null || rows=24
+    # Unbekannte Größe -> 80x24 annehmen; sehr kleine Fenster nicht vergrößern, sondern auf ein Minimum begrenzen
+    [ "${rows:-0}" -ge 1 ] 2>/dev/null || rows=24
+    [ "$rows" -lt 8 ] && rows=8
     [ "${cols:-0}" -ge 40 ] 2>/dev/null || cols=80
     for ((i = 0; i < ${#args[@]}; i++)); do
         case "${args[i]}" in
@@ -99,6 +103,8 @@ whiptail() {
                 fi
                 if [[ "$w" =~ ^[0-9]+$ ]] && [ "$w" -gt $((cols - 2)) ]; then
                     args[i+3]=$((cols - 2))
+                    # Schmalere Dialoge brechen mehr Zeilen um – Text scrollbar machen, damit nichts abgeschnitten wird
+                    case "${args[i]}" in --msgbox|--yesno) extra=(--scrolltext) ;; esac
                 fi
                 break ;;
         esac

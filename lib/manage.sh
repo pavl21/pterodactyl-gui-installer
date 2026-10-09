@@ -10,6 +10,14 @@ GD_SHORTCUT_SHORT="/usr/local/bin/gmd"
 # ---------------------------------------------------------------------------
 # Kurzbefehle
 # ---------------------------------------------------------------------------
+gd_panel_php_fpm() {
+    # PHP-FPM-Dienst, den das Panel tatsächlich nutzt (laut nginx), sonst der neueste vorhandene
+    local f
+    f="$(grep -ohE 'php[0-9]+\.[0-9]+-fpm' /etc/nginx/sites-available/pterodactyl.conf 2>/dev/null | head -n1)"
+    [ -z "$f" ] && f="$(systemctl list-units --type=service --all 'php*-fpm.service' --no-legend --plain 2>/dev/null | awk '{print $1}' | grep '\.service$' | sed 's/\.service$//' | sort -V | tail -n1)"
+    echo "$f"
+}
+
 gd_shortcut_install() {
     # "germandactyl" startet immer die aktuelle Version; "gmd" nur, wenn es den Befehl noch nicht gibt
     cat > "$GD_SHORTCUT" <<EOF
@@ -17,9 +25,13 @@ gd_shortcut_install() {
 # Pfad: $GD_SHORTCUT – angelegt von GermanDactyl Setup
 # Startet die jeweils aktuelle Version von GermanDactyl Setup (Installation und Verwaltung).
 if [ "\$(id -u)" != "0" ]; then exec sudo "\$0" "\$@"; fi
-script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/${GD_BRANCH}/installer.sh")" || {
-    echo "GermanDactyl Setup konnte nicht geladen werden. Prüfe die Internetverbindung."; exit 1; }
-GD_BRANCH="${GD_BRANCH}" exec bash -c "\$script"
+branch="${GD_BRANCH}"
+script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/\${branch}/installer.sh")" || {
+    # Branch existiert nicht mehr (z. B. Test-Branch gelöscht) -> auf main zurückfallen
+    branch="main"
+    script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/main/installer.sh")"
+} || { echo "GermanDactyl Setup konnte nicht geladen werden. Prüfe die Internetverbindung."; exit 1; }
+GD_BRANCH="\$branch" exec bash -c "\$script"
 EOF
     chmod 755 "$GD_SHORTCUT"
     if [ ! -e "$GD_SHORTCUT_SHORT" ] && ! command -v gmd >/dev/null 2>&1; then
@@ -55,7 +67,7 @@ gd_collect_status() {
     local line1="" line2="" svc php_fpm days domain code last age usage
     GD_PROBLEMS=0
     domain="$(gd_conf_get PANEL_DOMAIN)"
-    php_fpm="$(systemctl list-units --type=service --all 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}' | sort -V | tail -n1)"
+    php_fpm="$(gd_panel_php_fpm)"
 
     if gd_has_panel; then
         local ok=true
@@ -529,7 +541,7 @@ gd_support_package() {
         echo "Blueprint: $(blueprint -v 2>/dev/null | tail -n1)"
         echo; echo "== setup.conf (ohne Geheimnisse)"; grep -vE 'PASS|KEY|TOKEN' "$GD_CONF_FILE" 2>/dev/null
         echo; echo "== Dienste"
-        for s in nginx php8.3-fpm mariadb redis-server pteroq wings docker fail2ban germandactyl-backup.timer; do
+        for s in nginx "$(gd_panel_php_fpm)" mariadb redis-server pteroq wings docker fail2ban germandactyl-backup.timer; do
             printf '%-28s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null)"
         done
         echo; echo "== Ressourcen"; LC_ALL=C free -m; df -h /

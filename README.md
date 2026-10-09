@@ -10,7 +10,9 @@ Das Skript ist eigenständig: Panel und Wings werden nach der offiziellen Dokume
 sudo bash -c "$(curl -sSL https://setup.germandactyl.de/)"
 ```
 
-Ist Pterodactyl bereits installiert, öffnet sich stattdessen die Verwaltung. Dort findest du Problembehandlung, Updates, Wings, Blueprint, phpMyAdmin, Backups, Database-Host, SSH-Loginseite, Swap und die Deinstallation.
+Ist Pterodactyl bereits installiert, öffnet sich stattdessen die Verwaltung. Dort findest du Hilfe & Analyse, Updates, Backups, Wings und Ports, Blueprint, phpMyAdmin, Database-Host, Firewall, fail2ban, SSH-Loginseite, Swap und die Deinstallation.
+
+Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germandactyl` bzw. kurz `gmd` (nur, wenn es auf dem Server noch keinen Befehl `gmd` gibt).
 
 ## Voraussetzungen
 
@@ -33,6 +35,7 @@ Ist Pterodactyl bereits installiert, öffnet sich stattdessen die Verwaltung. Do
   - fail2ban
   - Automatische Sicherheitsupdates
   - Absicherung der MariaDB
+- **Automatische Backups (optional):** täglich, inkrementell und verschlüsselt mit restic – Panel, alle Datenbanken (auch die der Gameserver), Konfigurationen und auf Wunsch die Gameserver-Daten. Das Passwort des Backup-Archivs wird am Ende angezeigt; bewahre es sicher auf, ohne es lassen sich die Backups nicht wiederherstellen.
 - **Blueprint (optional):** Das Framework für Erweiterungen und Themes ([blueprint.zip](https://blueprint.zip)). Es wird bei Panel-Updates automatisch erneut angewendet.
 
 ## Voreinstellungen
@@ -45,4 +48,4 @@ Ist Pterodactyl bereits installiert, öffnet sich stattdessen die Verwaltung. Do
 
 Dies ist ein inoffizielles Projekt. Die Nutzung erfolgt auf eigene Verantwortung. Erstelle vor Updates und Änderungen immer ein Backup, zum Beispiel über die Backup-Verwaltung.
 
-Pelican (der Nachfolger von Pterodactyl) kann ebenfalls installiert werden. Pelican ist noch eine Beta-Version.
+Pelican (der Nachfolger von Pterodactyl) kann ebenfalls installiert werden – als Panel mit Wings auf demselben Server oder als reiner Wings-Server für ein Pelican-Panel auf einem anderen Server. Pelican ist noch eine Beta-Version; die Verwaltungsfunktionen (Backups, Blueprint, phpMyAdmin usw.) sind nur für Pterodactyl vorgesehen.

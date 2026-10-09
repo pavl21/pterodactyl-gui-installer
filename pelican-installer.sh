@@ -20,6 +20,7 @@ gd_source_lib wings
 gd_source_lib pelican
 gd_source_lib backup
 gd_source_lib autobackup
+gd_source_lib manage
 GD_PHP_VERSION="$PELICAN_PHP"
 
 # ---------------------------------------------------------------------------
@@ -28,17 +29,40 @@ GD_PHP_VERSION="$PELICAN_PHP"
 pelican_update() {
     gd_yesno "↑ Pelican aktualisieren" "Pelican wird auf die neueste Version aktualisiert. Das Panel ist dabei kurz nicht erreichbar.\n\nFortfahren?" 10 70 || return
     gd_gauge_open "↑ Pelican wird aktualisiert" "Aktualisierung wird vorbereitet..."
-    gd_step 5  "Wartungsmodus wird aktiviert..." bash -c "cd '$PELICAN_DIR' && (php artisan down || true)"
+    # Scheitert ein Schritt, das Panel nicht im Wartungsmodus zurücklassen
+    GD_FAIL_CLEANUP=pelican_update_cleanup
+    gd_step 5  "Wartungsmodus wird aktiviert..." gd_pelican_artisan_www down
     gd_step 10 "PHP ${PELICAN_PHP} wird sichergestellt..." gd_php_repo
     gd_step 20 "PHP-Pakete werden aktualisiert..." gd_pelican_packages
     gd_step 35 "Neueste Version wird heruntergeladen und Abhängigkeiten installiert..." gd_pelican_download
-    gd_step 70 "Datenbank wird aktualisiert..." bash -c "cd '$PELICAN_DIR' && php artisan migrate --seed --force && php artisan optimize:clear && php artisan filament:optimize"
-    gd_step 85 "Berechtigungen werden gesetzt..." bash -c "chmod -R 755 '$PELICAN_DIR'/storage/* '$PELICAN_DIR'/bootstrap/cache/ && chown -R www-data:www-data '$PELICAN_DIR'"
-    gd_step 90 "Dienste werden neu gestartet..." bash -c "cd '$PELICAN_DIR' && php artisan queue:restart; systemctl restart pelican-queue; php artisan up"
+    # Erst Rechte setzen, dann alle artisan-Befehle als www-data (sonst entstehen root-eigene Cache-/Logdateien)
+    gd_step 65 "Berechtigungen werden gesetzt..." bash -c "chmod -R 755 '$PELICAN_DIR'/storage/* '$PELICAN_DIR'/bootstrap/cache/ && chown -R www-data:www-data '$PELICAN_DIR'"
+    gd_step 70 "Datenbank wird aktualisiert..." bash -c "cd '$PELICAN_DIR' && runuser -u www-data -- env HOME=/tmp sh -c 'php artisan migrate --seed --force && php artisan optimize:clear && php artisan filament:optimize'"
+    gd_step 90 "Dienste werden neu gestartet..." bash -c "cd '$PELICAN_DIR' && runuser -u www-data -- env HOME=/tmp php artisan queue:restart; systemctl restart pelican-queue"
+    gd_step 95 "Panel wird wieder freigegeben..." gd_pelican_artisan_www up
+    GD_FAIL_CLEANUP=""
     gd_progress 100 "Fertig."
     gd_gauge_close
     gd_msg "✔ Aktualisierung abgeschlossen" "Pelican wurde aktualisiert." 8 50
 }
+
+pelican_update_cleanup() {
+    gd_pelican_artisan_www up >> "$GD_LOG" 2>&1
+    return 0
+}
+
+PELICAN_PENDING="/etc/germandactyl/pelican-zugangsdaten-ausstehend"
+
+# Panel fertig, aber ein späterer Schritt (Wings, Absicherung) abgebrochen: Zugangsdaten zeigen, nicht neu installieren
+if [ -d "$PELICAN_DIR" ] && [ "$(gd_conf_get PELICAN_INSTALL_STATE)" = "panel_fertig" ]; then
+    if [ -s "$PELICAN_PENDING" ]; then
+        # shellcheck disable=SC1090
+        . "$PELICAN_PENDING"
+        whiptail --title "✱ Deine Zugangsdaten" --msgbox "Die letzte Einrichtung wurde nach der Installation des Panels abgebrochen. Pelican selbst ist nutzbar.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nWings richtest du im nächsten Menü unter 'Wings installieren/verwalten' ein." 17 78
+        rm -f "$PELICAN_PENDING"
+    fi
+    gd_conf_set PELICAN_INSTALL_STATE fertig
+fi
 
 # Abgebrochene Installation: nicht als "installiert" behandeln, sondern Neuinstallation anbieten
 if [ -d "$PELICAN_DIR" ] && [ "$(gd_conf_get PELICAN_INSTALL_STATE)" = "laeuft" ]; then
@@ -102,6 +126,11 @@ gd_step 47 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_
 gd_step 50 "Pelican wird konfiguriert, Administrator wird angelegt..." gd_pelican_configure "$GD_DOMAIN" "$GD_EMAIL" "$GD_ADMIN_USER" "$GD_ADMIN_PASSWORD"
 gd_step 58 "Cronjob und Queue-Dienst werden eingerichtet..." gd_pelican_services
 gd_step 62 "Pelican wird auf Erreichbarkeit geprüft..." gd_pelican_healthcheck "$GD_DOMAIN"
+# Ab hier ist das Panel nutzbar: Zugangsdaten bei einem späteren Abbruch nicht verlieren
+gd_conf_set PELICAN_INSTALL_STATE panel_fertig
+( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
+    "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_PASSWORD" > "$PELICAN_PENDING" )
+GD_FAIL_HINT="Pelican selbst ist fertig installiert: https://${GD_DOMAIN}\nBenutzername: ${GD_ADMIN_USER}   Passwort: ${GD_ADMIN_PASSWORD}"
 if $WITH_WINGS; then
     gd_step 65 "Docker wird installiert..." gd_docker_install
     gd_step 75 "Wings wird heruntergeladen..." gd_pelican_wings_binary
@@ -128,6 +157,9 @@ gd_gauge_close
 
 gd_conf_set PELICAN_DOMAIN "$GD_DOMAIN"
 gd_conf_set PELICAN_INSTALL_STATE fertig
+rm -f "$PELICAN_PENDING"
+GD_FAIL_HINT=""
+gd_shortcut_install >> "$GD_LOG" 2>&1
 if [ "${GD_SEC_BACKUP:-false}" = "true" ] && [ -s "$GD_AB_PASS" ]; then
     gd_msg "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
 fi
@@ -141,7 +173,7 @@ if $WITH_WINGS; then
     fi
     [ "${ALLOC_OK:-false}" = "true" ] || text+="\n\nDie Ports konnten nicht automatisch angelegt werden. Füge sie im Panel unter 'Nodes' → deine Node → 'Allocations' hinzu (${GD_PORT_RANGE})."
 else
-    text="Pelican ist eingerichtet: https://${GD_DOMAIN}\n\nFür Gameserver brauchst du noch Wings. Starte das Skript dazu erneut."
+    text="Pelican ist eingerichtet: https://${GD_DOMAIN}\n\nFür Gameserver brauchst du noch Wings. Starte das Skript dazu erneut (Befehl: $(gd_shortcut_hint)) und wähle 'Wings installieren/verwalten'."
 fi
 [ -n "${GD_WARNINGS:-}" ] && text+="\n\n${GD_WARNINGS}"
 gd_msg "✔ Installation erfolgreich" "$text" 16 78

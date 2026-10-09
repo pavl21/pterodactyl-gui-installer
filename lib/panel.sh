@@ -49,18 +49,22 @@ gd_nginx_disable_default() {
     return 0
 }
 
-gd_panel_packages() {
-    # Dienste während der Paketinstallation nicht automatisch starten: nginx scheitert sonst auf Servern
+gd_apt_install_nostart() {
+    # Pakete installieren, ohne dass deren Dienste automatisch starten: nginx scheitert sonst auf Servern
     # ohne IPv6 an der Standardseite ([::]:80) und dpkg bricht ab. Gestartet wird danach gezielt.
     local own_policy=false rc
     if [ ! -e /usr/sbin/policy-rc.d ]; then
         printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d && own_policy=true
     fi
-    gd_apt_install mariadb-server mariadb-client nginx redis-server tar unzip git cron \
-        certbot python3-certbot-nginx
+    gd_apt_install "$@"
     rc=$?
     $own_policy && rm -f /usr/sbin/policy-rc.d
-    [ $rc -eq 0 ] || return 1
+    return $rc
+}
+
+gd_panel_packages() {
+    gd_apt_install_nostart mariadb-server mariadb-client nginx redis-server tar unzip git cron \
+        certbot python3-certbot-nginx || return 1
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
     gd_nginx_disable_default
     systemctl enable --now mariadb redis-server cron || return 1

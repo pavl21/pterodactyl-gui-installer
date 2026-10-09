@@ -303,7 +303,7 @@ gd_fresh_install() {
     if $with_wings; then
         done_text="Dein Panel ist einsatzbereit und Wings ist bereits verbunden. Du kannst sofort loslegen:\n\n1. Melde dich an: https://${GD_DOMAIN}\n2. Öffne 'Admin' → 'Servers' → 'Create New' und lege deinen ersten Gameserver an.\n\nFreigegebene Gameserver-Ports: ${GD_PORT_RANGE}"
     else
-        done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dieses Skript dazu einfach erneut und wähle 'Wings installieren'."
+        done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dazu die Verwaltung (Befehl: $(gd_shortcut_hint)) und wähle 'Gameserver & Wings → Wings installieren/verwalten'."
     fi
     [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
     gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
@@ -324,17 +324,19 @@ gd_install_menu() {
         clear; echo "Die Installation wurde abgebrochen."; exit 0
     fi
 
-    choice=$(whiptail --title "Was möchtest du installieren?" --menu "Wähle aus, was auf diesem Server eingerichtet werden soll:" 17 78 4 \
+    choice=$(whiptail --title "Was möchtest du installieren?" --menu "Wähle aus, was auf diesem Server eingerichtet werden soll:" 18 78 5 \
         "1" "Panel + Wings (empfohlen, sofort einsatzbereit)" \
         "2" "Nur Panel (Wings läuft auf einem anderen Server)" \
         "3" "Nur Wings (Panel läuft auf einem anderen Server)" \
-        "4" "Pelican Panel + Wings (Beta)" 3>&1 1>&2 2>&3) || { clear; exit 0; }
+        "4" "Pelican Panel + Wings (Beta)" \
+        "5" "Nur Pelican-Wings (Pelican-Panel auf anderem Server)" 3>&1 1>&2 2>&3) || { clear; exit 0; }
 
     case "$choice" in
         1) gd_fresh_install panel_wings ;;
         2) gd_fresh_install panel ;;
         3) gd_run wings-installer.sh ;;
         4) gd_run pelican-installer.sh ;;
+        5) gd_run wings-pelican.sh ;;
     esac
 }
 
@@ -349,7 +351,7 @@ echo "----------------------------------"
 gd_log "GermanDactyl Setup gestartet (Branch: $GD_BRANCH, lokal: ${GD_LOCAL_DIR:-nein})"
 
 if ! command -v whiptail >/dev/null 2>&1 || ! command -v dig >/dev/null 2>&1 \
-    || { [ ! -d "$PTERO_DIR" ] && [ ! -f /etc/pterodactyl/config.yml ]; }; then
+    || { [ ! -d "$PTERO_DIR" ] && [ ! -f /etc/pterodactyl/config.yml ] && [ ! -d /var/www/pelican ]; }; then
     gd_prepare_system
 fi
 
@@ -375,6 +377,16 @@ fi
 
 if [ -d "$PTERO_DIR" ] || [ -f /etc/pterodactyl/config.yml ]; then
     gd_main_menu
+elif [ -f /var/www/pelican/artisan ] || [ -f /etc/pelican/config.yml ]; then
+    # Pelican-Server: direkt zur Pelican-Verwaltung (nicht das Pterodactyl-Installationsmenü – dessen
+    # Wings-Installation würde Pelican-Wings überschreiben). Reiner Pelican-Wings-Server: Wings-Verwaltung.
+    if [ -f /var/www/pelican/artisan ]; then
+        gd_run pelican-installer.sh
+    else
+        gd_run wings-pelican.sh
+    fi
+    clear
+    exit 0
 else
     gd_check_environment
     gd_install_menu

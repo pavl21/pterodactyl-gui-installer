@@ -402,7 +402,7 @@ gd_swap_create() {
         dd if=/dev/zero of="$file" bs=1M count="$size" status=none && chmod 600 "$file" && mkswap "$file" && swapon "$file" \
             || { rm -f "$file"; return 1; }
     fi
-    grep -qE "^$file[[:space:]]" /etc/fstab || echo "$file none swap sw 0 0" >> /etc/fstab
+    grep -qE "^${file}[[:space:]]" /etc/fstab || echo "$file none swap sw 0 0" >> /etc/fstab
 }
 
 gd_swap_remove() {
@@ -412,5 +412,5 @@ gd_swap_remove() {
         swapoff "$file" || { echo "Swap konnte nicht deaktiviert werden (zu wenig freier Arbeitsspeicher?)."; return 1; }
     fi
     rm -f "$file"
-    sed -i -E "\#^$file[[:space:]]#d" /etc/fstab
+    sed -i -E "\#^${file}[[:space:]]#d" /etc/fstab
 }
