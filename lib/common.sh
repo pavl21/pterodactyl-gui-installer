@@ -27,6 +27,10 @@ case "${LC_ALL:-${LANG:-}}" in
     *) export LC_ALL=C.UTF-8 LANG=C.UTF-8 ;;
 esac
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+# Ohne gültiges TERM verweigert whiptail jeden Dialog (jede Ja/Nein-Frage gälte dann als "Nein")
+case "${TERM:-}" in ""|dumb|unknown) export TERM=xterm ;; esac
+# Nach "su" (ohne "-") fehlen unter Debian die sbin-Verzeichnisse – dann wären nginx, sshd, ufw usw. nicht auffindbar
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 # Temporäres Arbeitsverzeichnis, wird beim Beenden automatisch entfernt
 if [ -z "${GD_TMP:-}" ]; then
@@ -80,7 +84,9 @@ whiptail() {
     # (z. B. in kleinen SSH-Fenstern mit 80x24). Wird gekürzt, wird der Text scrollbar.
     local args=("$@") i rows=24 cols=80 size extra=()
     size="$(stty size < /dev/tty 2>/dev/null)" && read -r rows cols <<< "$size"
-    [ "${rows:-0}" -ge 10 ] 2>/dev/null || rows=24
+    # Unbekannte Größe -> 80x24 annehmen; sehr kleine Fenster nicht vergrößern, sondern auf ein Minimum begrenzen
+    [ "${rows:-0}" -ge 1 ] 2>/dev/null || rows=24
+    [ "$rows" -lt 8 ] && rows=8
     [ "${cols:-0}" -ge 40 ] 2>/dev/null || cols=80
     for ((i = 0; i < ${#args[@]}; i++)); do
         case "${args[i]}" in
@@ -97,6 +103,8 @@ whiptail() {
                 fi
                 if [[ "$w" =~ ^[0-9]+$ ]] && [ "$w" -gt $((cols - 2)) ]; then
                     args[i+3]=$((cols - 2))
+                    # Schmalere Dialoge brechen mehr Zeilen um – Text scrollbar machen, damit nichts abgeschnitten wird
+                    case "${args[i]}" in --msgbox|--yesno) extra=(--scrolltext) ;; esac
                 fi
                 break ;;
         esac
@@ -193,8 +201,25 @@ gd_step() {
     fi
 }
 
+gd_step_optional() {
+    # gd_step_optional <prozent> "Text" "Warnung bei Fehler" befehl [argumente...]
+    # Wie gd_step, bricht aber nicht ab: der Fehler wird gesammelt (GD_WARNINGS) und am Ende angezeigt
+    local pct="$1" text="$2" warn="$3"
+    shift 3
+    gd_progress "$pct" "$text"
+    if ! "$@" >> "$GD_LOG" 2>&1; then
+        gd_log "WARNUNG: $warn"
+        GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ $warn"
+    fi
+    return 0
+}
+
 gd_fail() {
     gd_gauge_close
+    # Optionaler Aufräum-Hook (z. B. Wartungsmodus beenden), gesetzt vom laufenden Ablauf
+    if [ -n "${GD_FAIL_CLEANUP:-}" ] && declare -F "$GD_FAIL_CLEANUP" >/dev/null; then
+        "$GD_FAIL_CLEANUP"
+    fi
     local tail_text
     tail_text="$(tail -n "$( [ -n "${GD_FAIL_HINT:-}" ] && echo 8 || echo 12)" "$GD_LOG" 2>/dev/null | tr -d '\r' | cut -c1-110)"
     gd_log "FEHLGESCHLAGEN: $1"
@@ -225,7 +250,7 @@ gd_ensure_base_tools() {
     done
     [ ${#miss[@]} -eq 0 ] && return 0
     echo "Benötigte Grundpakete werden installiert: ${miss[*]} ..."
-    { gd_apt update && gd_apt_install "${miss[@]}"; } >/dev/null 2>&1 \
+    { gd_apt update; gd_apt_install "${miss[@]}"; } >/dev/null 2>&1 \
         || echo "Hinweis: Nicht alle Grundpakete konnten installiert werden (${miss[*]})."
     return 0
 }
@@ -246,6 +271,12 @@ gd_apt() {
     # gd_apt <apt-get Argumente...> – nicht-interaktiv, behält vorhandene Konfigurationsdateien
     gd_wait_for_apt || { echo "Ein anderer Installations-/Updateprozess blockiert apt."; return 1; }
     apt-get -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+}
+
+gd_apt_update() {
+    # Paketlisten aktualisieren. Ein kaputtes Fremd-Repository (abgelaufener Schlüssel, toter PPA) soll die
+    # Einrichtung nicht abbrechen – erst eine fehlgeschlagene Paketinstallation ist ein echter Fehler.
+    gd_apt update || { echo "Warnung: 'apt-get update' meldete Fehler (siehe oben) – es wird trotzdem fortgefahren."; return 0; }
 }
 
 gd_apt_install() {
@@ -298,7 +329,9 @@ gd_cert_days_left() {
     local end
     end="$(openssl x509 -enddate -noout -in "$1" 2>/dev/null | cut -d= -f2)" || return 1
     [ -n "$end" ] || return 1
-    echo $(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+    local diff=$(( $(date -d "$end" +%s) - $(date +%s) ))
+    # Abgelaufen (auch seit weniger als einem Tag) ergibt immer einen negativen Wert
+    if [ "$diff" -lt 0 ]; then echo $(( -((-diff + 86399) / 86400) )); else echo $(( diff / 86400 )); fi
 }
 
 gd_served_cert() {
@@ -439,6 +472,27 @@ gd_local_ip() {
     ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
 }
 
+gd_local_ips() {
+    # Alle globalen IPv4-Adressen dieses Servers (auch Zusatz- und Failover-IPs)
+    ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}'
+}
+
+gd_has_ipv6() {
+    # IPv6 tatsächlich nutzbar? (Modul geladen und nicht per sysctl abgeschaltet)
+    grep -q . /proc/net/if_inet6 2>/dev/null || return 1
+    [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" != "1" ]
+}
+
+gd_local_ips6() {
+    # Alle globalen IPv6-Adressen dieses Servers
+    ip -6 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}'
+}
+
+gd_ufw_active() {
+    # Unabhängig von der Sprache des Systems (ufw übersetzt seine Ausgabe)
+    command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -q "^Status: active"
+}
+
 gd_default_iface() {
     ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}'
 }
@@ -463,6 +517,10 @@ gd_resolve_a() {
     echo "$out"
 }
 
+gd_resolve_aaaa() {
+    dig +short AAAA "$1" @1.1.1.1 2>/dev/null | grep -E '^[0-9a-fA-F:]+$'
+}
+
 gd_is_cloudflare_ip() {
     # Grobe Prüfung auf die bekanntesten Cloudflare-Proxy-Netze
     case "$1" in
@@ -482,8 +540,24 @@ gd_dns_check_dialog() {
         return 1
     fi
 
-    if grep -qxF "$server_ip" <<< "$dns_ips"; then
-        gd_msg "✔ Domain-Überprüfung" "Die Domain $domain ist mit der IP-Adresse dieses Servers ($server_ip) verknüpft." 10 78
+    # Treffer auf die öffentliche IP oder eine beliebige eigene Adresse (Zusatz-/Failover-IP)
+    local ip match=""
+    for ip in $server_ip $(gd_local_ips); do
+        grep -qxF "$ip" <<< "$dns_ips" && { match="$ip"; break; }
+    done
+    if [ -n "$match" ]; then
+        # Ein AAAA-Eintrag, der nicht auf diesen Server zeigt, lässt Let's Encrypt scheitern (IPv6 wird bevorzugt)
+        local aaaa own6 a6 ok6=false
+        aaaa="$(gd_resolve_aaaa "$domain")"
+        if [ -n "$aaaa" ]; then
+            own6="$(gd_local_ips6)"
+            for a6 in $aaaa; do grep -qixF "$a6" <<< "$own6" && ok6=true; done
+            if ! $ok6; then
+                gd_yesno "⚠ IPv6-Eintrag passt nicht" "Die Domain $domain zeigt per IPv4 korrekt auf diesen Server ($match), hat aber zusätzlich einen IPv6-Eintrag (AAAA), der nicht zu diesem Server gehört:\n\n$(tr '\n' ' ' <<< "$aaaa")\n\nLet's Encrypt prüft bevorzugt über IPv6 – das SSL-Zertifikat schlägt dann fehl, und Besucher mit IPv6 landen auf dem falschen Server. Entferne den AAAA-Eintrag oder lass ihn auf diesen Server zeigen.\n\nTrotzdem fortfahren?" 18 78 || return 1
+                return 0
+            fi
+        fi
+        gd_msg "✔ Domain-Überprüfung" "Die Domain $domain ist mit der IP-Adresse dieses Servers ($match) verknüpft." 10 78
         return 0
     fi
 
@@ -510,7 +584,15 @@ gd_ask_domain() {
             echo "$value"
             return 0
         fi
-        gd_yesno "Erneut versuchen?" "Möchtest du die Domain korrigieren bzw. nach der DNS-Änderung erneut prüfen?\n\nBei 'Nein' wird der Vorgang abgebrochen." 11 70 || return 1
+        local choice
+        choice="$(gd_whip --title "Wie möchtest du fortfahren?" --menu "Die Domain $value zeigt (noch) nicht auf diesen Server." 14 74 3 \
+            "1" "Domain korrigieren bzw. nach DNS-Änderung erneut prüfen" \
+            "2" "Trotzdem fortfahren (z. B. Proxy/Weiterleitung – SSL kann scheitern)" \
+            "3" "Abbrechen" 3>&1 1>&2 2>&3)" || return 1
+        case "$choice" in
+            2) echo "$value"; return 0 ;;
+            3) return 1 ;;
+        esac
     done
 }
 

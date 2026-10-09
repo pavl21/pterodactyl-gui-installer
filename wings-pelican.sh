@@ -34,9 +34,15 @@ fi
 if [ -f "$PELICAN_DIR/artisan" ]; then
     # Pelican liegt auf diesem Server -> automatisch einrichten
     domain="$(gd_conf_get PELICAN_DOMAIN)"
+    # Pelican nicht mit diesem Skript eingerichtet: Domain aus der .env übernehmen
+    [ -z "$domain" ] && domain="$(grep -E '^APP_URL=' "$PELICAN_DIR/.env" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d "\"'" | sed 's#^https\?://##; s#/.*##')"
+    if ! gd_valid_domain "$domain"; then
+        domain="$(gd_ask_domain "⇄ Domain für Wings" "Unter welcher Domain ist dein Pelican-Panel erreichbar? Wings nutzt sie ebenfalls (Port 8080).")" || exit 0
+    fi
     while true; do
         GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden? (z. B. 25565-25600)" "$GD_DEFAULT_PORT_RANGE" 10 70)" || exit 0
         gd_valid_port_range "$GD_PORT_RANGE" && break
+        gd_msg "Ungültiger Portbereich" "Bitte gib einen Bereich wie 25565-25600 an (größer als 1024, höchstens 1000 Ports)." 9 70
     done
     gd_gauge_open "⇄ Wings wird eingerichtet" "Bitte warten..."
     gd_step 5  "Docker wird installiert..." gd_docker_install
@@ -47,11 +53,17 @@ if [ -f "$PELICAN_DIR/artisan" ]; then
     gd_pelican_allocations "$GD_PORT_RANGE" >> "$GD_LOG" 2>&1 || ALLOC_FAIL=true
     gd_step 82 "Docker-Netzwerk für Gameserver wird vorbereitet..." gd_wings_network_prepare "$PELICAN_WINGS_CONFIG" pelican_nw pelican0
     gd_step 85 "Wings wird gestartet..." gd_wings_start
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+    gd_progress 90 "Verbindung zwischen Panel und Wings wird geprüft..."
+    gd_wings_verify "$domain" "$PELICAN_WINGS_CONFIG" >> "$GD_LOG" 2>&1 || VERIFY_FAIL=true
+    if gd_ufw_active; then
         gd_step 95 "Firewall wird angepasst..." gd_firewall_setup true "$GD_PORT_RANGE"
     fi
     gd_progress 100 "Fertig."
     gd_gauge_close
+    if [ "${VERIFY_FAIL:-false}" = true ]; then
+        gd_msg "⚠ Wings antwortet nicht" "Wings ist installiert, antwortet aber nicht. Prüfe den Dienst mit 'journalctl -u wings -n 50'." 10 74
+        exit 1
+    fi
     gd_msg "✔ Wings ist einsatzbereit" "Wings ist mit Pelican verbunden.$( [ "${ALLOC_FAIL:-false}" = true ] && echo "\n\nDie Ports konnten nicht automatisch angelegt werden. Füge sie im Panel unter 'Nodes' → 'Allocations' hinzu.")" 11 74
     exit 0
 fi
@@ -60,12 +72,16 @@ fi
 GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de. Der DNS-Eintrag muss auf diesen Server zeigen.")" || exit 0
 GD_EMAIL="$(gd_ask_email "✉ E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
 gd_gauge_open "⇄ Wings wird installiert" "Bitte warten..."
-gd_step 5  "Paketquellen werden aktualisiert..." gd_apt update
+gd_step 5  "Paketquellen werden aktualisiert..." gd_apt_update
 gd_step 15 "Docker wird installiert..." gd_docker_install
 gd_step 60 "Wings wird heruntergeladen..." gd_pelican_wings_binary
 gd_step 75 "Wings-Dienst wird eingerichtet..." gd_pelican_wings_service
 gd_step 85 "SSL-Zertifikat für Wings wird angefordert..." gd_wings_certificate "$GD_WINGS_FQDN" "$GD_EMAIL"
 gd_step 95 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
+gd_step 97 "Editor wird bereitgestellt..." bash -c "command -v nano >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -q nano"
+if gd_ufw_active; then
+    gd_step 99 "Firewall wird angepasst..." gd_firewall_setup true ""
+fi
 gd_progress 100 "Fertig."
 gd_gauge_close
 

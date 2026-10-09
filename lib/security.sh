@@ -4,8 +4,15 @@
 
 gd_ssh_ports() {
     # Alle Ports, auf denen sshd lauscht (Standard 22) – damit man sich nicht aussperrt
+    # Vereinigung aus: sshd -T (port und ListenAddress mit Port), tatsächlich lauschende sshd-Sockets
+    # (auch ssh.socket unter Ubuntu) und dem Port der aktuellen SSH-Verbindung
     local ports
-    ports="$(sshd -T 2>/dev/null | awk '$1=="port"{print $2}' | sort -u)"
+    ports="$( {
+        sshd -T 2>/dev/null | awk '$1=="port"{print $2} $1=="listenaddress"{n=split($2,a,":"); if (n>1) print a[n]}'
+        systemctl show -p Listen ssh.socket 2>/dev/null | grep -oE ':[0-9]+ \(Stream' | grep -oE '[0-9]+'
+        ss -Hltnp 2>/dev/null | grep '"sshd"' | awk '{n=split($4,a,":"); print a[n]}'
+        [ -n "${SSH_CONNECTION:-}" ] && echo "${SSH_CONNECTION##* }"
+    } | grep -E '^[0-9]+$' | sort -un)"
     [ -z "$ports" ] && ports="22"
     echo "$ports"
 }
@@ -36,10 +43,13 @@ gd_mariadb_harden() {
     # Entspricht den wichtigsten Schritten von mysql_secure_installation (ohne Rückfragen)
     gd_mysql <<'SQL' || return 1
 DROP USER IF EXISTS ''@'localhost';
-DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 SQL
+    # Die Beispiel-Datenbank "test" nur entfernen, wenn sie leer ist (auf bestehenden Servern evtl. in Benutzung)
+    if [ "$(gd_mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='test';" 2>/dev/null)" = "0" ]; then
+        gd_mysql -e "DROP DATABASE IF EXISTS test;"
+    fi
     # MariaDB darf nur lokal erreichbar sein (Standard unter Debian/Ubuntu). Nur prüfen und protokollieren.
     local bind
     bind="$(my_print_defaults mysqld mariadbd 2>/dev/null | grep -- '--bind-address' | tail -n1 | cut -d= -f2)"
@@ -89,12 +99,23 @@ EOF
     systemctl is-active --quiet fail2ban || { journalctl -u fail2ban -n 20 --no-pager; return 1; }
 }
 
+gd_autoupdates_enabled() {
+    # Tatsächlich wirksamer Wert (berücksichtigt alle Dateien in apt.conf.d)
+    apt-config dump 2>/dev/null | grep -q '^APT::Periodic::Unattended-Upgrade "1";'
+}
+
+gd_autoupdates_set() {
+    # gd_autoupdates_set 1|0 – eigene Datei mit hoher Priorität, vorhandene Einstellungen bleiben unangetastet
+    printf '// Angelegt von GermanDactyl Setup\nAPT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "%s";\n' "$1" \
+        > /etc/apt/apt.conf.d/99germandactyl-auto-upgrades
+}
+
 gd_unattended_upgrades_setup() {
     gd_apt_install unattended-upgrades apt-listchanges || return 1
     echo 'unattended-upgrades unattended-upgrades/enable_auto_updates boolean true' | debconf-set-selections
     dpkg-reconfigure -f noninteractive unattended-upgrades
     # Direkt setzen: dpkg-reconfigure überschreibt eine bereits geänderte Datei nicht
-    printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' > /etc/apt/apt.conf.d/20auto-upgrades
+    gd_autoupdates_set 1
     systemctl enable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
     return 0
 }
@@ -124,10 +145,10 @@ gd_security_steps() {
     fi
     [ -f /etc/redis/redis.conf ] && gd_step "$p" "Sicherheit: Redis wird geprüft..." gd_redis_check
     if [ "${GD_SEC_UFW:-false}" = "true" ]; then
-        gd_step $((p + 1)) "Sicherheit: Firewall wird eingerichtet..." gd_firewall_setup "$with_wings" "$range"
+        gd_step_optional $((p + 1)) "Sicherheit: Firewall wird eingerichtet..." "Die Firewall (UFW) konnte nicht aktiviert werden (z. B. in LXC/OpenVZ-Containern nicht erlaubt)." gd_firewall_setup "$with_wings" "$range"
     fi
     if [ "${GD_SEC_FAIL2BAN:-false}" = "true" ]; then
-        gd_step $((p + 2)) "Sicherheit: fail2ban wird eingerichtet..." gd_fail2ban_setup
+        gd_step_optional $((p + 2)) "Sicherheit: fail2ban wird eingerichtet..." "fail2ban konnte nicht gestartet werden." gd_fail2ban_setup
     fi
     if [ "${GD_SEC_UPDATES:-false}" = "true" ]; then
         gd_step $((p + 3)) "Sicherheit: Automatische Sicherheitsupdates werden aktiviert..." gd_unattended_upgrades_setup
@@ -137,6 +158,6 @@ gd_security_steps() {
         gd_step $((p + 4)) "Automatische Backups werden eingerichtet..." gd_ab_setup "$GD_BACKUP_ROOT/restic" "$with_wings" "04:00"
         gd_step $((p + 4)) "jq wird installiert..." gd_apt_install jq
         # Erstes Backup sofort erstellen (auf einem neuen Server geht das schnell)
-        gd_step $((p + 5)) "Erstes Backup wird erstellt..." "$GD_AB_SCRIPT"
+        gd_step_optional $((p + 5)) "Erstes Backup wird erstellt..." "Das erste Backup ist fehlgeschlagen (Details: /var/log/germandactyl-setup/auto-backup.log)." "$GD_AB_SCRIPT"
     fi
 }

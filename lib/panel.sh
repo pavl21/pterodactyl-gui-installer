@@ -12,13 +12,24 @@ GD_PANEL_DB_USER="pterodactyl"
 gd_php_repo() {
     # PHP über das sury-Repository (Debian und Ubuntu, auch Ubuntu 26.04)
     gd_os_detect
+    # Alte Einträge früherer Versionen dieses Skripts entfernen (doppelte Quellen führen zu apt-Fehlern)
+    rm -f /etc/apt/sources.list.d/php.list /etc/apt/trusted.gpg.d/php.gpg
+    # Ist bereits eine PHP-Quelle (sury oder ondrej-PPA) unter anderem Namen eingetragen, diese weiterverwenden –
+    # zwei Einträge mit unterschiedlichem "signed-by" lassen apt mit "Conflicting values" abbrechen
+    local existing
+    existing="$(grep -rlsE 'packages\.sury\.org/php|ppa\.launchpad(content)?\.net/ondrej/php|ondrej-ubuntu-php' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | grep -v '/sury-php\.list$')"
+    if [ -n "$existing" ]; then
+        echo "Vorhandene PHP-Paketquelle wird verwendet: $(tr '\n' ' ' <<< "$existing")"
+        rm -f /etc/apt/sources.list.d/sury-php.list
+        gd_apt_update
+        return
+    fi
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://packages.sury.org/php/apt.gpg -o /etc/apt/keyrings/sury-php.gpg || return 1
     echo "deb [signed-by=/etc/apt/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${GD_OS_CODENAME} main" \
         > /etc/apt/sources.list.d/sury-php.list
-    # Alte Einträge früherer Versionen dieses Skripts entfernen (doppelte Quellen führen zu apt-Warnungen)
-    rm -f /etc/apt/sources.list.d/php.list /etc/apt/trusted.gpg.d/php.gpg
-    gd_apt update
+    gd_apt_update
 }
 
 gd_php_packages() {
@@ -38,9 +49,23 @@ gd_nginx_disable_default() {
     return 0
 }
 
+gd_apt_install_nostart() {
+    # Pakete installieren, ohne dass deren Dienste automatisch starten: nginx scheitert sonst auf Servern
+    # ohne IPv6 an der Standardseite ([::]:80) und dpkg bricht ab. Gestartet wird danach gezielt.
+    local own_policy=false rc
+    if [ ! -e /usr/sbin/policy-rc.d ]; then
+        printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d && own_policy=true
+    fi
+    gd_apt_install "$@"
+    rc=$?
+    $own_policy && rm -f /usr/sbin/policy-rc.d
+    return $rc
+}
+
 gd_panel_packages() {
-    gd_apt_install mariadb-server mariadb-client nginx redis-server tar unzip git cron \
+    gd_apt_install_nostart mariadb-server mariadb-client nginx redis-server tar unzip git cron \
         certbot python3-certbot-nginx || return 1
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
     gd_nginx_disable_default
     systemctl enable --now mariadb redis-server cron || return 1
     systemctl enable nginx && systemctl restart nginx
@@ -68,14 +93,57 @@ gd_panel_download() {
     chmod -R 755 "$PTERO_DIR"/storage/* "$PTERO_DIR"/bootstrap/cache/
 }
 
+gd_nginx_backup() {
+    # gd_nginx_backup <site.conf> – vorhandene Site-Konfiguration vor dem Überschreiben sichern
+    if [ -f "/etc/nginx/sites-available/$1" ]; then
+        cp -p "/etc/nginx/sites-available/$1" "$GD_TMP/nginx-$1.bak"
+    else
+        rm -f "$GD_TMP/nginx-$1.bak"
+    fi
+}
+
+gd_nginx_enabled_path() {
+    # Wohin eine Site verlinkt wird: sites-enabled (Debian/Ubuntu-Paket) oder conf.d (Paket von nginx.org,
+    # dessen nginx.conf sites-enabled nicht einbindet)
+    if grep -qsE '^[[:space:]]*include[[:space:]]+/etc/nginx/sites-enabled/' /etc/nginx/nginx.conf; then
+        echo "/etc/nginx/sites-enabled/$1"
+    else
+        echo "/etc/nginx/conf.d/$1"
+    fi
+}
+
+gd_nginx_activate() {
+    # gd_nginx_activate <site.conf> – aktivieren und testen; bei Fehler den vorherigen Stand
+    # wiederherstellen, damit nginx (und andere Seiten auf dem Server) weiterlaufen
+    local name="$1" link
+    link="$(gd_nginx_enabled_path "$name")"
+    mkdir -p "$(dirname "$link")"
+    ln -sf "/etc/nginx/sites-available/$name" "$link" || return 1
+    if nginx -t; then
+        systemctl reload nginx || systemctl restart nginx
+        return
+    fi
+    echo "Die neue nginx-Konfiguration ist fehlerhaft (siehe oben) – der vorherige Stand wird wiederhergestellt."
+    if [ -f "$GD_TMP/nginx-$name.bak" ]; then
+        cp -p "$GD_TMP/nginx-$name.bak" "/etc/nginx/sites-available/$name"
+    else
+        rm -f "$link"
+    fi
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx
+    return 1
+}
+
 gd_nginx_http_config() {
     # Vorläufige Konfiguration nur für die Zertifikatsausstellung (Webroot-Verfahren)
     local domain="$1"
+    gd_nginx_backup pterodactyl.conf
     cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
 # Angelegt von GermanDactyl Setup (vorläufig, wird nach der Zertifikatsausstellung ersetzt)
 server {
     listen 80;
+$(gd_has_ipv6 && echo "    listen [::]:80;")
     server_name ${domain};
+    server_tokens off;
     root ${PTERO_DIR}/public;
 
     location /.well-known/acme-challenge/ {
@@ -86,9 +154,8 @@ server {
     }
 }
 EOF
-    ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
     gd_nginx_disable_default
-    nginx -t && systemctl reload nginx
+    gd_nginx_activate pterodactyl.conf
 }
 
 gd_php_fpm_socket() {
@@ -105,13 +172,14 @@ gd_nginx_ssl_config() {
     # Offizielle SSL-Konfiguration (https://pterodactyl.io/panel/1.0/webserver_configuration.html)
     local domain="$1" sock
     sock="$(gd_php_fpm_socket)"
+    gd_nginx_backup pterodactyl.conf
     cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
 # Angelegt von GermanDactyl Setup – Grundlage: offizielle Pterodactyl-Dokumentation
-server_tokens off;
-
 server {
     listen 80;
+$(gd_has_ipv6 && echo "    listen [::]:80;")
     server_name ${domain};
+    server_tokens off;
 
     location /.well-known/acme-challenge/ {
         root ${PTERO_DIR}/public;
@@ -124,7 +192,9 @@ server {
 
 server {
     listen 443 ssl http2;
+$(gd_has_ipv6 && echo "    listen [::]:443 ssl http2;")
     server_name ${domain};
+    server_tokens off;
 
     root ${PTERO_DIR}/public;
     index index.php;
@@ -141,7 +211,7 @@ $( [ -f /etc/nginx/snippets/germandactyl-phpmyadmin.conf ] && echo "    include 
 
     ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
-    ssl_session_cache shared:SSL:10m;
+    ssl_session_cache shared:germandactyl_ssl:10m;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";
     ssl_prefer_server_ciphers on;
@@ -180,18 +250,39 @@ $( [ -f /etc/nginx/snippets/germandactyl-phpmyadmin.conf ] && echo "    include 
     }
 }
 EOF
-    ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
-    nginx -t && systemctl reload nginx
+    gd_nginx_activate pterodactyl.conf
 }
 
 gd_certbot_issue() {
     # gd_certbot_issue <domain> <email> – Zertifikat per Webroot (nginx läuft dabei weiter)
     local domain="$1" email="$2"
-    if [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ]; then
-        echo "Zertifikat für ${domain} ist bereits vorhanden."
-        return 0
+    gd_certbot_webroot "$domain" "$email" "${PTERO_DIR}/public"
+}
+
+gd_certbot_webroot() {
+    # gd_certbot_webroot <domain> <email> <webroot> – vorhandenes Zertifikat nur übernehmen, wenn es noch
+    # mindestens 14 Tage gilt und sich erneuern lässt (standalone scheitert später an nginx auf Port 80)
+    local domain="$1" email="$2" webroot="$3" cert days auth extra=()
+    cert="/etc/letsencrypt/live/${domain}/fullchain.pem"
+    # Ist die Firewall bereits aktiv, muss Port 80 für die Prüfung durch Let's Encrypt offen sein
+    if gd_ufw_active; then
+        ufw allow 80/tcp comment "HTTP (Panel, Zertifikate)" >/dev/null
+        ufw allow 443/tcp comment "HTTPS (Panel)" >/dev/null
     fi
-    certbot certonly --webroot -w "${PTERO_DIR}/public" -d "$domain" \
+    if [ -f "$cert" ]; then
+        days="$(gd_cert_days_left "$cert")"
+        auth="$(awk -F' *= *' '$1=="authenticator"{print $2}' "/etc/letsencrypt/renewal/${domain}.conf" 2>/dev/null)"
+        if [ "${days:-0}" -ge 14 ] && [ "$auth" != "standalone" ]; then
+            echo "Zertifikat für ${domain} ist bereits vorhanden (noch ${days} Tage gültig)."
+            return 0
+        fi
+        echo "Vorhandenes Zertifikat für ${domain} wird neu ausgestellt (gültig: ${days:-?} Tage, Verfahren: ${auth:-unbekannt})."
+        extra=(--force-renewal)
+    elif [ -e "/etc/letsencrypt/renewal/${domain}.conf" ]; then
+        # Reste eines gelöschten Zertifikats würden certbot blockieren
+        certbot delete --cert-name "$domain" --non-interactive
+    fi
+    certbot certonly --webroot -w "$webroot" -d "$domain" --cert-name "$domain" "${extra[@]}" \
         --email "$email" --agree-tos --no-eff-email --non-interactive
 }
 
@@ -235,11 +326,14 @@ gd_panel_configure() {
     # gd_panel_configure <domain> <email> <db-passwort> <telemetrie true/false>
     local domain="$1" email="$2" dbpw="$3" telemetry="$4"
     cd "$PTERO_DIR" || return 1
+    # Gehärteter Redis mit Passwort (requirepass) – sonst Fehler 500 bei Sitzungen
+    local rpass
+    rpass="$(awk '$1=="requirepass"{print $2}' /etc/redis/redis.conf 2>/dev/null | tail -n1 | tr -d '"')"
     php artisan key:generate --force || return 1
     php artisan p:environment:setup --no-interaction \
         --author="$email" --url="https://${domain}" --timezone="$GD_TIMEZONE" \
         --cache=redis --session=redis --queue=redis \
-        --redis-host=127.0.0.1 --redis-pass=null --redis-port=6379 \
+        --redis-host=127.0.0.1 --redis-pass="${rpass:-null}" --redis-port=6379 \
         --settings-ui=true --telemetry="$telemetry" || return 1
     # Das Panel wertet --telemetry=false fehlerhaft aus (Operator-Rangfolge), daher explizit setzen
     gd_env_set PTERODACTYL_TELEMETRY_ENABLED "$telemetry"
@@ -318,7 +412,7 @@ gd_panel_install_steps() {
     #           GD_PANEL_VERSION, GD_APPLY_PATCH (aus gd_choose_panel_version)
     # Markierung: Bricht die Installation ab, erkennt der nächste Start die unvollständige Installation
     gd_conf_set INSTALL_STATE laeuft
-    gd_step 2  "Paketquellen werden aktualisiert..." gd_apt update
+    gd_step 2  "Paketquellen werden aktualisiert..." gd_apt_update
     gd_step 5  "PHP ${GD_PHP_VERSION}-Paketquelle wird eingerichtet..." gd_php_repo
     gd_step 10 "PHP ${GD_PHP_VERSION} wird installiert..." gd_php_packages
     gd_step 18 "MariaDB, Redis, nginx und Certbot werden installiert..." gd_panel_packages
@@ -377,6 +471,8 @@ gd_panel_update_steps() {
     if [ -z "$current" ] || ! gd_version_ge "$current" "8.2"; then
         gd_step 5 "PHP wird von ${current:-unbekannt} auf ${GD_PHP_VERSION} aktualisiert..." gd_php_migrate
     fi
+    # Scheitert ein späterer Schritt, das Panel nicht im Wartungsmodus zurücklassen
+    GD_FAIL_CLEANUP=gd_panel_update_cleanup
     gd_step 12 "Panel wird in den Wartungsmodus versetzt..." bash -c "cd '$PTERO_DIR' && (php artisan down || true)"
     gd_step 20 "Pterodactyl Panel v${GD_PANEL_VERSION} wird heruntergeladen..." gd_panel_download "$GD_PANEL_VERSION"
     gd_step 35 "Composer wird aktualisiert..." bash -c "composer self-update --2 >/dev/null 2>&1 || true"
@@ -393,7 +489,14 @@ gd_panel_update_steps() {
         gd_germandactyl_steps 70
     fi
     gd_step 95 "Panel wird wieder freigegeben..." bash -c "cd '$PTERO_DIR' && php artisan up"
+    GD_FAIL_CLEANUP=""
     gd_conf_set PANEL_VERSION "$GD_PANEL_VERSION"
+}
+
+gd_panel_update_cleanup() {
+    (cd "$PTERO_DIR" && php artisan up) >> "$GD_LOG" 2>&1
+    declare -F gd_build_swap_off >/dev/null && gd_build_swap_off >> "$GD_LOG" 2>&1
+    return 0
 }
 
 gd_panel_update() {

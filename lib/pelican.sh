@@ -11,10 +11,11 @@ PELICAN_WINGS_BIN="/usr/local/bin/wings"
 
 gd_pelican_packages() {
     local v="$PELICAN_PHP"
-    gd_apt_install "php${v}" "php${v}-cli" "php${v}-common" "php${v}-gd" "php${v}-mysql" "php${v}-mbstring" \
+    gd_apt_install_nostart "php${v}" "php${v}-cli" "php${v}-common" "php${v}-gd" "php${v}-mysql" "php${v}-mbstring" \
         "php${v}-bcmath" "php${v}-xml" "php${v}-fpm" "php${v}-curl" "php${v}-zip" "php${v}-intl" "php${v}-sqlite3" \
         nginx sqlite3 tar unzip git cron certbot python3-certbot-nginx || return 1
     update-alternatives --set php "/usr/bin/php${v}" 2>/dev/null
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
     gd_nginx_disable_default
     systemctl enable --now "php${v}-fpm" cron || return 1
     systemctl enable nginx && systemctl restart nginx
@@ -30,12 +31,15 @@ gd_pelican_download() {
 gd_pelican_nginx() {
     # gd_pelican_nginx <domain> <http|ssl>
     local domain="$1" mode="$2" sock="/run/php/php${PELICAN_PHP}-fpm.sock"
+    gd_nginx_backup pelican.conf
     if [ "$mode" = "http" ]; then
         cat > /etc/nginx/sites-available/pelican.conf <<EOF
 # Angelegt von GermanDactyl Setup (vorläufig, wird nach der Zertifikatsausstellung ersetzt)
 server {
     listen 80;
+$(gd_has_ipv6 && echo "    listen [::]:80;")
     server_name ${domain};
+    server_tokens off;
     root ${PELICAN_DIR}/public;
     location /.well-known/acme-challenge/ { allow all; }
     location / { return 503; }
@@ -44,18 +48,20 @@ EOF
     else
         cat > /etc/nginx/sites-available/pelican.conf <<EOF
 # Angelegt von GermanDactyl Setup – Grundlage: offizielle Pelican-Dokumentation
-server_tokens off;
-
 server {
     listen 80;
+$(gd_has_ipv6 && echo "    listen [::]:80;")
     server_name ${domain};
+    server_tokens off;
     location /.well-known/acme-challenge/ { root ${PELICAN_DIR}/public; allow all; }
     location / { return 301 https://\$server_name\$request_uri; }
 }
 
 server {
     listen 443 ssl http2;
+$(gd_has_ipv6 && echo "    listen [::]:443 ssl http2;")
     server_name ${domain};
+    server_tokens off;
 
     root ${PELICAN_DIR}/public;
     index index.php;
@@ -69,7 +75,7 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
-    ssl_session_cache shared:SSL:10m;
+    ssl_session_cache shared:germandactyl_ssl:10m;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";
     ssl_prefer_server_ciphers on;
@@ -107,16 +113,12 @@ server {
 }
 EOF
     fi
-    ln -sf /etc/nginx/sites-available/pelican.conf /etc/nginx/sites-enabled/pelican.conf
     gd_nginx_disable_default
-    nginx -t && systemctl reload nginx
+    gd_nginx_activate pelican.conf
 }
 
 gd_pelican_certbot() {
-    local domain="$1" email="$2"
-    [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ] && return 0
-    certbot certonly --webroot -w "${PELICAN_DIR}/public" -d "$domain" \
-        --email "$email" --agree-tos --no-eff-email --non-interactive
+    gd_certbot_webroot "$1" "$2" "${PELICAN_DIR}/public"
 }
 
 gd_pelican_env_set() {
@@ -149,8 +151,11 @@ gd_pelican_configure() {
 }
 
 gd_pelican_services() {
+    # Cronjob als www-data (wie von Pelican vorgesehen) – als root entstünden root-eigene Log-/Cache-Dateien
+    # und SQLite-Journale, danach liefert das Panel Fehler 500 bzw. "readonly database"
     local cron_line="* * * * * /usr/bin/php${PELICAN_PHP} ${PELICAN_DIR}/artisan schedule:run >> /dev/null 2>&1"
-    { crontab -l 2>/dev/null | grep -vF "${PELICAN_DIR}/artisan schedule:run"; echo "$cron_line"; } | crontab - || return 1
+    crontab -l 2>/dev/null | grep -vF "${PELICAN_DIR}/artisan schedule:run" | crontab -
+    { crontab -u www-data -l 2>/dev/null | grep -vF "${PELICAN_DIR}/artisan schedule:run"; echo "$cron_line"; } | crontab -u www-data - || return 1
     # Entspricht "php artisan p:environment:queue-service", aber direkt geschrieben: der Befehl
     # weicht bei vorhandener /.dockerenv auf supervisor aus und liefert bei Fehlern trotzdem Exit-Code 0
     cat > /etc/systemd/system/pelican-queue.service <<EOF_SVC || return 1
@@ -230,18 +235,26 @@ EOF
 
 gd_pelican_node() {
     # gd_pelican_node <fqdn> – Node anlegen und Konfiguration schreiben
-    local fqdn="$1" out mem disk
+    local fqdn="$1" out mem disk existing
+    # Bei einem erneuten Lauf (z. B. nach Abbruch) keine zweite Node anlegen
+    existing="$(gd_pelican_artisan_www tinker --execute="echo \\App\\Models\\Node::where('fqdn', '${fqdn}')->value('id');" 2>/dev/null | grep -oE '^[0-9]+$' | head -n1)"
     mem="$(LC_ALL=C free -m | awk '/^Mem:/{print $2}')"; mem=$((mem - 1024)); [ "$mem" -lt 1024 ] && mem=1024
+    mkdir -p /var/lib/pelican/volumes
     disk="$(df -Pm /var/lib/pelican | awk 'NR==2{print $4}')"; disk=$((disk * 90 / 100))
-    out="$(gd_pelican_artisan_www p:node:make --no-interaction --name="Node-$(hostname -s)" \
-        --description="Automatisch eingerichtet von GermanDactyl Setup" --fqdn="$fqdn" --scheme=https \
-        --public=1 --proxy=0 --maintenance=0 --maxMemory="$mem" --overallocateMemory=0 --maxDisk="$disk" \
-        --overallocateDisk=0 --maxCpu=0 --overallocateCpu=-1 --uploadSize=100 --daemonListeningPort=8080 \
-        --daemonConnectingPort=8080 --daemonSFTPPort=2022 --daemonSFTPAlias="" --daemonBase=/var/lib/pelican/volumes)" \
-        || { echo "$out"; return 1; }
-    echo "$out"
-    # Meldung ist übersetzt (APP_LOCALE=de: "... hat die ID 1", englisch: "... has an id of 1")
-    GD_NODE_ID="$(grep -oiE '(id of|id) [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
+    if [ -n "$existing" ]; then
+        echo "Es existiert bereits eine Node mit ${fqdn} (ID ${existing}), sie wird verwendet."
+        GD_NODE_ID="$existing"
+    else
+        out="$(gd_pelican_artisan_www p:node:make --no-interaction --name="Node-$(hostname -s)" \
+            --description="Automatisch eingerichtet von GermanDactyl Setup" --fqdn="$fqdn" --scheme=https \
+            --public=1 --proxy=0 --maintenance=0 --maxMemory="$mem" --overallocateMemory=0 --maxDisk="$disk" \
+            --overallocateDisk=0 --maxCpu=0 --overallocateCpu=-1 --uploadSize=100 --daemonListeningPort=8080 \
+            --daemonConnectingPort=8080 --daemonSFTPPort=2022 --daemonSFTPAlias="" --daemonBase=/var/lib/pelican/volumes)" \
+            || { echo "$out"; return 1; }
+        echo "$out"
+        # Meldung ist übersetzt (APP_LOCALE=de: "... hat die ID 1", englisch: "... has an id of 1")
+        GD_NODE_ID="$(grep -oiE '(id of|id) [0-9]+' <<< "$out" | grep -oE '[0-9]+' | tail -n1)"
+    fi
     [ -n "$GD_NODE_ID" ] || return 1
     gd_pelican_artisan_www p:node:configuration "$GD_NODE_ID" --format=yaml > "$GD_TMP/pelican-config.yml" || return 1
     grep -q '^token:' "$GD_TMP/pelican-config.yml" || return 1
@@ -249,8 +262,9 @@ gd_pelican_node() {
 }
 
 gd_pelican_allocations() {
-    local range="$1" ip
-    ip="$(gd_local_ip)"
-    [ -z "$ip" ] && ip="$(gd_public_ip)"
-    gd_pelican_artisan_www tinker --execute="app(\\App\\Services\\Allocations\\AssignmentService::class)->handle(\\App\\Models\\Node::findOrFail(${GD_NODE_ID}), ['allocation_ip' => '${ip}', 'allocation_ports' => ['${range}']]); echo 'OK';" | grep -q OK
+    # Hinter NAT: lokale IP mit der öffentlichen als Alias (sonst sehen Spieler die private IP)
+    local range="$1" alias_php="null"
+    gd_allocation_ip || return 1
+    [ -n "$GD_ALLOC_ALIAS" ] && alias_php="'${GD_ALLOC_ALIAS}'"
+    gd_pelican_artisan_www tinker --execute="app(\\App\\Services\\Allocations\\AssignmentService::class)->handle(\\App\\Models\\Node::findOrFail(${GD_NODE_ID}), ['allocation_ip' => '${GD_ALLOC_IP}', 'allocation_alias' => ${alias_php}, 'allocation_ports' => ['${range}']]); echo 'OK';" | grep -q OK
 }

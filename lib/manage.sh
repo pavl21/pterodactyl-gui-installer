@@ -10,6 +10,14 @@ GD_SHORTCUT_SHORT="/usr/local/bin/gmd"
 # ---------------------------------------------------------------------------
 # Kurzbefehle
 # ---------------------------------------------------------------------------
+gd_panel_php_fpm() {
+    # PHP-FPM-Dienst, den das Panel tatsächlich nutzt (laut nginx), sonst der neueste vorhandene
+    local f
+    f="$(grep -ohE 'php[0-9]+\.[0-9]+-fpm' /etc/nginx/sites-available/pterodactyl.conf 2>/dev/null | head -n1)"
+    [ -z "$f" ] && f="$(systemctl list-units --type=service --all 'php*-fpm.service' --no-legend --plain 2>/dev/null | awk '{print $1}' | grep '\.service$' | sed 's/\.service$//' | sort -V | tail -n1)"
+    echo "$f"
+}
+
 gd_shortcut_install() {
     # "germandactyl" startet immer die aktuelle Version; "gmd" nur, wenn es den Befehl noch nicht gibt
     cat > "$GD_SHORTCUT" <<EOF
@@ -17,9 +25,13 @@ gd_shortcut_install() {
 # Pfad: $GD_SHORTCUT – angelegt von GermanDactyl Setup
 # Startet die jeweils aktuelle Version von GermanDactyl Setup (Installation und Verwaltung).
 if [ "\$(id -u)" != "0" ]; then exec sudo "\$0" "\$@"; fi
-script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/${GD_BRANCH}/installer.sh")" || {
-    echo "GermanDactyl Setup konnte nicht geladen werden. Prüfe die Internetverbindung."; exit 1; }
-GD_BRANCH="${GD_BRANCH}" exec bash -c "\$script"
+branch="${GD_BRANCH}"
+script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/\${branch}/installer.sh")" || {
+    # Branch existiert nicht mehr (z. B. Test-Branch gelöscht) -> auf main zurückfallen
+    branch="main"
+    script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/main/installer.sh")"
+} || { echo "GermanDactyl Setup konnte nicht geladen werden. Prüfe die Internetverbindung."; exit 1; }
+GD_BRANCH="\$branch" exec bash -c "\$script"
 EOF
     chmod 755 "$GD_SHORTCUT"
     if [ ! -e "$GD_SHORTCUT_SHORT" ] && ! command -v gmd >/dev/null 2>&1; then
@@ -55,7 +67,7 @@ gd_collect_status() {
     local line1="" line2="" svc php_fpm days domain code last age usage
     GD_PROBLEMS=0
     domain="$(gd_conf_get PANEL_DOMAIN)"
-    php_fpm="$(systemctl list-units --type=service --all 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}' | sort -V | tail -n1)"
+    php_fpm="$(gd_panel_php_fpm)"
 
     if gd_has_panel; then
         local ok=true
@@ -76,7 +88,7 @@ gd_collect_status() {
     if [ -n "$domain" ] && [ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
         days="$(gd_cert_days_left "/etc/letsencrypt/live/$domain/fullchain.pem")"
         if [ "${days:-0}" -lt 0 ]; then line1+="Zertifikat ✖ abgelaufen"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
-        elif [ "$days" -lt 14 ]; then line1+="Zertifikat ⚠ ${days} Tage"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+        elif [ "$days" -lt 14 ]; then line1+="Zertifikat ⚠ ${days} $([ "$days" -eq 1 ] && echo Tag || echo Tage)"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
         else line1+="Zertifikat ✔ ${days} Tage"; fi
     fi
 
@@ -91,7 +103,7 @@ gd_collect_status() {
     else
         line2+="Backups: aus   "
     fi
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then line2+="Firewall ✔   "
+    if gd_ufw_active; then line2+="Firewall ✔   "
     else line2+="Firewall: aus   "; fi
     usage="$(df -P / | awk 'NR==2{print $5}' | tr -d '%')"
     if [ "$usage" -ge 90 ]; then line2+="Speicher ✖ ${usage} %"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
@@ -264,7 +276,7 @@ gd_menu_server() {
     local c f2b upd
     while true; do
         f2b="aus"; systemctl is-active --quiet fail2ban 2>/dev/null && f2b="an"
-        upd="aus"; grep -qs 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades && upd="an"
+        upd="aus"; gd_autoupdates_enabled && upd="an"
         c=$(gd_submenu "⚙ Server & Sicherheit" "Wähle eine Aktion:" \
             "1" "✚ Firewall (Ports öffnen/schließen)" \
             "2" "✱ fail2ban – Schutz vor Angriffen ($f2b)" \
@@ -323,7 +335,7 @@ gd_ports_dialog() {
         gd_valid_port_or_range "$ports" && break
         gd_msg "Ungültige Eingabe" "Bitte gib einen Port (z. B. 27015) oder einen Bereich (z. B. 27015-27030) an." 9 70
     done
-    command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active" && fw=true
+    gd_ufw_active && fw=true
     gd_yesno "⚑ Ports freigeben" "Folgende Ports werden freigegeben:\n\nPorts:    $ports\nIP:       $ip${alias:+ (Alias: $alias)}\nNode-ID:  $node\nFirewall: $($fw && echo 'wird für TCP und UDP geöffnet' || echo 'nicht aktiv – nichts zu tun')\n\nFortfahren?" 15 72 || return
 
     clear; echo "Ports werden freigegeben..."
@@ -368,14 +380,17 @@ gd_system_update() {
 # ---------------------------------------------------------------------------
 gd_firewall_open_dialog() {
     local ports proto
-    command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active" || {
+    gd_ufw_active || {
         gd_msg "Firewall aus" "Die Firewall ist nicht aktiv – alle Ports sind bereits erreichbar." 8 64; return; }
     while true; do
         ports="$(gd_input "✚ Port öffnen" "Welcher Port oder Bereich soll geöffnet werden? (z. B. 25565 oder 27015-27030)" "" 10 70)" || return
         ports="$(tr -d '[:space:]' <<< "$ports")"
         [[ "$ports" =~ ^[0-9]{1,5}$ ]] && [ "$ports" -ge 1 ] && [ "$ports" -le 65535 ] && break
-        [[ "$ports" =~ ^[0-9]{1,5}-[0-9]{1,5}$ ]] && break
-        gd_msg "Ungültige Eingabe" "Bitte gib einen Port oder Bereich an." 8 50
+        if [[ "$ports" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]] && [ "${BASH_REMATCH[1]}" -ge 1 ] \
+            && [ "${BASH_REMATCH[2]}" -le 65535 ] && [ "${BASH_REMATCH[1]}" -lt "${BASH_REMATCH[2]}" ]; then
+            break
+        fi
+        gd_msg "Ungültige Eingabe" "Bitte gib einen Port (1–65535) oder einen Bereich wie 27015-27030 an." 8 70
     done
     proto=$(whiptail --title "Protokoll" --menu "Für welches Protokoll?" 12 60 3 \
         "beide" "TCP und UDP (empfohlen für Gameserver)" "tcp" "nur TCP" "udp" "nur UDP" 3>&1 1>&2 2>&3) || return
@@ -383,14 +398,19 @@ gd_firewall_open_dialog() {
         ufw allow "${ports/-/:}/tcp" >> "$GD_LOG" 2>&1 && ufw allow "${ports/-/:}/udp" >> "$GD_LOG" 2>&1
     else
         ufw allow "${ports/-/:}/$proto" >> "$GD_LOG" 2>&1
-    fi && gd_msg "✔ Port geöffnet" "Port $ports ist jetzt geöffnet." 8 50
+    fi
+    if [ $? -eq 0 ]; then
+        gd_msg "✔ Port geöffnet" "Port $ports ist jetzt geöffnet." 8 50
+    else
+        gd_msg "✖ Fehler" "Der Port konnte nicht geöffnet werden. Details: $GD_LOG" 8 70
+    fi
 }
 
 gd_firewall_menu() {
-    local c active rules items=() num
+    local c active rules items=() num rule
     command -v ufw >/dev/null 2>&1 || gd_apt_install ufw >> "$GD_LOG" 2>&1
     while true; do
-        active=false; ufw status | grep -q "Status: active" && active=true
+        active=false; gd_ufw_active && active=true
         c=$(gd_submenu "✚ Firewall" "Status: $($active && echo 'aktiv' || echo 'aus')" \
             "1" "☰ Regeln anzeigen" \
             "2" "✚ Port öffnen" \
@@ -405,10 +425,11 @@ gd_firewall_menu() {
                while IFS= read -r line; do
                    num="$(grep -oE '^\[ *[0-9]+\]' <<< "$line" | tr -d '[] ')"
                    [ -n "$num" ] && items+=("$num" "$(sed -E 's/^\[ *[0-9]+\] *//' <<< "$line" | tr -s ' ' | cut -c1-60)")
-               done < <(ufw status numbered)
+               done < <(LC_ALL=C ufw status numbered)
                [ ${#items[@]} -eq 0 ] && { gd_msg "Keine Regeln" "Es sind keine Regeln vorhanden." 8 50; continue; }
                num=$(whiptail --title "✖ Port schließen" --menu "Welche Regel soll entfernt werden?" 20 78 10 "${items[@]}" 3>&1 1>&2 2>&3) || continue
-               if grep -qwE "$(gd_ssh_ports | paste -sd'|' -)" <<< "$(ufw status numbered | grep -E "^\[ *$num\]")" \
+               rule="$(LC_ALL=C ufw status numbered | grep -E "^\[ *$num\]" | sed -E 's/^\[ *[0-9]+\] *//')"
+               if { grep -qE "^($(gd_ssh_ports | paste -sd'|' -))(/tcp)?([[:space:]]|$)" <<< "$rule" || grep -qiE '^(OpenSSH|SSH)([[:space:]]|$)' <<< "$rule"; } \
                    && ! gd_yesno "⚠ SSH-Regel" "Diese Regel gibt deinen SSH-Zugang frei. Wenn du sie entfernst, kannst du dich eventuell nicht mehr verbinden!\n\nTrotzdem entfernen?" 11 70; then
                    continue
                fi
@@ -416,7 +437,7 @@ gd_firewall_menu() {
             4) if $active; then
                    gd_yesno "⊘ Firewall ausschalten" "Danach sind alle Ports des Servers von außen erreichbar. Wirklich ausschalten?" 9 70 && ufw disable >> "$GD_LOG" 2>&1
                else
-                   gd_msg "✔ Firewall einschalten" "Freigegeben werden automatisch: dein SSH-Port, 80, 443$(gd_has_wings && echo ', 8080, 2022 und die Gameserver-Ports') ." 9 74
+                   gd_msg "✔ Firewall einschalten" "Freigegeben werden automatisch: dein SSH-Port, 80, 443$(gd_has_wings && echo ', 8080, 2022 und die Gameserver-Ports')." 9 74
                    clear; echo "Firewall wird eingerichtet..."
                    gd_firewall_setup "$(gd_has_wings && echo true || echo false)" "$(gd_conf_get WINGS_PORT_RANGE)" >> "$GD_LOG" 2>&1 \
                        && gd_msg "✔ Firewall aktiv" "Die Firewall ist eingeschaltet." 8 50 \
@@ -447,9 +468,9 @@ gd_fail2ban_menu() {
 }
 
 gd_autoupdates_toggle() {
-    if grep -qs 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades; then
+    if gd_autoupdates_enabled; then
         gd_yesno "↑ Automatische Sicherheitsupdates" "Automatische Sicherheitsupdates sind eingeschaltet (empfohlen).\n\nMöchtest du sie ausschalten?" 10 70 || return
-        printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "0";\n' > /etc/apt/apt.conf.d/20auto-upgrades
+        gd_autoupdates_set 0
         gd_msg "Ausgeschaltet" "Automatische Sicherheitsupdates sind ausgeschaltet." 8 60
     else
         gd_yesno "↑ Automatische Sicherheitsupdates" "Sicherheitsupdates werden automatisch täglich installiert. Das schließt Sicherheitslücken, ohne dass du daran denken musst.\n\nEinschalten?" 11 70 || return
@@ -520,7 +541,7 @@ gd_support_package() {
         echo "Blueprint: $(blueprint -v 2>/dev/null | tail -n1)"
         echo; echo "== setup.conf (ohne Geheimnisse)"; grep -vE 'PASS|KEY|TOKEN' "$GD_CONF_FILE" 2>/dev/null
         echo; echo "== Dienste"
-        for s in nginx php8.3-fpm mariadb redis-server pteroq wings docker fail2ban germandactyl-backup.timer; do
+        for s in nginx "$(gd_panel_php_fpm)" mariadb redis-server pteroq wings docker fail2ban germandactyl-backup.timer; do
             printf '%-28s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null)"
         done
         echo; echo "== Ressourcen"; LC_ALL=C free -m; df -h /
@@ -539,7 +560,7 @@ gd_support_package() {
     [ -f "$WINGS_CONFIG" ] && cp "$WINGS_CONFIG" "$dir/wings-config.yml"
     gd_progress 85 "Passwörter und Schlüssel werden entfernt..."
     gd_sanitize "$dir"/*
-    tar -czf "$out" -C "$GD_TMP" support && chmod 600 "$out"
+    ( umask 077; tar -czf "$out" -C "$GD_TMP" support ) && chmod 600 "$out"
     gd_progress 100 "Fertig."
     gd_gauge_close
     gd_msg "✔ Support-Paket erstellt" "Das Support-Paket liegt hier:\n\n$out ($(du -h "$out" | cut -f1))\n\nPasswörter, Schlüssel und Tokens wurden entfernt. Prüfe den Inhalt trotzdem kurz, bevor du die Datei weitergibst (z. B. mit: tar -tzf $out)." 14 78

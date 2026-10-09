@@ -38,6 +38,11 @@ install_phpmyadmin() {
             || { echo "Prüfsumme stimmt nicht überein – Abbruch."; return 1; }
     fi
     unzip -q "$GD_TMP/pma.zip" -d "$GD_TMP/pma" || return 1
+    # Gehört das Verzeichnis zum Paket "phpmyadmin" aus Debian/Ubuntu, nicht überschreiben (dpkg wäre danach inkonsistent)
+    if dpkg -S "$PMA_DIR" >/dev/null 2>&1; then
+        echo "$PMA_DIR gehört zum Systempaket phpmyadmin – entferne es zuerst mit 'apt purge phpmyadmin' oder nutze die vorhandene Installation."
+        return 1
+    fi
     rm -rf "$PMA_DIR"
     mv "$GD_TMP/pma/phpMyAdmin-${version}-all-languages" "$PMA_DIR" || return 1
     mkdir -p "$PMA_DIR/tmp"
@@ -121,7 +126,7 @@ if [ -f "$PMA_DIR/config.inc.php" ] && grep -q "GermanDactyl" "$PMA_DIR/config.i
 fi
 
 if [ ! -f "$PANEL_NGINX" ]; then
-    gd_msg "Fehler" "Die nginx-Konfiguration des Panels wurde nicht gefunden ($PANEL_NGINX). Repariere zuerst die Erreichbarkeit über die Problembehandlung." 10 74
+    gd_msg "Fehler" "Die nginx-Konfiguration des Panels wurde nicht gefunden ($PANEL_NGINX). Repariere zuerst die Erreichbarkeit unter 'Hilfe & Analyse → Das Panel ist nicht erreichbar'." 10 74
     exit 1
 fi
 

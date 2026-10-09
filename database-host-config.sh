@@ -16,6 +16,10 @@ fi
 gd_require_root
 
 MARIADB_CONF="/etc/mysql/mariadb.conf.d/99-germandactyl.cnf"
+# MySQL (z. B. Ubuntu mysql-server) liest mariadb.conf.d nicht ein
+if [ ! -d /etc/mysql/mariadb.conf.d ] && [ -d /etc/mysql/mysql.conf.d ]; then
+    MARIADB_CONF="/etc/mysql/mysql.conf.d/zz-germandactyl.cnf"
+fi
 
 if ! gd_yesno "⚠ Sicherheitshinweis" "Mit diesem Skript wird ein Database-Host eingerichtet. Dafür wird MariaDB für Verbindungen von außen geöffnet, damit deine Gameserver ihre Datenbanken erreichen können.\n\nDen direkten Zugriff schützt dann nur noch das Passwort. Deshalb wird ein zufälliges Passwort mit 64 Zeichen erzeugt, und die Firewall lässt Verbindungen standardmäßig nur von diesem Server und seinen Gameservern zu.\n\nMöchtest du fortfahren?" 17 78; then
     exit 0
@@ -40,6 +44,12 @@ fi
 USERNAME="gd_dbhost_$(tr -dc 'a-z0-9' < /dev/urandom | head -c 6)"
 PASSWORD="$(gd_gen_password 64)"
 
+# Bewusst gesetzte bind-address (z. B. eine private IP) nicht stillschweigend auf 0.0.0.0 erweitern
+CUR_BIND="$(my_print_defaults mysqld mariadbd 2>/dev/null | grep -- '--bind-address' | tail -n1 | cut -d= -f2)"
+if [ -n "$CUR_BIND" ] && ! grep -qxE '127\.0\.0\.1|localhost|0\.0\.0\.0|::|\*' <<< "$CUR_BIND" && [ ! -f "$MARIADB_CONF" ]; then
+    gd_yesno "Eigene bind-address" "MariaDB lauscht bereits gezielt auf ${CUR_BIND}. Für einen Database-Host muss sie auf allen Schnittstellen (0.0.0.0) erreichbar sein.\n\nSoll das geändert werden?" 12 74 || exit 0
+fi
+
 OPEN_WORLD=false
 if whiptail --title "⌂ Zugriff aus dem Internet?" --defaultno --yesno "Sollen sich auch externe Programme (z. B. dein PC mit HeidiSQL) direkt mit den Gameserver-Datenbanken verbinden können?\n\n'Nein' (empfohlen): Nur dieser Server und seine Gameserver haben Zugriff.\n'Ja': Port 3306 wird für das gesamte Internet geöffnet." 14 78; then
     OPEN_WORLD=true
@@ -63,11 +73,18 @@ echo "Datenbank-Benutzer ${USERNAME} wurde angelegt."
 # MariaDB auf allen Schnittstellen lauschen lassen (eigene Datei, wird nicht bei jedem Lauf erneut angehängt)
 mkdir -p "$(dirname "$MARIADB_CONF")"
 printf '%s\n' '# Angelegt von GermanDactyl Setup (Database-Host)' '[mysqld]' 'bind-address = 0.0.0.0' > "$MARIADB_CONF"
-systemctl restart mariadb 2>/dev/null || systemctl restart mysql
+if ! { systemctl restart mariadb 2>/dev/null || systemctl restart mysql; }; then
+    # Startet die Datenbank nicht mehr, wäre auch das Panel offline – Änderung zurücknehmen
+    rm -f "$MARIADB_CONF"
+    systemctl restart mariadb 2>/dev/null || systemctl restart mysql
+    gd_mysql -e "DROP USER IF EXISTS '${USERNAME}'@'${IP_ADDRESS}';" >> "$GD_LOG" 2>&1
+    gd_msg "✖ Fehler" "MariaDB ließ sich mit der neuen Einstellung nicht starten. Die Änderung wurde zurückgenommen.\n\nDetails: journalctl -u mariadb -n 50" 11 74
+    exit 1
+fi
 echo "MariaDB wurde neu gestartet."
 
 # Firewall: nur wenn UFW aktiv ist
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+if gd_ufw_active; then
     if $OPEN_WORLD; then
         ufw allow 3306/tcp comment 'MariaDB (Database-Host)' >> "$GD_LOG" 2>&1
     else
@@ -75,6 +92,8 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
         ufw allow from 172.16.0.0/12 to any port 3306 proto tcp comment 'MariaDB (Gameserver-Container)' >> "$GD_LOG" 2>&1
     fi
     echo "Firewall-Regeln für Port 3306 wurden gesetzt."
+elif ! $OPEN_WORLD; then
+    gd_msg "⚠ Firewall ist aus" "Die Firewall (UFW) ist nicht aktiv. Port 3306 ist damit aus dem ganzen Internet erreichbar, auch wenn du 'Nein' gewählt hast – geschützt nur durch das 64-stellige Passwort.\n\nEmpfehlung: Schalte die Firewall in der Verwaltung unter 'Server & Sicherheit → Firewall' ein und führe dieses Skript danach erneut aus." 14 78
 fi
 
 gd_msg "★ Database-Host angelegt" "Der Database-Host ist eingerichtet. Öffne jetzt in deinem Panel: Admin → Databases → Create New.\n\nIm nächsten Fenster siehst du die Daten, die du dort eintragen musst." 12 78

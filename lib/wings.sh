@@ -14,16 +14,25 @@ GD_DEFAULT_PORT_RANGE="25565-25600"
 gd_docker_install() {
     if command -v docker >/dev/null 2>&1; then
         echo "Docker ist bereits installiert: $(docker --version)"
+        # Docker per Snap oder podman-docker hat keine docker.service – Wings (Requires=docker.service) startet dann nicht
+        if ! systemctl cat docker.service >/dev/null 2>&1; then
+            echo "Es gibt keinen Dienst docker.service (Docker per Snap oder podman?). Wings benötigt Docker aus dem offiziellen Paket (docker-ce oder docker.io)."
+            return 1
+        fi
         systemctl enable --now docker
         return 0
     fi
     gd_os_detect
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL "https://download.docker.com/linux/${GD_OS_ID}/gpg" -o /etc/apt/keyrings/docker.asc || return 1
-    chmod a+r /etc/apt/keyrings/docker.asc
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${GD_OS_ID} ${GD_OS_CODENAME} stable" \
-        > /etc/apt/sources.list.d/docker.list
-    gd_apt update || return 1
+    # Eine vorhandene Docker-Quelle (anderer Dateiname/Schlüssel) weiterverwenden – zwei Einträge mit
+    # unterschiedlichem "signed-by" legen apt mit "Conflicting values set for option Signed-By" lahm
+    if ! grep -rlsq 'download\.docker\.com' /etc/apt/sources.list /etc/apt/sources.list.d/; then
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL "https://download.docker.com/linux/${GD_OS_ID}/gpg" -o /etc/apt/keyrings/docker.asc || return 1
+        chmod a+r /etc/apt/keyrings/docker.asc
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${GD_OS_ID} ${GD_OS_CODENAME} stable" \
+            > /etc/apt/sources.list.d/docker.list
+    fi
+    gd_apt_update
     gd_apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || return 1
     systemctl enable --now docker
 }
@@ -32,24 +41,29 @@ gd_wings_fetch() {
     # gd_wings_fetch <url> <ziel> – Wings herunterladen, prüfen und installieren.
     # Wings veröffentlicht keine Prüfsummen-Datei; daher wird geprüft, dass ein vollständiges,
     # auf dieser Architektur lauffähiges Programm angekommen ist (statt z. B. einer HTML-Fehlerseite).
-    local url="$1" dest="$2" tmp="$GD_TMP/wings.download" size
+    # Download direkt neben das Ziel: /tmp ist auf gehärteten Servern oft "noexec", dann ließe sich
+    # das Programm dort nicht testweise starten
+    local url="$1" dest="$2" tmp size
+    mkdir -p "$(dirname "$dest")"
+    tmp="$(dirname "$dest")/.wings-download.$$"
     rm -f "$tmp"
     curl -fL --retry 3 --retry-delay 3 --connect-timeout 20 "$url" -o "$tmp" \
-        || { echo "Download fehlgeschlagen: $url"; return 1; }
+        || { rm -f "$tmp"; echo "Download fehlgeschlagen: $url"; return 1; }
     size="$(stat -c %s "$tmp" 2>/dev/null || echo 0)"
     if [ "$size" -lt 5000000 ] || [ "$(head -c 4 "$tmp" | od -An -c | tr -d ' ')" != "177ELF" ]; then
+        rm -f "$tmp"
         echo "Die heruntergeladene Datei ist kein gültiges Wings-Programm (${size} Bytes)."
         return 1
     fi
     chmod 0755 "$tmp"
     # "wings version" gibt es seit Wings 1.0 (ein Flag "--version" gibt es nicht); "--help" als Rückfallebene
     if ! timeout 20 "$tmp" version >/dev/null 2>&1 && ! timeout 20 "$tmp" --help >/dev/null 2>&1; then
+        rm -f "$tmp"
         echo "Das heruntergeladene Wings-Programm lässt sich auf diesem Server nicht ausführen (Architektur: $(gd_arch))."
         return 1
     fi
-    # install ersetzt die Datei atomar – funktioniert auch, während Wings läuft (Update)
-    install -m 0755 "$tmp" "$dest" || return 1
-    rm -f "$tmp"
+    # mv auf demselben Dateisystem ersetzt atomar – funktioniert auch, während Wings läuft (Update)
+    mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
     echo "Installiert: Wings v$("$dest" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -n1)"
     return 0
 }
@@ -95,11 +109,18 @@ gd_wings_certificate() {
     # gd_wings_certificate <fqdn> <email> – Zertifikat für die Wings-Domain, falls noch nicht vorhanden
     local fqdn="$1" email="$2"
     [ -f "/etc/letsencrypt/live/${fqdn}/fullchain.pem" ] && { echo "Zertifikat für ${fqdn} ist bereits vorhanden."; return 0; }
-    command -v certbot >/dev/null 2>&1 || gd_apt_install certbot python3-certbot-nginx || return 1
+    command -v certbot >/dev/null 2>&1 || gd_apt_install certbot || return 1
+    if gd_ufw_active; then ufw allow 80/tcp comment "HTTP (Zertifikate)" >/dev/null; fi
     if systemctl is-active --quiet nginx; then
+        # certbot kann ohne das nginx-Plugin installiert sein
+        certbot plugins 2>/dev/null | grep -q '^\* nginx' || gd_apt_install python3-certbot-nginx || return 1
         certbot certonly --nginx -d "$fqdn" --email "$email" --agree-tos --no-eff-email --non-interactive
     else
         # Ohne Webserver: Certbot startet kurzzeitig einen eigenen auf Port 80
+        if ss -Hltn 'sport = :80' 2>/dev/null | grep -q .; then
+            echo "Port 80 ist von einem anderen Programm belegt ($(ss -Hltnp 'sport = :80' 2>/dev/null | grep -oE '"[^"]+"' | head -n1)). Das Zertifikat kann so nicht ausgestellt werden."
+            return 1
+        fi
         certbot certonly --standalone -d "$fqdn" --email "$email" --agree-tos --no-eff-email --non-interactive
     fi
 }
@@ -109,15 +130,35 @@ gd_wings_network_prepare() {
     # scheitert das ("Cannot read IPv6 setup for bridge"), und Wings startet nicht. Ein vorhandenes
     # Netzwerk gleichen Namens verwendet Wings weiter – deshalb hier vorab ein reines IPv4-Netzwerk anlegen.
     # gd_wings_network_prepare [config.yml] [netzwerkname] [bridge-name]
-    local cfg="${1:-$WINGS_CONFIG}" name="${2:-pterodactyl_nw}" bridge="${3:-pterodactyl0}" subnet gateway
-    [ -e /proc/net/if_inet6 ] && return 0
+    local cfg="${1:-$WINGS_CONFIG}" name="${2:-pterodactyl_nw}" bridge="${3:-pterodactyl0}" subnet gateway prefix i
     command -v docker >/dev/null 2>&1 || return 0
     docker network inspect "$name" >/dev/null 2>&1 && return 0
     subnet="$(awk '/v4:/{f=1} f && $1=="subnet:" {print $2; exit}' "$cfg" 2>/dev/null | tr -d "'\"")"
     gateway="$(awk '/v4:/{f=1} f && $1=="gateway:" {print $2; exit}' "$cfg" 2>/dev/null | tr -d "'\"")"
+    # Kollidiert das Subnetz (Standard 172.18.0.0/16) mit einem vorhandenen Docker-Netz (z. B. docker compose)
+    # oder dem Servernetz, ein freies 172.x.0.0/16 wählen und in der config.yml eintragen
+    prefix="$(cut -d. -f1-2 <<< "${subnet:-172.18.0.0/16}")"
+    if gd_subnet_in_use "$prefix"; then
+        for i in $(seq 19 31); do
+            gd_subnet_in_use "172.$i" && continue
+            echo "Subnetz ${prefix}.0.0/16 ist bereits belegt – Wings nutzt stattdessen 172.$i.0.0/16."
+            sed -i -E "/(subnet|gateway|interface):/ s/${prefix//./\\.}\./172.$i./g" "$cfg"
+            subnet="172.$i.0.0/16"; gateway="172.$i.0.1"
+            break
+        done
+    fi
+    gd_has_ipv6 && return 0
     echo "Server ohne IPv6: Docker-Netzwerk $name wird ohne IPv6 angelegt."
     docker network create --driver bridge --subnet "${subnet:-172.18.0.0/16}" --gateway "${gateway:-172.18.0.1}" \
         -o "com.docker.network.bridge.name=${bridge}" "$name"
+}
+
+gd_subnet_in_use() {
+    # gd_subnet_in_use <a.b> – wird a.b.0.0/16 schon von Docker-Netzen, Routen oder Adressen verwendet?
+    local p="${1//./\\.}\."
+    { docker network inspect $(docker network ls -q 2>/dev/null) -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null | tr ' ' '\n'
+      ip -4 route 2>/dev/null | awk '{print $1}'
+      ip -4 -o addr 2>/dev/null | awk '{print $4}'; } | grep -qE "^$p"
 }
 
 gd_wings_start() {
@@ -152,13 +193,25 @@ gd_wings_verify() {
 # Automatische Einrichtung im lokalen Panel
 # ---------------------------------------------------------------------------
 gd_panel_env() {
-    grep -E "^$1=" "$PTERO_DIR/.env" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"'
+    grep -E "^$1=" "$PTERO_DIR/.env" 2>/dev/null | tail -n1 | cut -d= -f2- | sed -E "s/^[\"'](.*)[\"']$/\\1/"
 }
 
 gd_panel_sql() {
-    # SQL in der Panel-Datenbank ausführen (als root über den unix_socket)
-    local db
-    db="$(gd_panel_env DB_DATABASE)"
+    # SQL in der Panel-Datenbank ausführen – mit den Zugangsdaten des Panels (funktioniert auch,
+    # wenn root ein Passwort hat); Rückfall auf root über den unix_socket
+    local db user pass host port cnf
+    db="$(gd_panel_env DB_DATABASE)"; user="$(gd_panel_env DB_USERNAME)"; pass="$(gd_panel_env DB_PASSWORD)"
+    host="$(gd_panel_env DB_HOST)"; port="$(gd_panel_env DB_PORT)"
+    if [ -n "$user" ] && [ -n "$pass" ]; then
+        cnf="$GD_TMP/panel-db.cnf"
+        ( umask 077; printf '[client]\nuser="%s"\npassword="%s"\nhost="%s"\nport="%s"\n' \
+            "$user" "${pass//\"/\\\"}" "${host:-127.0.0.1}" "${port:-3306}" > "$cnf" )
+        if command -v mariadb >/dev/null 2>&1; then
+            mariadb --defaults-extra-file="$cnf" -N -D "${db:-panel}" -e "$1" && return 0
+        else
+            mysql --defaults-extra-file="$cnf" -N -D "${db:-panel}" -e "$1" && return 0
+        fi
+    fi
     gd_mysql -N -D "${db:-panel}" -e "$1"
 }
 
@@ -214,6 +267,7 @@ gd_wings_config_write() {
     mkdir -p /etc/pterodactyl
     gd_artisan_www p:node:configuration "$GD_NODE_ID" --format=yaml > "$GD_TMP/config.yml" || return 1
     grep -q '^token:' "$GD_TMP/config.yml" || { cat "$GD_TMP/config.yml"; return 1; }
+    [ -f "$WINGS_CONFIG" ] && cp -p "$WINGS_CONFIG" "${WINGS_CONFIG}.bak-$(date +%Y%m%d%H%M%S)"
     install -m 600 "$GD_TMP/config.yml" "$WINGS_CONFIG"
 }
 
@@ -225,6 +279,8 @@ gd_allocation_ip() {
         GD_ALLOC_ALIAS="$(gd_public_ip)"
     fi
     [ -z "$GD_ALLOC_IP" ] && GD_ALLOC_IP="$(gd_public_ip)"
+    # Reiner IPv6-Server
+    [ -z "$GD_ALLOC_IP" ] && GD_ALLOC_IP="$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
     [ -n "$GD_ALLOC_IP" ]
 }
 
@@ -277,7 +333,7 @@ gd_wings_local_steps() {
 gd_wings_remote_steps() {
     # Wings auf einem eigenen Server (Panel liegt woanders). Erwartet: GD_WINGS_FQDN, GD_EMAIL
     local p="${1:-5}"
-    gd_step "$p"        "Paketquellen werden aktualisiert..." gd_apt update
+    gd_step "$p"        "Paketquellen werden aktualisiert..." gd_apt_update
     gd_step $((p + 5))  "Benötigte Pakete werden installiert..." gd_apt_install curl ca-certificates gnupg certbot
     gd_step $((p + 15)) "Docker wird installiert..." gd_docker_install
     gd_step $((p + 40)) "Wings wird heruntergeladen..." gd_wings_binary
@@ -324,17 +380,37 @@ gd_wings_update() {
 
 gd_swap_create() {
     # gd_swap_create <MB> – Swap-Datei anlegen und dauerhaft in /etc/fstab eintragen
-    local size="$1" file="/swapfile"
+    local size="$1" file="/swapfile" virt fstype
     [ -e "$file" ] && { echo "$file existiert bereits."; return 1; }
-    fallocate -l "${size}M" "$file" 2>/dev/null || dd if=/dev/zero of="$file" bs=1M count="$size" status=none || return 1
+    virt="$(systemd-detect-virt -c 2>/dev/null)"
+    case "$virt" in
+        lxc|lxc-libvirt|openvz) echo "In einem ${virt}-Container kann kein eigener Swap angelegt werden (Sache des Hosts)."; return 1 ;;
+    esac
+    fstype="$(stat -f -c %T / 2>/dev/null)"
+    if [ "$fstype" = "btrfs" ]; then
+        # btrfs braucht eine Datei ohne Copy-on-Write
+        btrfs filesystem mkswapfile --size "${size}m" "$file" || return 1
+    else
+        fallocate -l "${size}M" "$file" 2>/dev/null || dd if=/dev/zero of="$file" bs=1M count="$size" status=none || return 1
+        chmod 600 "$file"
+        mkswap "$file" || { rm -f "$file"; return 1; }
+    fi
     chmod 600 "$file"
-    mkswap "$file" && swapon "$file" || { rm -f "$file"; return 1; }
-    grep -q "^$file " /etc/fstab || echo "$file none swap sw 0 0" >> /etc/fstab
+    if ! swapon "$file"; then
+        # fallocate erzeugt auf manchen Dateisystemen Dateien "mit Löchern", die swapon ablehnt
+        rm -f "$file"
+        dd if=/dev/zero of="$file" bs=1M count="$size" status=none && chmod 600 "$file" && mkswap "$file" && swapon "$file" \
+            || { rm -f "$file"; return 1; }
+    fi
+    grep -qE "^${file}[[:space:]]" /etc/fstab || echo "$file none swap sw 0 0" >> /etc/fstab
 }
 
 gd_swap_remove() {
     local file="/swapfile"
-    swapoff "$file" 2>/dev/null
+    if swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$file"; then
+        # Reicht der freie RAM nicht, scheitert swapoff – dann die (noch aktive) Datei nicht löschen
+        swapoff "$file" || { echo "Swap konnte nicht deaktiviert werden (zu wenig freier Arbeitsspeicher?)."; return 1; }
+    fi
     rm -f "$file"
-    sed -i "\#^$file #d" /etc/fstab
+    sed -i -E "\#^${file}[[:space:]]#d" /etc/fstab
 }

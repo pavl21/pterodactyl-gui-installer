@@ -70,11 +70,19 @@ gd_install_node() {
             | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg || return 1
         echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${GD_NODE_MAJOR}.x nodistro main" \
             > /etc/apt/sources.list.d/nodesource.list
-        gd_apt update || return 1
+        # Reste von Node aus dem Distributionspaket (v. a. Ubuntu 22.04) kollidieren mit dem NodeSource-Paket
+        # ("trying to overwrite '/usr/include/node/common.gypi'")
+        local old_pkgs
+        old_pkgs="$(dpkg-query -W -f='${Package} ${Status}\n' libnode-dev 'libnode[0-9]*' nodejs-doc npm 2>/dev/null | awk '/install ok installed/{print $1}')"
+        [ -n "$old_pkgs" ] && { gd_apt purge $old_pkgs || return 1; }
+        gd_apt_update
         gd_apt install nodejs || return 1
     fi
-    if ! command -v yarn >/dev/null 2>&1; then
+    # "yarn" muss Yarn 1.x sein – das Ubuntu-Paket cmdtest liefert ein gleichnamiges, anderes Programm
+    if ! yarn --version 2>/dev/null | grep -q '^1\.'; then
         npm install -g yarn || return 1
+        hash -r
+        yarn --version 2>/dev/null | grep -q '^1\.' || { echo "yarn 1.x konnte nicht eingerichtet werden (Konflikt mit dem Paket cmdtest? 'apt purge cmdtest')."; return 1; }
     fi
     return 0
 }

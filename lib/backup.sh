@@ -9,6 +9,10 @@ GD_BACKUP_ROOT="/opt/pterodactyl/backups"
 GD_BACKUP_PANEL="$GD_BACKUP_ROOT/panel"
 GD_BACKUP_SERVER="$GD_BACKUP_ROOT/server"
 GD_VOLUMES_DIR="/var/lib/pterodactyl/volumes"
+# Wings kann die Serverdaten woanders ablegen (system.data in der config.yml)
+_gd_data="$(awk '/^system:/{f=1;next} f && /^[^[:space:]]/{f=0} f && $1=="data:"{print $2; exit}' /etc/pterodactyl/config.yml 2>/dev/null | tr -d "'\"")"
+[ -n "$_gd_data" ] && GD_VOLUMES_DIR="$_gd_data"
+unset _gd_data
 GD_BACKUP_KEEP=5   # Anzahl der Backups, die je Art behalten werden
 
 gd_backup_prepare() {
@@ -68,6 +72,8 @@ gd_backup_tar() {
     local target="$1" gauge="$2" title="$3" size="$4" rcfile
     shift 4
     rcfile="$(mktemp)"
+    # Ohne pv (z. B. nicht installierbar) ohne Fortschrittsbalken packen
+    command -v pv >/dev/null 2>&1 || gauge=false
     if [ "$gauge" = "true" ]; then
         {
             tar -cf - "$@" 2>>"$GD_LOG" | pv -n -s "$size" | gzip > "$target"
@@ -126,7 +132,8 @@ gd_backup_stop_servers() {
     # Wings und alle Gameserver-Container anhalten (für konsistente Backups/Wiederherstellungen)
     systemctl stop wings 2>/dev/null
     if command -v docker >/dev/null 2>&1; then
-        docker ps -q --filter label=Service=Pterodactyl | xargs -r docker stop >> "$GD_LOG" 2>&1
+        # Großzügige Frist: Gameserver (z. B. Minecraft) speichern beim Stoppen noch ihre Welten
+        docker ps -q --filter label=Service=Pterodactyl | xargs -r docker stop -t 120 >> "$GD_LOG" 2>&1
     fi
     return 0
 }
@@ -166,10 +173,24 @@ gd_backup_panel_apply() {
     safety="$work/aktuelle-db.sql.gz"
     if [ -d "$PTERO_DIR" ]; then
         (cd "$PTERO_DIR" && php artisan down) >> "$GD_LOG" 2>&1
-        gd_backup_dump_db "$current_db" "$safety" || safety=""
-        mv "$PTERO_DIR" "$old" || { rm -rf "$work"; GD_RESTORE_INFO="Der aktuelle Panel-Ordner konnte nicht gesichert werden."; return 1; }
+        # Ohne Sicherung der aktuellen Datenbank nicht weitermachen – ein fehlgeschlagener Import wäre sonst nicht rückgängig zu machen
+        if ! gd_backup_dump_db "$current_db" "$safety"; then
+            (cd "$PTERO_DIR" && php artisan up) >> "$GD_LOG" 2>&1
+            rm -rf "$work"
+            GD_RESTORE_INFO="Die aktuelle Datenbank konnte nicht gesichert werden (z. B. zu wenig Speicherplatz). Es wurde nichts verändert."
+            return 1
+        fi
+        mv "$PTERO_DIR" "$old" || { (cd "$PTERO_DIR" && php artisan up) >> "$GD_LOG" 2>&1; rm -rf "$work"; GD_RESTORE_INFO="Der aktuelle Panel-Ordner konnte nicht gesichert werden."; return 1; }
     fi
-    mv "$work/${PTERO_DIR#/}" "$PTERO_DIR"
+    if ! mv "$work/${PTERO_DIR#/}" "$PTERO_DIR"; then
+        # z. B. Speicher voll beim Kopieren über Partitionsgrenzen
+        rm -rf "$PTERO_DIR"
+        [ -d "$old" ] && mv "$old" "$PTERO_DIR"
+        (cd "$PTERO_DIR" && php artisan up) >> "$GD_LOG" 2>&1
+        rm -rf "$work"
+        GD_RESTORE_INFO="Die Panel-Dateien konnten nicht eingespielt werden (Speicherplatz?). Der vorherige Stand wurde wiederhergestellt."
+        return 1
+    fi
 
     if [ -f "$work/germandactyl-backup/panel-db.sql.gz" ]; then
         db="$(cat "$work/germandactyl-backup/database-name" 2>/dev/null)"
@@ -228,14 +249,18 @@ gd_backup_db_import() {
 
 gd_backup_server_restore() {
     # gd_backup_server_restore <backupdatei> [uuid] – ohne uuid werden alle Server zurückgesetzt
-    local file="$1" uuid="${2:-}" member target aside rc
-    if [ -n "$uuid" ]; then
-        member="${GD_VOLUMES_DIR#/}/$uuid"
-        target="$GD_VOLUMES_DIR/$uuid"
-    else
-        member="${GD_VOLUMES_DIR#/}"
-        target="$GD_VOLUMES_DIR"
+    local file="$1" uuid="${2:-}" member target aside rc u
+    if [ -z "$uuid" ]; then
+        # "Alle": jeden Server aus dem Backup einzeln zurücksetzen. Server, die nach dem Backup angelegt wurden,
+        # bleiben unangetastet (und ein eigener Mountpoint für volumes ist kein Problem)
+        rc=0
+        for u in $(gd_backup_list_servers_in "$file"); do
+            gd_backup_server_restore "$file" "$u" || rc=1
+        done
+        return $rc
     fi
+    member="${GD_VOLUMES_DIR#/}/$uuid"
+    target="$GD_VOLUMES_DIR/$uuid"
     aside="${target}.vor-wiederherstellung-$(date +%Y%m%d-%H%M%S)"
     # Aktuellen Stand beiseite legen (nur umbenennen, kein zusätzlicher Speicherplatz), damit der
     # Server exakt dem Backup entspricht und nicht neue Dateien übrig bleiben

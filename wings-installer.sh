@@ -63,7 +63,7 @@ gd_wings_manage() {
 gd_swap_dialog() {
     local size
     if [ -e /swapfile ]; then
-        gd_msg "Swap vorhanden" "Es existiert bereits eine Swap-Datei. Du kannst sie über die SWAP-Verwaltung im Hauptmenü anpassen." 9 70
+        gd_msg "Swap vorhanden" "Es existiert bereits eine Swap-Datei. Du kannst sie in der Verwaltung unter 'Gameserver & Wings → Swap-Speicher verwalten' anpassen." 9 70
         return 0
     fi
     gd_yesno "Swap-Speicher" "Möchtest du Swap-Speicher einrichten? Er wird genutzt, wenn der Arbeitsspeicher knapp wird." 9 70 || return 0
@@ -93,6 +93,10 @@ gd_wings_install_local() {
     GD_WINGS_FQDN="$domain"
     if ! gd_yesno "⇄ Domain für Wings" "Wings nutzt standardmäßig die Domain des Panels:\n\n${domain} (Port 8080)\n\nMöchtest du diese Domain verwenden? Bei 'Nein' kannst du eine eigene Subdomain angeben." 13 74; then
         GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
+    elif gd_is_cloudflare_ip "$(gd_resolve_a "$domain" | head -n1)"; then
+        # Über den Cloudflare-Proxy (orange Wolke) funktioniert Port 8080 nicht – die Konsole im Panel bliebe tot
+        gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${domain} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) ist darüber nicht erreichbar.\n\nGib im nächsten Schritt eine eigene Subdomain für Wings an, die in Cloudflare auf 'DNS only' (graue Wolke) steht." 13 76
+        GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
     fi
     if ! gd_valid_email "$email"; then
         email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:")" || return 1
@@ -106,14 +110,14 @@ gd_wings_install_local() {
     done
 
     GD_SEC_UFW=false
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+    if gd_ufw_active; then
         GD_SEC_UFW=true   # Firewall ist bereits aktiv -> Wings-Ports ergänzen
     elif gd_yesno "✚ Firewall" "Soll die Firewall (UFW) aktiviert werden? Dein SSH-Port sowie 80, 443, 8080, 2022 und die Gameserver-Ports werden automatisch freigegeben." 11 74; then
         GD_SEC_UFW=true
     fi
 
     gd_gauge_open "⇄ Wings wird eingerichtet" "Einrichtung wird vorbereitet..."
-    gd_step 2 "Paketquellen werden aktualisiert..." gd_apt update
+    gd_step 2 "Paketquellen werden aktualisiert..." gd_apt_update
     gd_wings_local_steps 5 80
     gd_step 88 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
     if [ "$GD_SEC_UFW" = "true" ]; then
@@ -137,7 +141,7 @@ gd_wings_install_remote() {
     gd_gauge_close
 
     if gd_wings_configure_remote; then
-        if gd_yesno "✚ Firewall" "Soll die Firewall (UFW) aktiviert werden? Freigegeben werden dein SSH-Port sowie 8080 und 2022.\n\nDie Ports deiner Gameserver gibst du danach mit 'ufw allow <port>' frei." 12 74; then
+        if gd_yesno "✚ Firewall" "Soll die Firewall (UFW) aktiviert werden? Freigegeben werden dein SSH-Port sowie 80, 443, 8080 und 2022.\n\nDie Ports deiner Gameserver gibst du danach mit 'ufw allow <port>' frei." 12 74; then
             gd_firewall_setup true "" >> "$GD_LOG" 2>&1
         fi
         gd_msg "✔ Wings ist verbunden" "Wings läuft und ist mit deinem Panel verbunden. In der Node-Übersicht sollte nun ein grünes Herz zu sehen sein.\n\nLege im Panel unter der Node im Reiter 'Allocation' noch die Ports für deine Gameserver an." 13 78

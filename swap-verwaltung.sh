@@ -24,11 +24,20 @@ create_swap() {
         [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -ge 256 ] && break
         gd_msg "Ungültige Eingabe" "Bitte gib eine Zahl ab 256 ein." 8 50
     done
-    if [ "$(df -Pm / | awk 'NR==2{print $4}')" -le $((size + 1024)) ]; then
+    # Beim Ändern der Größe wird der Platz der alten Datei frei
+    local free freed=0
+    [ "${1:-}" = "ersetzen" ] && freed="$(du -m /swapfile 2>/dev/null | awk '{print $1}')"
+    free="$(df -Pm / | awk 'NR==2{print $4}')"
+    if [ $((free + ${freed:-0})) -le $((size + 1024)) ]; then
         gd_msg "Zu wenig Speicherplatz" "Auf der Festplatte ist nicht genug Platz für ${size} MB Swap frei." 8 70
         return 0
     fi
     clear; echo "Swap-Speicher wird erstellt..."
+    # Erst jetzt (nach Eingabe und Platzprüfung) den alten Swap entfernen
+    if [ "${1:-}" = "ersetzen" ] && ! gd_swap_remove >> "$GD_LOG" 2>&1; then
+        gd_msg "Fehler" "Der vorhandene Swap konnte nicht deaktiviert werden (zu wenig freier Arbeitsspeicher?). Er bleibt unverändert.\n\nDetails: $GD_LOG" 10 70
+        return 0
+    fi
     if gd_swap_create "$size" >> "$GD_LOG" 2>&1; then
         gd_msg "Swap-Speicher erstellt" "Swap-Speicher mit ${size} MB wurde erstellt und aktiviert. Er bleibt auch nach einem Neustart erhalten." 9 70
     else
@@ -45,9 +54,12 @@ if [ -e /swapfile ]; then
         "2" "Swap-Speicher entfernen" \
         "3" "Zurück" 3>&1 1>&2 2>&3) || exit 0
     case "$choice" in
-        1) gd_swap_remove >> "$GD_LOG" 2>&1; create_swap ;;
-        2) gd_swap_remove >> "$GD_LOG" 2>&1
-           gd_msg "Swap-Speicher entfernt" "Der Swap-Speicher wurde deaktiviert und entfernt." 8 60 ;;
+        1) create_swap ersetzen ;;
+        2) if gd_swap_remove >> "$GD_LOG" 2>&1; then
+               gd_msg "Swap-Speicher entfernt" "Der Swap-Speicher wurde deaktiviert und entfernt." 8 60
+           else
+               gd_msg "Fehler" "Der Swap konnte nicht deaktiviert werden (zu wenig freier Arbeitsspeicher?). Details: $GD_LOG" 9 70
+           fi ;;
     esac
 else
     create_swap

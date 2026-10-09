@@ -63,7 +63,7 @@ gd_prepare_system() {
     gd_status "Vorbereitung: Benötigte Grundpakete werden installiert..."
     (
         dpkg --configure -a
-        gd_apt update && gd_apt_install whiptail curl dnsutils ca-certificates gnupg lsb-release jq iproute2 psmisc tar
+        gd_apt_update; gd_apt_install whiptail curl dnsutils ca-certificates gnupg lsb-release jq iproute2 psmisc tar
     ) >> "$GD_LOG" 2>&1 &
     local pid=$!
     gd_spinner "$pid" "Grundpakete werden installiert..."
@@ -108,6 +108,18 @@ gd_check_environment() {
             clear; echo "Die Installation wurde abgebrochen."; exit 0
         fi
         gd_warn_colors_off
+    fi
+
+    # Port 80/443 von einem anderen Webserver belegt (z. B. Apache)? Sonst scheitert nginx mitten in der Installation.
+    local blocker
+    blocker="$(ss -Hltnp '( sport = :80 or sport = :443 )' 2>/dev/null | grep -oE 'users:\(\("[^"]+"' | cut -d'"' -f2 | grep -vx nginx | sort -u | tr '\n' ' ')"
+    if [ -n "$blocker" ]; then
+        if grep -qw apache2 <<< "$blocker" && gd_yesno "Port 80/443 belegt" "Auf diesem Server läuft bereits der Webserver Apache und belegt Port 80/443. Pterodactyl benötigt nginx auf diesen Ports.\n\nSoll Apache gestoppt und deaktiviert werden? (Seiten, die über Apache laufen, sind danach nicht mehr erreichbar.)" 14 76; then
+            systemctl disable --now apache2 >> "$GD_LOG" 2>&1
+        else
+            gd_msg "Port 80/443 belegt" "Port 80 bzw. 443 wird bereits verwendet von: ${blocker}\n\nPterodactyl benötigt diese Ports für nginx und das SSL-Zertifikat. Beende bzw. deaktiviere das Programm und starte die Installation erneut." 13 74
+            clear; echo "Die Installation wurde abgebrochen (Port 80/443 belegt: ${blocker})."; exit 1
+        fi
     fi
 }
 
@@ -172,10 +184,25 @@ EOF
     umask 022
 }
 
+gd_check_database() {
+    # Nur für die Panel-Installation (Pelican nutzt SQLite, reine Wings-Server brauchen keine Datenbank)
+    # MySQL statt MariaDB: mariadb-server würde mysql-server entfernen, vorhandene Datenbanken wären unbrauchbar
+    if dpkg-query -W -f='${Status}' 'mysql-server*' 2>/dev/null | grep -q "install ok installed"; then
+        gd_msg "MySQL ist installiert" "Auf diesem Server ist MySQL installiert. Die Installation würde es durch MariaDB ersetzen, vorhandene Datenbanken wären danach nicht mehr nutzbar.\n\nDie Installation wird abgebrochen. Nutze einen frischen Server oder entferne MySQL vorher selbst (nach einem Backup)." 13 76
+        clear; echo "Die Installation wurde abgebrochen (MySQL ist installiert)."; exit 1
+    fi
+    # MariaDB vorhanden, aber root nicht per unix_socket erreichbar (root-Passwort gesetzt)?
+    if command -v mariadb >/dev/null 2>&1 && systemctl is-active --quiet mariadb && ! gd_mysql -e "SELECT 1" >/dev/null 2>&1; then
+        gd_msg "Kein Zugriff auf MariaDB" "MariaDB ist installiert, aber root kann sich nicht ohne Passwort anmelden (unix_socket). Das Skript benötigt diesen Zugriff, um die Panel-Datenbank anzulegen.\n\nHinterlege das Passwort in /root/.my.cnf (Rechte 600):\n\n[client]\nuser=root\npassword=DEIN_PASSWORT\n\nStarte die Installation danach erneut." 18 76
+        clear; echo "Die Installation wurde abgebrochen (kein root-Zugriff auf MariaDB)."; exit 1
+    fi
+}
+
 gd_fresh_install() {
     local mode="$1"   # panel_wings | panel
     local with_wings=false
     [ "$mode" = "panel_wings" ] && with_wings=true
+    gd_check_database
 
     # --- Eingaben -------------------------------------------------------------
     GD_DOMAIN="$(gd_ask_domain "⌂ Domain für das Panel" "Gib die Domain (FQDN) ein, unter der das Panel erreichbar sein soll, z. B. panel.deinedomain.de.\n\nDer DNS-Eintrag (A-Eintrag) muss bereits auf diesen Server zeigen, das wird im nächsten Schritt geprüft.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
@@ -214,7 +241,11 @@ gd_fresh_install() {
     if command -v mariadb >/dev/null 2>&1 && gd_panel_db_has_tables; then
         gd_warn_colors_on
         if gd_yesno "Alte Panel-Datenbank gefunden" "Es existiert bereits eine Datenbank '${GD_PANEL_DB}' mit Tabellen, vermutlich von einer früheren Installation.\n\nSoll sie gelöscht werden? Bei 'Nein' wird die Installation abgebrochen, damit keine Daten verloren gehen." 14 74; then
-            gd_mysql -e "DROP DATABASE \`${GD_PANEL_DB}\`;" >> "$GD_LOG" 2>&1
+            if ! gd_mysql -e "DROP DATABASE \`${GD_PANEL_DB}\`;" >> "$GD_LOG" 2>&1; then
+                gd_warn_colors_off
+                gd_msg "Fehler" "Die alte Datenbank konnte nicht gelöscht werden. Details: $GD_LOG" 9 70
+                clear; echo "Die Installation wurde abgebrochen."; exit 1
+            fi
         else
             gd_warn_colors_off
             clear; echo "Die Installation wurde abgebrochen."; exit 0
@@ -272,11 +303,12 @@ gd_fresh_install() {
     if $with_wings; then
         done_text="Dein Panel ist einsatzbereit und Wings ist bereits verbunden. Du kannst sofort loslegen:\n\n1. Melde dich an: https://${GD_DOMAIN}\n2. Öffne 'Admin' → 'Servers' → 'Create New' und lege deinen ersten Gameserver an.\n\nFreigegebene Gameserver-Ports: ${GD_PORT_RANGE}"
     else
-        done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dieses Skript dazu einfach erneut und wähle 'Wings installieren'."
+        done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dazu die Verwaltung (Befehl: $(gd_shortcut_hint)) und wähle 'Gameserver & Wings → Wings installieren/verwalten'."
     fi
-    [ "$GD_SEC_UFW" = true ] && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
+    [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
+    gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
     done_text+="\n\nDie Verwaltung startest du künftig einfach mit dem Befehl: $(gd_shortcut_hint)"
-    gd_msg "✔ Installation erfolgreich" "$done_text" 20 78
+    gd_msg "✔ Installation erfolgreich" "$done_text" 22 78
     clear
     echo ""
     echo "FERTIG - - - - - - - - - - - - - - -"
@@ -292,17 +324,19 @@ gd_install_menu() {
         clear; echo "Die Installation wurde abgebrochen."; exit 0
     fi
 
-    choice=$(whiptail --title "Was möchtest du installieren?" --menu "Wähle aus, was auf diesem Server eingerichtet werden soll:" 17 78 4 \
+    choice=$(whiptail --title "Was möchtest du installieren?" --menu "Wähle aus, was auf diesem Server eingerichtet werden soll:" 18 78 5 \
         "1" "Panel + Wings (empfohlen, sofort einsatzbereit)" \
         "2" "Nur Panel (Wings läuft auf einem anderen Server)" \
         "3" "Nur Wings (Panel läuft auf einem anderen Server)" \
-        "4" "Pelican Panel + Wings (Beta)" 3>&1 1>&2 2>&3) || { clear; exit 0; }
+        "4" "Pelican Panel + Wings (Beta)" \
+        "5" "Nur Pelican-Wings (Pelican-Panel auf anderem Server)" 3>&1 1>&2 2>&3) || { clear; exit 0; }
 
     case "$choice" in
         1) gd_fresh_install panel_wings ;;
         2) gd_fresh_install panel ;;
         3) gd_run wings-installer.sh ;;
         4) gd_run pelican-installer.sh ;;
+        5) gd_run wings-pelican.sh ;;
     esac
 }
 
@@ -317,7 +351,7 @@ echo "----------------------------------"
 gd_log "GermanDactyl Setup gestartet (Branch: $GD_BRANCH, lokal: ${GD_LOCAL_DIR:-nein})"
 
 if ! command -v whiptail >/dev/null 2>&1 || ! command -v dig >/dev/null 2>&1 \
-    || { [ ! -d "$PTERO_DIR" ] && [ ! -f /etc/pterodactyl/config.yml ]; }; then
+    || { [ ! -d "$PTERO_DIR" ] && [ ! -f /etc/pterodactyl/config.yml ] && [ ! -d /var/www/pelican ]; }; then
     gd_prepare_system
 fi
 
@@ -343,6 +377,16 @@ fi
 
 if [ -d "$PTERO_DIR" ] || [ -f /etc/pterodactyl/config.yml ]; then
     gd_main_menu
+elif [ -f /var/www/pelican/artisan ] || [ -f /etc/pelican/config.yml ]; then
+    # Pelican-Server: direkt zur Pelican-Verwaltung (nicht das Pterodactyl-Installationsmenü – dessen
+    # Wings-Installation würde Pelican-Wings überschreiben). Reiner Pelican-Wings-Server: Wings-Verwaltung.
+    if [ -f /var/www/pelican/artisan ]; then
+        gd_run pelican-installer.sh
+    else
+        gd_run wings-pelican.sh
+    fi
+    clear
+    exit 0
 else
     gd_check_environment
     gd_install_menu

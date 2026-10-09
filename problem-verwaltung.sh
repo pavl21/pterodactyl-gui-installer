@@ -74,21 +74,30 @@ check_nginx_config() {
         gd_apt_install nginx >> "$GD_LOG" 2>&1
     fi
 
+    # Erst dauerhaft sichern und nachfragen – danach wird die Konfiguration ggf. überschrieben
+    local backup=""
+    if [ -f /etc/nginx/sites-available/pterodactyl.conf ]; then
+        gd_yesno "Konfiguration ersetzen?" "Es existiert bereits eine nginx-Konfiguration für Pterodactyl. Soll sie durch die aktuelle Standardkonfiguration ersetzt werden? (Eine Sicherung wird angelegt.)" 11 70 || return
+        backup="/etc/nginx/sites-available/pterodactyl.conf.bak-$(date +%Y%m%d%H%M%S)"
+        cp -p /etc/nginx/sites-available/pterodactyl.conf "$backup"
+    fi
+
     if [ ! -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
         gd_yesno "Kein SSL-Zertifikat" "Für $domain wurde kein SSL-Zertifikat gefunden. Soll es jetzt erstellt werden?" 9 70 || return
         email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:" "$(gd_conf_get PANEL_EMAIL)")" || return
         clear; echo "SSL-Zertifikat wird angefordert..."
         if ! { gd_nginx_http_config "$domain" && gd_certbot_issue "$domain" "$email"; } >> "$GD_LOG" 2>&1; then
-            gd_msg "✖ Zertifikat fehlgeschlagen" "Das Zertifikat konnte nicht ausgestellt werden. Häufige Ursachen: DNS zeigt nicht auf diesen Server, Port 80 ist blockiert oder das Limit von Let's Encrypt wurde erreicht.\n\nLog: $GD_LOG" 13 78
+            # Vorherige Konfiguration zurückspielen, statt das Panel mit der vorläufigen Seite (503) zurückzulassen
+            if [ -n "$backup" ]; then
+                cp -p "$backup" /etc/nginx/sites-available/pterodactyl.conf
+                nginx -t >> "$GD_LOG" 2>&1 && systemctl reload nginx
+            fi
+            gd_msg "✖ Zertifikat fehlgeschlagen" "Das Zertifikat konnte nicht ausgestellt werden. Häufige Ursachen: DNS zeigt nicht auf diesen Server, Port 80 ist blockiert oder das Limit von Let's Encrypt wurde erreicht.$( [ -n "$backup" ] && echo '\n\nDie vorherige nginx-Konfiguration wurde wiederhergestellt.')\n\nLog: $GD_LOG" 14 78
             return
         fi
         gd_certbot_hook
     fi
 
-    if [ -f /etc/nginx/sites-available/pterodactyl.conf ]; then
-        gd_yesno "Konfiguration ersetzen?" "Es existiert bereits eine nginx-Konfiguration für Pterodactyl. Soll sie durch die aktuelle Standardkonfiguration ersetzt werden? (Eine Sicherung wird angelegt.)" 11 70 || return
-        cp /etc/nginx/sites-available/pterodactyl.conf "/etc/nginx/sites-available/pterodactyl.conf.bak-$(date +%Y%m%d%H%M%S)"
-    fi
     # Alte Direkt-Datei früherer Versionen entfernen (lag ohne Symlink in sites-enabled)
     [ -f /etc/nginx/sites-enabled/pterodactyl.conf ] && [ ! -L /etc/nginx/sites-enabled/pterodactyl.conf ] && rm -f /etc/nginx/sites-enabled/pterodactyl.conf
 
