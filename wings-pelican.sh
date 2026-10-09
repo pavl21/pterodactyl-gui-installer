@@ -60,7 +60,7 @@ fi
 GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de. Der DNS-Eintrag muss auf diesen Server zeigen.")" || exit 0
 GD_EMAIL="$(gd_ask_email "✉ E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
 gd_gauge_open "⇄ Wings wird installiert" "Bitte warten..."
-gd_step 5  "Paketquellen werden aktualisiert..." gd_apt update
+gd_step 5  "Paketquellen werden aktualisiert..." gd_apt_update
 gd_step 15 "Docker wird installiert..." gd_docker_install
 gd_step 60 "Wings wird heruntergeladen..." gd_pelican_wings_binary
 gd_step 75 "Wings-Dienst wird eingerichtet..." gd_pelican_wings_service

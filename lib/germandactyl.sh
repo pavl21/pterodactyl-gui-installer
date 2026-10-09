@@ -75,7 +75,7 @@ gd_install_node() {
         local old_pkgs
         old_pkgs="$(dpkg-query -W -f='${Package} ${Status}\n' libnode-dev 'libnode[0-9]*' nodejs-doc npm 2>/dev/null | awk '/install ok installed/{print $1}')"
         [ -n "$old_pkgs" ] && { gd_apt purge $old_pkgs || return 1; }
-        gd_apt update || return 1
+        gd_apt_update
         gd_apt install nodejs || return 1
     fi
     # "yarn" muss Yarn 1.x sein – das Ubuntu-Paket cmdtest liefert ein gleichnamiges, anderes Programm

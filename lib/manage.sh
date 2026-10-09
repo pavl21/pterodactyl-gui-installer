@@ -264,7 +264,7 @@ gd_menu_server() {
     local c f2b upd
     while true; do
         f2b="aus"; systemctl is-active --quiet fail2ban 2>/dev/null && f2b="an"
-        upd="aus"; grep -qs 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades && upd="an"
+        upd="aus"; gd_autoupdates_enabled && upd="an"
         c=$(gd_submenu "⚙ Server & Sicherheit" "Wähle eine Aktion:" \
             "1" "✚ Firewall (Ports öffnen/schließen)" \
             "2" "✱ fail2ban – Schutz vor Angriffen ($f2b)" \
@@ -374,8 +374,11 @@ gd_firewall_open_dialog() {
         ports="$(gd_input "✚ Port öffnen" "Welcher Port oder Bereich soll geöffnet werden? (z. B. 25565 oder 27015-27030)" "" 10 70)" || return
         ports="$(tr -d '[:space:]' <<< "$ports")"
         [[ "$ports" =~ ^[0-9]{1,5}$ ]] && [ "$ports" -ge 1 ] && [ "$ports" -le 65535 ] && break
-        [[ "$ports" =~ ^[0-9]{1,5}-[0-9]{1,5}$ ]] && break
-        gd_msg "Ungültige Eingabe" "Bitte gib einen Port oder Bereich an." 8 50
+        if [[ "$ports" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]] && [ "${BASH_REMATCH[1]}" -ge 1 ] \
+            && [ "${BASH_REMATCH[2]}" -le 65535 ] && [ "${BASH_REMATCH[1]}" -lt "${BASH_REMATCH[2]}" ]; then
+            break
+        fi
+        gd_msg "Ungültige Eingabe" "Bitte gib einen Port (1–65535) oder einen Bereich wie 27015-27030 an." 8 70
     done
     proto=$(whiptail --title "Protokoll" --menu "Für welches Protokoll?" 12 60 3 \
         "beide" "TCP und UDP (empfohlen für Gameserver)" "tcp" "nur TCP" "udp" "nur UDP" 3>&1 1>&2 2>&3) || return
@@ -383,11 +386,16 @@ gd_firewall_open_dialog() {
         ufw allow "${ports/-/:}/tcp" >> "$GD_LOG" 2>&1 && ufw allow "${ports/-/:}/udp" >> "$GD_LOG" 2>&1
     else
         ufw allow "${ports/-/:}/$proto" >> "$GD_LOG" 2>&1
-    fi && gd_msg "✔ Port geöffnet" "Port $ports ist jetzt geöffnet." 8 50
+    fi
+    if [ $? -eq 0 ]; then
+        gd_msg "✔ Port geöffnet" "Port $ports ist jetzt geöffnet." 8 50
+    else
+        gd_msg "✖ Fehler" "Der Port konnte nicht geöffnet werden. Details: $GD_LOG" 8 70
+    fi
 }
 
 gd_firewall_menu() {
-    local c active rules items=() num
+    local c active rules items=() num rule
     command -v ufw >/dev/null 2>&1 || gd_apt_install ufw >> "$GD_LOG" 2>&1
     while true; do
         active=false; gd_ufw_active && active=true
@@ -408,7 +416,8 @@ gd_firewall_menu() {
                done < <(LC_ALL=C ufw status numbered)
                [ ${#items[@]} -eq 0 ] && { gd_msg "Keine Regeln" "Es sind keine Regeln vorhanden." 8 50; continue; }
                num=$(whiptail --title "✖ Port schließen" --menu "Welche Regel soll entfernt werden?" 20 78 10 "${items[@]}" 3>&1 1>&2 2>&3) || continue
-               if grep -qwE "$(gd_ssh_ports | paste -sd'|' -)" <<< "$(LC_ALL=C ufw status numbered | grep -E "^\[ *$num\]")" \
+               rule="$(LC_ALL=C ufw status numbered | grep -E "^\[ *$num\]" | sed -E 's/^\[ *[0-9]+\] *//')"
+               if { grep -qE "^($(gd_ssh_ports | paste -sd'|' -))(/tcp)?([[:space:]]|$)" <<< "$rule" || grep -qiE '^(OpenSSH|SSH)([[:space:]]|$)' <<< "$rule"; } \
                    && ! gd_yesno "⚠ SSH-Regel" "Diese Regel gibt deinen SSH-Zugang frei. Wenn du sie entfernst, kannst du dich eventuell nicht mehr verbinden!\n\nTrotzdem entfernen?" 11 70; then
                    continue
                fi
@@ -447,9 +456,9 @@ gd_fail2ban_menu() {
 }
 
 gd_autoupdates_toggle() {
-    if grep -qs 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades; then
+    if gd_autoupdates_enabled; then
         gd_yesno "↑ Automatische Sicherheitsupdates" "Automatische Sicherheitsupdates sind eingeschaltet (empfohlen).\n\nMöchtest du sie ausschalten?" 10 70 || return
-        printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "0";\n' > /etc/apt/apt.conf.d/20auto-upgrades
+        gd_autoupdates_set 0
         gd_msg "Ausgeschaltet" "Automatische Sicherheitsupdates sind ausgeschaltet." 8 60
     else
         gd_yesno "↑ Automatische Sicherheitsupdates" "Sicherheitsupdates werden automatisch täglich installiert. Das schließt Sicherheitslücken, ohne dass du daran denken musst.\n\nEinschalten?" 11 70 || return
@@ -539,7 +548,7 @@ gd_support_package() {
     [ -f "$WINGS_CONFIG" ] && cp "$WINGS_CONFIG" "$dir/wings-config.yml"
     gd_progress 85 "Passwörter und Schlüssel werden entfernt..."
     gd_sanitize "$dir"/*
-    tar -czf "$out" -C "$GD_TMP" support && chmod 600 "$out"
+    ( umask 077; tar -czf "$out" -C "$GD_TMP" support ) && chmod 600 "$out"
     gd_progress 100 "Fertig."
     gd_gauge_close
     gd_msg "✔ Support-Paket erstellt" "Das Support-Paket liegt hier:\n\n$out ($(du -h "$out" | cut -f1))\n\nPasswörter, Schlüssel und Tokens wurden entfernt. Prüfe den Inhalt trotzdem kurz, bevor du die Datei weitergibst (z. B. mit: tar -tzf $out)." 14 78

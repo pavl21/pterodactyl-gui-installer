@@ -63,7 +63,7 @@ gd_prepare_system() {
     gd_status "Vorbereitung: Benötigte Grundpakete werden installiert..."
     (
         dpkg --configure -a
-        gd_apt update && gd_apt_install whiptail curl dnsutils ca-certificates gnupg lsb-release jq iproute2 psmisc tar
+        gd_apt_update; gd_apt_install whiptail curl dnsutils ca-certificates gnupg lsb-release jq iproute2 psmisc tar
     ) >> "$GD_LOG" 2>&1 &
     local pid=$!
     gd_spinner "$pid" "Grundpakete werden installiert..."
@@ -305,9 +305,10 @@ gd_fresh_install() {
     else
         done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dieses Skript dazu einfach erneut und wähle 'Wings installieren'."
     fi
-    [ "$GD_SEC_UFW" = true ] && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
+    [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
+    gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
     done_text+="\n\nDie Verwaltung startest du künftig einfach mit dem Befehl: $(gd_shortcut_hint)"
-    gd_msg "✔ Installation erfolgreich" "$done_text" 20 78
+    gd_msg "✔ Installation erfolgreich" "$done_text" 22 78
     clear
     echo ""
     echo "FERTIG - - - - - - - - - - - - - - -"

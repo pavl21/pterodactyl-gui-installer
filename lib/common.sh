@@ -195,6 +195,19 @@ gd_step() {
     fi
 }
 
+gd_step_optional() {
+    # gd_step_optional <prozent> "Text" "Warnung bei Fehler" befehl [argumente...]
+    # Wie gd_step, bricht aber nicht ab: der Fehler wird gesammelt (GD_WARNINGS) und am Ende angezeigt
+    local pct="$1" text="$2" warn="$3"
+    shift 3
+    gd_progress "$pct" "$text"
+    if ! "$@" >> "$GD_LOG" 2>&1; then
+        gd_log "WARNUNG: $warn"
+        GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ $warn"
+    fi
+    return 0
+}
+
 gd_fail() {
     gd_gauge_close
     # Optionaler Aufräum-Hook (z. B. Wartungsmodus beenden), gesetzt vom laufenden Ablauf
@@ -231,7 +244,7 @@ gd_ensure_base_tools() {
     done
     [ ${#miss[@]} -eq 0 ] && return 0
     echo "Benötigte Grundpakete werden installiert: ${miss[*]} ..."
-    { gd_apt update && gd_apt_install "${miss[@]}"; } >/dev/null 2>&1 \
+    { gd_apt update; gd_apt_install "${miss[@]}"; } >/dev/null 2>&1 \
         || echo "Hinweis: Nicht alle Grundpakete konnten installiert werden (${miss[*]})."
     return 0
 }
@@ -252,6 +265,12 @@ gd_apt() {
     # gd_apt <apt-get Argumente...> – nicht-interaktiv, behält vorhandene Konfigurationsdateien
     gd_wait_for_apt || { echo "Ein anderer Installations-/Updateprozess blockiert apt."; return 1; }
     apt-get -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+}
+
+gd_apt_update() {
+    # Paketlisten aktualisieren. Ein kaputtes Fremd-Repository (abgelaufener Schlüssel, toter PPA) soll die
+    # Einrichtung nicht abbrechen – erst eine fehlgeschlagene Paketinstallation ist ein echter Fehler.
+    gd_apt update || { echo "Warnung: 'apt-get update' meldete Fehler (siehe oben) – es wird trotzdem fortgefahren."; return 0; }
 }
 
 gd_apt_install() {

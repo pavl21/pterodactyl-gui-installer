@@ -90,7 +90,7 @@ gd_security_ask
 
 gd_conf_set PELICAN_INSTALL_STATE laeuft
 gd_gauge_open "➜ Pelican wird installiert" "Installation wird vorbereitet..."
-gd_step 2  "Paketquellen werden aktualisiert..." gd_apt update
+gd_step 2  "Paketquellen werden aktualisiert..." gd_apt_update
 gd_step 5  "PHP ${PELICAN_PHP}-Paketquelle wird eingerichtet..." gd_php_repo
 gd_step 10 "PHP ${PELICAN_PHP}, nginx und Certbot werden installiert..." gd_pelican_packages
 gd_step 20 "Composer wird installiert..." gd_composer_install
@@ -143,7 +143,8 @@ if $WITH_WINGS; then
 else
     text="Pelican ist eingerichtet: https://${GD_DOMAIN}\n\nFür Gameserver brauchst du noch Wings. Starte das Skript dazu erneut."
 fi
-gd_msg "✔ Installation erfolgreich" "$text" 14 78
+[ -n "${GD_WARNINGS:-}" ] && text+="\n\n${GD_WARNINGS}"
+gd_msg "✔ Installation erfolgreich" "$text" 16 78
 clear
 echo "Pelican: https://${GD_DOMAIN}"
 echo "Log:     $GD_LOG"

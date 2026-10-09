@@ -22,14 +22,14 @@ gd_php_repo() {
     if [ -n "$existing" ]; then
         echo "Vorhandene PHP-Paketquelle wird verwendet: $(tr '\n' ' ' <<< "$existing")"
         rm -f /etc/apt/sources.list.d/sury-php.list
-        gd_apt update
+        gd_apt_update
         return
     fi
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://packages.sury.org/php/apt.gpg -o /etc/apt/keyrings/sury-php.gpg || return 1
     echo "deb [signed-by=/etc/apt/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${GD_OS_CODENAME} main" \
         > /etc/apt/sources.list.d/sury-php.list
-    gd_apt update
+    gd_apt_update
 }
 
 gd_php_packages() {
@@ -408,7 +408,7 @@ gd_panel_install_steps() {
     #           GD_PANEL_VERSION, GD_APPLY_PATCH (aus gd_choose_panel_version)
     # Markierung: Bricht die Installation ab, erkennt der nächste Start die unvollständige Installation
     gd_conf_set INSTALL_STATE laeuft
-    gd_step 2  "Paketquellen werden aktualisiert..." gd_apt update
+    gd_step 2  "Paketquellen werden aktualisiert..." gd_apt_update
     gd_step 5  "PHP ${GD_PHP_VERSION}-Paketquelle wird eingerichtet..." gd_php_repo
     gd_step 10 "PHP ${GD_PHP_VERSION} wird installiert..." gd_php_packages
     gd_step 18 "MariaDB, Redis, nginx und Certbot werden installiert..." gd_panel_packages
