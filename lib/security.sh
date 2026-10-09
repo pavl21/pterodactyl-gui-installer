@@ -158,6 +158,6 @@ gd_security_steps() {
         gd_step $((p + 4)) "Automatische Backups werden eingerichtet..." gd_ab_setup "$GD_BACKUP_ROOT/restic" "$with_wings" "04:00"
         gd_step $((p + 4)) "jq wird installiert..." gd_apt_install jq
         # Erstes Backup sofort erstellen (auf einem neuen Server geht das schnell)
-        gd_step $((p + 5)) "Erstes Backup wird erstellt..." "$GD_AB_SCRIPT"
+        gd_step_optional $((p + 5)) "Erstes Backup wird erstellt..." "Das erste Backup ist fehlgeschlagen (Details: /var/log/germandactyl-setup/auto-backup.log)." "$GD_AB_SCRIPT"
     fi
 }

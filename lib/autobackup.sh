@@ -54,10 +54,17 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
 # Nicht doppelt laufen lassen
 exec 9>/run/germandactyl-backup.lock
-flock -n 9 || { log "Ein Backup läuft bereits – übersprungen."; exit 0; }
+# Exit-Code 75 = "läuft bereits" (kein Erfolg, aber auch kein Fehler; die Unit wertet 75 als erfolgreich)
+flock -n 9 || { log "Ein Backup läuft bereits – übersprungen."; exit 75; }
 
 rc=0
 log "=== Backup gestartet ==="
+# Verwaiste Sperren eines abgebrochenen Laufs (Neustart, Speichermangel) entfernen – nur alte, nicht aktive
+restic unlock >> "$LOG" 2>&1
+
+# Speicherort der Gameserver-Daten laut Wings-Konfiguration (system.data)
+VOLUMES="$(awk '/^system:/{f=1;next} f && /^[^[:space:]]/{f=0} f && $1=="data:"{print $2; exit}' /etc/pterodactyl/config.yml 2>/dev/null | tr -d "'\"")"
+VOLUMES="${VOLUMES:-/var/lib/pterodactyl/volumes}"
 
 # 1) Alle Datenbanken einzeln sichern (Panel und Datenbanken der Gameserver)
 DUMP=mariadb-dump; command -v mariadb-dump >/dev/null 2>&1 || DUMP=mysqldump
@@ -66,14 +73,22 @@ rm -rf "$DUMPS"; mkdir -p "$DUMPS"; chmod 700 "$DUMPS"
 if command -v "$SQL" >/dev/null 2>&1 && ! "$SQL" -e "SELECT 1" >/dev/null 2>&1; then
     log "FEHLER: Die Datenbank ist nicht erreichbar – Datenbanken wurden NICHT gesichert"; rc=1
 elif command -v "$SQL" >/dev/null 2>&1; then
-    for db in $("$SQL" -N -e "SHOW DATABASES" | grep -vxE 'information_schema|performance_schema|mysql|sys'); do
-        if "$DUMP" --single-transaction --routines --triggers --databases "$db" > "$DUMPS/$db.sql" 2>>"$LOG" \
-            && tail -n 3 "$DUMPS/$db.sql" | grep -q "Dump completed"; then
-            log "Datenbank gesichert: $db ($(du -h "$DUMPS/$db.sql" | cut -f1))"
-        else
-            log "FEHLER: Datenbank $db konnte nicht gesichert werden"; rc=1
-        fi
-    done
+    # Genug Platz für die (unkomprimierten) Dumps? Sonst läuft die Platte voll und MariaDB/Gameserver stürzen ab
+    need="$("$SQL" -N -e "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema','performance_schema','mysql','sys');" 2>/dev/null)"
+    free="$(df -PB1 "$DUMPS" | awk 'NR==2{print $4}')"
+    if [ -n "$need" ] && [ -n "$free" ] && [ "$free" -lt $(( need + need / 5 + 1073741824 )) ]; then
+        log "FEHLER: Zu wenig Speicherplatz für die Datenbank-Dumps (benötigt ca. $(( need / 1048576 )) MB + Reserve, frei $(( free / 1048576 )) MB)"; rc=1
+    else
+        while IFS= read -r db; do
+            [ -z "$db" ] && continue
+            if "$DUMP" --single-transaction --routines --triggers --databases "$db" > "$DUMPS/$db.sql" 2>>"$LOG" \
+                && tail -n 3 "$DUMPS/$db.sql" | grep -q "Dump completed"; then
+                log "Datenbank gesichert: $db ($(du -h "$DUMPS/$db.sql" | cut -f1))"
+            else
+                log "FEHLER: Datenbank $db konnte nicht gesichert werden"; rc=1
+            fi
+        done < <("$SQL" -N -e "SHOW DATABASES" | grep -vxE 'information_schema|performance_schema|mysql|sys' | grep -v '^#mysql50#')
+    fi
 fi
 # Pelican nutzt standardmäßig SQLite: konsistente Kopie über die SQLite-Backup-API statt der laufenden Datei
 PELICAN_SQLITE=/var/www/pelican/database/database.sqlite
@@ -92,7 +107,7 @@ for p in /var/www/pterodactyl /var/www/pelican /etc/pterodactyl /etc/pelican /et
     [ -e "$p" ] && paths+=("$p")
 done
 if [ "$INCLUDE_SERVERS" = "true" ]; then
-    for p in /var/lib/pterodactyl/volumes /var/lib/pelican/volumes; do [ -d "$p" ] && paths+=("$p"); done
+    for p in "$VOLUMES" /var/lib/pelican/volumes; do [ -d "$p" ] && paths+=("$p"); done
 fi
 restic backup --tag germandactyl-auto --host "$(hostname)" \
     --exclude /var/www/pterodactyl/node_modules --exclude /var/www/pterodactyl/storage/framework/cache \
@@ -105,7 +120,9 @@ elif [ $brc -ne 0 ]; then log "FEHLER: restic backup (Code $brc)"; rc=1; fi
 rm -rf "$DUMPS"
 
 # 3) Alte Stände nach den Aufbewahrungsregeln entfernen
-restic forget --tag germandactyl-auto --keep-last 3 --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" \
+# Nach Host und Tag gruppieren (nicht nach Pfaden) – sonst würden alte Stände nie entfernt, sobald sich
+# die gesicherten Pfade ändern (z. B. Gameserver ab- oder zugeschaltet)
+restic forget --tag germandactyl-auto --group-by host,tags --keep-last 3 --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" \
     --keep-monthly "$KEEP_MONTHLY" --prune >> "$LOG" 2>&1 || { log "FEHLER: Aufräumen alter Backups"; rc=1; }
 
 # 4) Einmal pro Woche (sonntags) die Integrität des Archivs prüfen
@@ -134,7 +151,10 @@ After=network-online.target mariadb.service
 
 [Service]
 Type=oneshot
+# HOME, damit mariadb-dump eine /root/.my.cnf (root mit Passwort) findet
+Environment=HOME=/root
 ExecStart=$GD_AB_SCRIPT
+SuccessExitStatus=75
 Nice=10
 IOSchedulingClass=idle
 EOF
@@ -161,6 +181,7 @@ gd_ab_setup() {
     gd_backup_prepare
     mkdir -p /var/cache/restic "$repo"
     chmod 700 "$repo"
+    mkdir -p "$GD_CONF_DIR"; chmod 700 "$GD_CONF_DIR"
     if [ ! -s "$GD_AB_PASS" ]; then
         (umask 077; gd_gen_password 40 > "$GD_AB_PASS")
     fi
@@ -213,9 +234,17 @@ gd_ab_restore_db() {
 
 gd_ab_restore_server() {
     # gd_ab_restore_server <snapshot> [uuid] – ohne uuid alle Gameserver
-    local snap="$1" uuid="${2:-}" target aside
+    local snap="$1" uuid="${2:-}" target aside u rc
     gd_ab_load
-    target="$GD_VOLUMES_DIR${uuid:+/$uuid}"
+    if [ -z "$uuid" ]; then
+        # "Alle": jeden Server aus dem Snapshot einzeln – neuere Server bleiben unangetastet
+        rc=0
+        for u in $(gd_ab_list_servers "$snap"); do
+            gd_ab_restore_server "$snap" "$u" || rc=1
+        done
+        return $rc
+    fi
+    target="$GD_VOLUMES_DIR/$uuid"
     aside="${target}.vor-wiederherstellung-$(date +%Y%m%d-%H%M%S)"
     [ -d "$target" ] && { mv "$target" "$aside" || return 1; }
     if restic restore "$snap" --target / --include "$target" >> "$GD_LOG" 2>&1 && [ -d "$target" ]; then

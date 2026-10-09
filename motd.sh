@@ -33,7 +33,8 @@ UPDATES="$(apt list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^Au
 UPDATE_COUNT="$(grep -c . <<< "$UPDATES")"
 CRITICAL_UPDATE="$(grep -cE '^(containerd|docker)' <<< "$UPDATES")"
 if [ "$CRITICAL_UPDATE" -gt 0 ]; then
-    echo -e "\n▤ Es liegen $UPDATE_COUNT Updates vor, darunter Updates für Docker.\nInstalliere sie bei Gelegenheit – dabei werden alle Gameserver kurz neu gestartet." | $LOLCAT
+    [ "$UPDATE_COUNT" -eq 1 ] && UPD_WORD="liegt 1 Update" || UPD_WORD="liegen $UPDATE_COUNT Updates"
+    echo -e "\n▤ Es ${UPD_WORD} vor, darunter Updates für Docker.\nInstalliere sie bei Gelegenheit – dabei werden alle Gameserver kurz neu gestartet." | $LOLCAT
 elif [ "$UPDATE_COUNT" -gt 0 ]; then
     if [ "$UPDATE_COUNT" -eq 1 ]; then
         UPDATE_TEXT="Es liegt 1 Update vor. Du kannst es bei Gelegenheit installieren."

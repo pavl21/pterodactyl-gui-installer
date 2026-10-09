@@ -126,7 +126,7 @@ if [ -f "$PMA_DIR/config.inc.php" ] && grep -q "GermanDactyl" "$PMA_DIR/config.i
 fi
 
 if [ ! -f "$PANEL_NGINX" ]; then
-    gd_msg "Fehler" "Die nginx-Konfiguration des Panels wurde nicht gefunden ($PANEL_NGINX). Repariere zuerst die Erreichbarkeit über die Problembehandlung." 10 74
+    gd_msg "Fehler" "Die nginx-Konfiguration des Panels wurde nicht gefunden ($PANEL_NGINX). Repariere zuerst die Erreichbarkeit unter 'Hilfe & Analyse → Das Panel ist nicht erreichbar'." 10 74
     exit 1
 fi
 

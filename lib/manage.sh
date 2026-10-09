@@ -76,7 +76,7 @@ gd_collect_status() {
     if [ -n "$domain" ] && [ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
         days="$(gd_cert_days_left "/etc/letsencrypt/live/$domain/fullchain.pem")"
         if [ "${days:-0}" -lt 0 ]; then line1+="Zertifikat ✖ abgelaufen"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
-        elif [ "$days" -lt 14 ]; then line1+="Zertifikat ⚠ ${days} Tage"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+        elif [ "$days" -lt 14 ]; then line1+="Zertifikat ⚠ ${days} $([ "$days" -eq 1 ] && echo Tag || echo Tage)"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
         else line1+="Zertifikat ✔ ${days} Tage"; fi
     fi
 
@@ -425,7 +425,7 @@ gd_firewall_menu() {
             4) if $active; then
                    gd_yesno "⊘ Firewall ausschalten" "Danach sind alle Ports des Servers von außen erreichbar. Wirklich ausschalten?" 9 70 && ufw disable >> "$GD_LOG" 2>&1
                else
-                   gd_msg "✔ Firewall einschalten" "Freigegeben werden automatisch: dein SSH-Port, 80, 443$(gd_has_wings && echo ', 8080, 2022 und die Gameserver-Ports') ." 9 74
+                   gd_msg "✔ Firewall einschalten" "Freigegeben werden automatisch: dein SSH-Port, 80, 443$(gd_has_wings && echo ', 8080, 2022 und die Gameserver-Ports')." 9 74
                    clear; echo "Firewall wird eingerichtet..."
                    gd_firewall_setup "$(gd_has_wings && echo true || echo false)" "$(gd_conf_get WINGS_PORT_RANGE)" >> "$GD_LOG" 2>&1 \
                        && gd_msg "✔ Firewall aktiv" "Die Firewall ist eingeschaltet." 8 50 \

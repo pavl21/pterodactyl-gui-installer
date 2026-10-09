@@ -172,7 +172,16 @@ ab_setup_dialog() {
 ab_run_now() {
     clear
     echo "Backup läuft... (Fortschritt: tail -f /var/log/germandactyl-setup/auto-backup.log)"
-    if "$GD_AB_SCRIPT" >> "$GD_LOG" 2>&1; then
+    echo "Es läuft als Systemdienst weiter, auch wenn die SSH-Verbindung abbricht."
+    local rc
+    # Über systemd starten: ein Abbruch der SSH-Sitzung beendet restic dann nicht (keine verwaisten Sperren)
+    systemctl start germandactyl-backup.service >> "$GD_LOG" 2>&1
+    rc=$?
+    if [ $rc -eq 0 ] && tail -n 3 /var/log/germandactyl-setup/auto-backup.log | grep -q "läuft bereits"; then
+        gd_msg "Backup läuft bereits" "Es läuft gerade schon ein Backup (z. B. der nächtliche Lauf). Versuche es später erneut." 9 70
+        return
+    fi
+    if [ $rc -eq 0 ]; then
         gd_msg "✔ Backup erfolgreich" "Das Backup wurde erstellt.\n\n$(tail -n 4 /var/log/germandactyl-setup/auto-backup.log | cut -c1-90)" 13 90
     else
         gd_msg "✖ Backup mit Fehlern" "Das Backup ist fehlgeschlagen oder unvollständig.\n\n$(grep -E 'FEHLER|Warnung' /var/log/germandactyl-setup/auto-backup.log | tail -n 5 | cut -c1-90)\n\nLog: /var/log/germandactyl-setup/auto-backup.log" 16 90

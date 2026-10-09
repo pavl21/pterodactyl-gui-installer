@@ -86,10 +86,12 @@ check_updates() {
 pkg_status() {
     # pkg_status <paket> <anzeigename> – installiert? aktuellste Version aus den Paketquellen?
     local installed candidate
-    installed="$(dpkg-query -W -f='${Version}' "$1" 2>/dev/null)" || return 0
+    # Nur wirklich installierte Pakete (nicht "rc" = entfernt, Konfiguration noch vorhanden)
+    [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = "installed" ] || return 0
+    installed="$(dpkg-query -W -f='${Version}' "$1" 2>/dev/null)"
     [ -z "$installed" ] && return 0
-    candidate="$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:|Installationskandidat:/{print $2}')"
-    if [ -n "$candidate" ] && [ "$candidate" != "(none)" ] && [ "$candidate" != "$installed" ]; then
+    candidate="$(LC_ALL=C apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/{print $2}')"
+    if [ -n "$candidate" ] && [ "$candidate" != "(none)" ] && dpkg --compare-versions "$candidate" gt "$installed"; then
         warn "$2: Version $installed installiert, $candidate verfügbar"
     else
         ok "$2: Version $installed (aktuell)"
@@ -124,14 +126,17 @@ check_nginx() {
     fi
 }
 
+n_tage() { [ "$1" -eq 1 ] && echo "1 Tag" || echo "$1 Tagen"; }
+
 check_cert_file() {
     # check_cert_file <datei> <bezeichnung> [domain]
     local file="$1" label="$2" domain="${3:-}" days issuer
     if [ ! -f "$file" ]; then fail "$label: Zertifikatsdatei fehlt ($file)"; return; fi
     days="$(gd_cert_days_left "$file")" || { fail "$label: Zertifikat ist nicht lesbar ($file)"; return; }
     issuer="$(openssl x509 -noout -issuer -in "$file" 2>/dev/null)"
-    if [ "$days" -lt 0 ]; then fail "$label: Zertifikat ist seit $(( -days )) Tagen ABGELAUFEN"
-    elif [ "$days" -lt 14 ]; then warn "$label: Zertifikat läuft in $days Tagen ab – wird es automatisch erneuert?"
+    if [ "$days" -lt 0 ]; then fail "$label: Zertifikat ist seit $(n_tage $(( -days ))) ABGELAUFEN"
+    elif [ "$days" -eq 0 ]; then warn "$label: Zertifikat läuft heute ab – wird es automatisch erneuert?"
+    elif [ "$days" -lt 14 ]; then warn "$label: Zertifikat läuft in $(n_tage "$days") ab – wird es automatisch erneuert?"
     else ok "$label: Zertifikat noch $days Tage gültig"; fi
     [[ "$issuer" == *STAGING* || "$issuer" == *"Fake LE"* ]] && fail "$label: Test-Zertifikat von Let's Encrypt (STAGING) – Browser vertrauen ihm nicht"
     if [ -n "$domain" ] && ! gd_cert_matches_domain "$file" "$domain"; then
@@ -174,9 +179,12 @@ check_certificates() {
         check_cert_file "$f" "Panel ($PANEL_DOMAIN)" "$PANEL_DOMAIN"
         systemctl is-active --quiet nginx && check_served_cert "Panel" 443 "$PANEL_DOMAIN" "$f"
     fi
-    if [ -f "$WINGS_CONFIG" ] && grep -qE '^\s+enabled: true' "$WINGS_CONFIG"; then
+    # Gezielt api.ssl auslesen ([[:space:]] statt \s – mawk, das Standard-awk unter Debian/Ubuntu, kennt \s nicht)
+    local wssl
+    wssl="$(awk '/^api:/{a=1;next} a && /^[^[:space:]]/{a=0} a && /^[[:space:]]+ssl:/{s=1;next} s && $1=="enabled:"{print $2; exit}' "$WINGS_CONFIG" 2>/dev/null)"
+    if [ -f "$WINGS_CONFIG" ] && [ "$wssl" = "true" ]; then
         local wcert wdomain wport
-        wcert="$(awk '/^\s+ssl:/{s=1} s && $1=="cert:" {print $2; exit}' "$WINGS_CONFIG" | tr -d "'\"")"
+        wcert="$(awk '/^api:/{a=1;next} a && /^[^[:space:]]/{a=0} a && /^[[:space:]]+ssl:/{s=1;next} s && $1=="cert:"{print $2; exit}' "$WINGS_CONFIG" | tr -d "'\"")"
         wport="$(awk '/^api:/{a=1} a && $1=="port:" {print $2; exit}' "$WINGS_CONFIG")"
         wdomain="$(gd_conf_get WINGS_FQDN)"
         [ -z "$wdomain" ] && wdomain="$(basename "$(dirname "$wcert")")"
@@ -206,7 +214,9 @@ check_certificates() {
 
 check_services() {
     local svc php_fpm
-    php_fpm="$(systemctl list-units --type=service --all 'php*-fpm.service' --no-legend 2>/dev/null | awk '{print $1}' | sed 's/\.service$//' | sort -V | tail -n1)"
+    # PHP-Version, die das Panel tatsächlich nutzt (aus der nginx-Konfiguration), sonst die neueste
+    php_fpm="$(grep -ohE 'php[0-9]+\.[0-9]+-fpm' /etc/nginx/sites-available/pterodactyl.conf 2>/dev/null | head -n1)"
+    [ -z "$php_fpm" ] && php_fpm="$(systemctl list-units --type=service --all 'php*-fpm.service' --no-legend --plain 2>/dev/null | awk '{print $1}' | grep '\.service$' | sed 's/\.service$//' | sort -V | tail -n1)"
     for svc in mariadb redis-server "$php_fpm" pteroq wings docker fail2ban; do
         [ -z "$svc" ] && continue
         systemctl cat "${svc}.service" >/dev/null 2>&1 || continue
@@ -226,12 +236,12 @@ check_panel() {
     if [ -z "$latest" ]; then warn "Pterodactyl Panel v$installed – die neueste Version konnte nicht abgefragt werden (GitHub nicht erreichbar)"
     elif [ "$installed" = "$latest" ]; then ok "Pterodactyl Panel v$installed ist aktuell"
     elif gd_version_ge "$installed" "$latest"; then ok "Pterodactyl Panel v$installed (neuer als die letzte Veröffentlichung)"
-    else warn "Pterodactyl Panel v$installed installiert, v$latest verfügbar (Hauptmenü → Panel aktualisieren)"; fi
+    else warn "Pterodactyl Panel v$installed installiert, v$latest verfügbar (Verwaltung → Aktualisieren → Panel aktualisieren)"; fi
 
     php_version="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)"
     if [ -z "$php_version" ]; then fail "PHP ist nicht installiert"
     elif gd_version_ge "$php_version" "8.2"; then ok "PHP $php_version"
-    else fail "PHP $php_version ist zu alt (benötigt 8.2 oder 8.3) – Hauptmenü → Panel aktualisieren stellt um"; fi
+    else fail "PHP $php_version ist zu alt (benötigt 8.2 oder 8.3) – Verwaltung → Aktualisieren → Panel aktualisieren stellt um"; fi
 
     if [ "$(panel_env APP_DEBUG)" = "true" ]; then fail "APP_DEBUG=true in der .env – Fehlermeldungen verraten interne Daten"; add_fix "APP_DEBUG auf false setzen" "fix_app_debug"; fi
     [ "$(panel_env APP_ENV)" != "production" ] && warn "APP_ENV ist nicht 'production'"
@@ -240,8 +250,11 @@ check_panel() {
     else
         fail "Verzeichnisrechte falsch (chown -R www-data:www-data $PTERO_DIR)"; add_fix "Verzeichnisrechte des Panels korrigieren" "fix_permissions"
     fi
-    if [ "$(stat -c %a "$PTERO_DIR/.env" 2>/dev/null)" -gt 640 ] 2>/dev/null; then warn ".env ist für andere Benutzer lesbar"; add_fix "Zugriffsrechte der .env einschränken" "fix_permissions"; fi
-    crontab -l 2>/dev/null | grep -q "$PTERO_DIR/artisan schedule:run" && ok "Cronjob des Panels ist eingerichtet" \
+    local perm
+    perm="$(stat -c %a "$PTERO_DIR/.env" 2>/dev/null)"
+    # Oktal auswerten: Schreibrecht für die Gruppe oder irgendein Recht für andere ist zu viel
+    if [ -n "$perm" ] && (( 8#$perm & 8#027 )); then warn ".env ist für andere Benutzer lesbar"; add_fix "Zugriffsrechte der .env einschränken" "fix_permissions"; fi
+    cron_has_schedule && ok "Cronjob des Panels ist eingerichtet" \
         || { fail "Cronjob des Panels fehlt – Zeitpläne und Aufräumarbeiten laufen nicht"; add_fix "Cronjob des Panels einrichten" "fix_cron"; }
 
     if [ -n "$PANEL_DOMAIN" ]; then
@@ -249,7 +262,7 @@ check_panel() {
         case "$code" in
             200|302) ok "Panel antwortet (https://${PANEL_DOMAIN})" ;;
             502) fail "Panel antwortet mit 502 Bad Gateway – PHP-FPM läuft nicht oder nginx nutzt einen falschen PHP-Socket"; add_fix "PHP-Socket in nginx korrigieren (Ursache für 502)" "fix_php_socket" ;;
-            500) fail "Panel antwortet mit 500 – Fehler im Panel (storage/logs prüfen, Problembehandlung → Panel reparieren)" ;;
+            500) fail "Panel antwortet mit 500 – Fehler im Panel (storage/logs prüfen, Hilfe & Analyse → Das Panel ist fehlerhaft)" ;;
             000) fail "Panel ist lokal nicht erreichbar (nginx/SSL prüfen)" ;;
             *) warn "Panel antwortet mit HTTP $code" ;;
         esac
@@ -263,7 +276,7 @@ check_wings() {
     latest="$(gd_latest_release pterodactyl/wings)"
     if [ -z "$latest" ]; then warn "Wings v$installed – die neueste Version konnte nicht abgefragt werden"
     elif [ "$installed" = "$latest" ] || gd_version_ge "$installed" "$latest"; then ok "Wings v$installed ist aktuell"
-    else warn "Wings v$installed installiert, v$latest verfügbar (Wings-Verwaltung → aktualisieren)"; fi
+    else warn "Wings v$installed installiert, v$latest verfügbar (Verwaltung → Aktualisieren → Wings aktualisieren)"; fi
     [ -f "$WINGS_CONFIG" ] || { fail "Wings ist nicht konfiguriert ($WINGS_CONFIG fehlt)"; return; }
     token="$(awk '$1=="token:"{print $2; exit}' "$WINGS_CONFIG" | tr -d "'\"")"
     port="$(awk '/^api:/{a=1} a && $1=="port:" {print $2; exit}' "$WINGS_CONFIG")"
@@ -323,14 +336,20 @@ fix_restart() { systemctl restart "$1"; }
 fix_permissions() { chown -R www-data:www-data "$PTERO_DIR" && chmod 640 "$PTERO_DIR/.env"; }
 fix_app_debug() { sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/' "$PTERO_DIR/.env" && (cd "$PTERO_DIR" && php artisan config:clear); }
 fix_ntp() { timedatectl set-ntp true; }
+cron_has_schedule() {
+    # Cronjob in root- oder www-data-Crontab, /etc/crontab oder /etc/cron.d (auskommentierte Zeilen zählen nicht)
+    { crontab -l 2>/dev/null; crontab -u www-data -l 2>/dev/null; cat /etc/crontab /etc/cron.d/* 2>/dev/null; } \
+        | grep -vE '^[[:space:]]*#' | grep -qF "$PTERO_DIR/artisan schedule:run"
+}
 fix_cron() {
+    cron_has_schedule && return 0
     { crontab -l 2>/dev/null | grep -vF "$PTERO_DIR/artisan schedule:run"; echo "* * * * * php $PTERO_DIR/artisan schedule:run >> /dev/null 2>&1"; } | crontab -
 }
 fix_deploy_hook() { gd_source_lib security; gd_certbot_hook; }
 fix_php_socket() {
     # Vorhandene PHP-FPM-Version (>= 8.2) verwenden, sonst PHP 8.3 installieren. Danach nginx umstellen.
     local sock ver
-    sock="$(ls -1 /run/php/php*-fpm.sock 2>/dev/null | sort -V | tail -n1)"
+    sock="$(ls -1 /run/php/php[0-9]*-fpm.sock 2>/dev/null | sort -V | tail -n1)"
     ver="$(sed -n 's#.*/php\([0-9.]*\)-fpm.sock#\1#p' <<< "$sock")"
     if [ -z "$sock" ] || ! gd_version_ge "$ver" "8.2"; then
         gd_source_lib germandactyl; gd_source_lib security; gd_source_lib panel
@@ -339,7 +358,8 @@ fix_php_socket() {
     fi
     systemctl restart "php${ver:-$GD_PHP_VERSION}-fpm" 2>/dev/null
     local f
-    for f in /etc/nginx/sites-available/*.conf /etc/nginx/snippets/germandactyl-*.conf; do
+    # Nur die Konfiguration des Panels anpassen – fremde Seiten nutzen ggf. bewusst eine andere PHP-Version
+    for f in /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/snippets/germandactyl-*.conf; do
         [ -f "$f" ] && sed -i -E "s#unix:/run/php/php[0-9]+\.[0-9]+-fpm\.sock#unix:${sock}#" "$f"
     done
     nginx -t && systemctl reload nginx
@@ -398,7 +418,7 @@ $TEXT_MODE || gd_gauge_close
 
 REPORT="$GD_LOG_DIR/analyse-$(date +%Y%m%d-%H%M%S).txt"
 {
-    echo "Analyse vom $(date '+%d.%m.%Y %H:%M') – ${#ERRORS[@]} Fehler, ${#WARNINGS[@]} Warnungen, ${#OKS[@]} in Ordnung"
+    echo "Analyse vom $(date '+%d.%m.%Y %H:%M') – ${#ERRORS[@]} Fehler, ${#WARNINGS[@]} $([ ${#WARNINGS[@]} -eq 1 ] && echo Warnung || echo Warnungen), ${#OKS[@]} in Ordnung"
     echo ""
     [ ${#ERRORS[@]} -gt 0 ] && printf '%s\n' "${ERRORS[@]}" && echo ""
     [ ${#WARNINGS[@]} -gt 0 ] && printf '%s\n' "${WARNINGS[@]}" && echo ""

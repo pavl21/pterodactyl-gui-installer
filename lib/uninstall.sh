@@ -13,22 +13,36 @@ gd_uninstall_backup() {
     if [ "${1:-}" = "wings" ] || [ "${1:-}" = "beides" ]; then
         if [ -d "$GD_VOLUMES_DIR" ]; then
             gd_backup_stop_servers
-            gd_backup_server_create "$GD_BACKUP_SERVER/$(gd_backup_name)" false || return 1
+            if ! gd_backup_server_create "$GD_BACKUP_SERVER/$(gd_backup_name)" false; then
+                # Abbruch: Gameserver nicht gestoppt zurücklassen
+                systemctl start wings 2>/dev/null
+                return 1
+            fi
         fi
     fi
     ls -lhR "$GD_BACKUP_ROOT"
 }
 
 gd_uninstall_panel() {
-    local db dbuser
+    local db dbuser dbhost
     db="$(gd_panel_env DB_DATABASE)"
     dbuser="$(gd_panel_env DB_USERNAME)"
+    dbhost="$(gd_panel_env DB_HOST)"
     systemctl disable --now pteroq 2>/dev/null
-    # Automatische Backups abschalten – vorhandene Backups und das Passwort bleiben erhalten
-    systemctl disable --now germandactyl-backup.timer 2>/dev/null
     rm -f /etc/systemd/system/pteroq.service
     systemctl daemon-reload
     crontab -l 2>/dev/null | grep -vF "${PTERO_DIR}/artisan schedule:run" | crontab -
+    case "${dbhost:-127.0.0.1}" in
+        127.0.0.1|localhost|::1) ;;
+        *) echo "Die Panel-Datenbank liegt auf einem anderen Server (${dbhost}) und wird nicht angetastet."; db=""; dbuser="" ;;
+    esac
+    # Systemkonten nie löschen; ebenso keinen Benutzer, der noch Rechte auf andere Datenbanken hat
+    case "$dbuser" in root|mysql|mariadb.sys|debian-sys-maint|admin) dbuser="" ;; esac
+    if [ -n "$dbuser" ] && gd_mysql -N -e "SHOW GRANTS FOR '${dbuser}'@'127.0.0.1';" 2>/dev/null \
+        | grep -vE "GRANT USAGE ON \*\.\*|ON \\?\`?${db}\\?\`?\.\*" | grep -q .; then
+        echo "Der Datenbank-Benutzer ${dbuser} hat weitere Rechte und wird nicht gelöscht."
+        dbuser=""
+    fi
     if [ -n "$db" ]; then
         gd_mysql -e "DROP DATABASE IF EXISTS \`${db}\`;" || return 1
     fi
@@ -112,11 +126,21 @@ gd_uninstall() {
     $remove_panel && ! $remove_wings && what="panel"
     ! $remove_panel && $remove_wings && what="wings"
     $do_backup && gd_step 10 "Sicherung wird erstellt und geprüft (kann bei vielen Servern dauern)..." gd_uninstall_backup "$what"
-    $remove_wings && gd_step 40 "Wings und Gameserver werden entfernt..." gd_uninstall_wings
-    $remove_panel && gd_step 70 "Panel und Datenbank werden entfernt..." gd_uninstall_panel
+    # Erst das Panel: scheitert dort etwas (Datenbank), sind Wings und die Gameserver noch unberührt
+    $remove_panel && gd_step 40 "Panel und Datenbank werden entfernt..." gd_uninstall_panel
+    $remove_wings && gd_step 70 "Wings und Gameserver werden entfernt..." gd_uninstall_wings
     gd_progress 100 "Deinstallation abgeschlossen."
     gd_gauge_close
-    rm -f "$GD_CONF_FILE" /etc/germandactyl/zugangsdaten-ausstehend
+    rm -f /etc/germandactyl/zugangsdaten-ausstehend
+    if [ -d "$PTERO_DIR" ] || [ -f "$WINGS_BIN" ]; then
+        # Teil-Deinstallation: nur die Einträge des entfernten Teils löschen
+        $remove_panel && sed -i -E '/^(PANEL_|INSTALL_)/d' "$GD_CONF_FILE" 2>/dev/null
+        $remove_wings && sed -i -E '/^WINGS_/d' "$GD_CONF_FILE" 2>/dev/null
+    else
+        # Nichts mehr da: automatische Backups abschalten (Backups und Passwort bleiben erhalten)
+        systemctl disable --now germandactyl-backup.timer 2>/dev/null
+        rm -f "$GD_CONF_FILE"
+    fi
 
     gd_msg "✔ Deinstallation abgeschlossen" "Pterodactyl wurde entfernt.\n\nWeiterhin installiert bleiben: nginx, MariaDB, PHP, Redis, Docker und vorhandene SSL-Zertifikate, damit andere Dienste auf diesem Server nicht beeinträchtigt werden.$( $do_backup && echo "\n\nDeine Sicherung liegt in: $GD_BACKUP_ROOT (über die Backup-Verwaltung wiederherstellbar)")$( $remove_panel && echo "\n\nHinweis: Datenbanken, die deine Gameserver über einen Database-Host angelegt hatten, bleiben erhalten.")" 15 78
     return 0

@@ -323,7 +323,9 @@ gd_cert_days_left() {
     local end
     end="$(openssl x509 -enddate -noout -in "$1" 2>/dev/null | cut -d= -f2)" || return 1
     [ -n "$end" ] || return 1
-    echo $(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+    local diff=$(( $(date -d "$end" +%s) - $(date +%s) ))
+    # Abgelaufen (auch seit weniger als einem Tag) ergibt immer einen negativen Wert
+    if [ "$diff" -lt 0 ]; then echo $(( -((-diff + 86399) / 86400) )); else echo $(( diff / 86400 )); fi
 }
 
 gd_served_cert() {
