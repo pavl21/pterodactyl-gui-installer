@@ -68,14 +68,44 @@ gd_panel_download() {
     chmod -R 755 "$PTERO_DIR"/storage/* "$PTERO_DIR"/bootstrap/cache/
 }
 
+gd_nginx_backup() {
+    # gd_nginx_backup <site.conf> – vorhandene Site-Konfiguration vor dem Überschreiben sichern
+    if [ -f "/etc/nginx/sites-available/$1" ]; then
+        cp -p "/etc/nginx/sites-available/$1" "$GD_TMP/nginx-$1.bak"
+    else
+        rm -f "$GD_TMP/nginx-$1.bak"
+    fi
+}
+
+gd_nginx_activate() {
+    # gd_nginx_activate <site.conf> – aktivieren und testen; bei Fehler den vorherigen Stand
+    # wiederherstellen, damit nginx (und andere Seiten auf dem Server) weiterlaufen
+    local name="$1"
+    ln -sf "/etc/nginx/sites-available/$name" "/etc/nginx/sites-enabled/$name"
+    if nginx -t; then
+        systemctl reload nginx || systemctl restart nginx
+        return
+    fi
+    echo "Die neue nginx-Konfiguration ist fehlerhaft (siehe oben) – der vorherige Stand wird wiederhergestellt."
+    if [ -f "$GD_TMP/nginx-$name.bak" ]; then
+        cp -p "$GD_TMP/nginx-$name.bak" "/etc/nginx/sites-available/$name"
+    else
+        rm -f "/etc/nginx/sites-enabled/$name"
+    fi
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx
+    return 1
+}
+
 gd_nginx_http_config() {
     # Vorläufige Konfiguration nur für die Zertifikatsausstellung (Webroot-Verfahren)
     local domain="$1"
+    gd_nginx_backup pterodactyl.conf
     cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
 # Angelegt von GermanDactyl Setup (vorläufig, wird nach der Zertifikatsausstellung ersetzt)
 server {
     listen 80;
     server_name ${domain};
+    server_tokens off;
     root ${PTERO_DIR}/public;
 
     location /.well-known/acme-challenge/ {
@@ -86,9 +116,8 @@ server {
     }
 }
 EOF
-    ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
     gd_nginx_disable_default
-    nginx -t && systemctl reload nginx
+    gd_nginx_activate pterodactyl.conf
 }
 
 gd_php_fpm_socket() {
@@ -105,13 +134,13 @@ gd_nginx_ssl_config() {
     # Offizielle SSL-Konfiguration (https://pterodactyl.io/panel/1.0/webserver_configuration.html)
     local domain="$1" sock
     sock="$(gd_php_fpm_socket)"
+    gd_nginx_backup pterodactyl.conf
     cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
 # Angelegt von GermanDactyl Setup – Grundlage: offizielle Pterodactyl-Dokumentation
-server_tokens off;
-
 server {
     listen 80;
     server_name ${domain};
+    server_tokens off;
 
     location /.well-known/acme-challenge/ {
         root ${PTERO_DIR}/public;
@@ -125,6 +154,7 @@ server {
 server {
     listen 443 ssl http2;
     server_name ${domain};
+    server_tokens off;
 
     root ${PTERO_DIR}/public;
     index index.php;
@@ -180,8 +210,7 @@ $( [ -f /etc/nginx/snippets/germandactyl-phpmyadmin.conf ] && echo "    include 
     }
 }
 EOF
-    ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
-    nginx -t && systemctl reload nginx
+    gd_nginx_activate pterodactyl.conf
 }
 
 gd_certbot_issue() {

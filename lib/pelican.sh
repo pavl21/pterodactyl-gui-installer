@@ -30,12 +30,14 @@ gd_pelican_download() {
 gd_pelican_nginx() {
     # gd_pelican_nginx <domain> <http|ssl>
     local domain="$1" mode="$2" sock="/run/php/php${PELICAN_PHP}-fpm.sock"
+    gd_nginx_backup pelican.conf
     if [ "$mode" = "http" ]; then
         cat > /etc/nginx/sites-available/pelican.conf <<EOF
 # Angelegt von GermanDactyl Setup (vorläufig, wird nach der Zertifikatsausstellung ersetzt)
 server {
     listen 80;
     server_name ${domain};
+    server_tokens off;
     root ${PELICAN_DIR}/public;
     location /.well-known/acme-challenge/ { allow all; }
     location / { return 503; }
@@ -44,11 +46,10 @@ EOF
     else
         cat > /etc/nginx/sites-available/pelican.conf <<EOF
 # Angelegt von GermanDactyl Setup – Grundlage: offizielle Pelican-Dokumentation
-server_tokens off;
-
 server {
     listen 80;
     server_name ${domain};
+    server_tokens off;
     location /.well-known/acme-challenge/ { root ${PELICAN_DIR}/public; allow all; }
     location / { return 301 https://\$server_name\$request_uri; }
 }
@@ -56,6 +57,7 @@ server {
 server {
     listen 443 ssl http2;
     server_name ${domain};
+    server_tokens off;
 
     root ${PELICAN_DIR}/public;
     index index.php;
@@ -107,9 +109,8 @@ server {
 }
 EOF
     fi
-    ln -sf /etc/nginx/sites-available/pelican.conf /etc/nginx/sites-enabled/pelican.conf
     gd_nginx_disable_default
-    nginx -t && systemctl reload nginx
+    gd_nginx_activate pelican.conf
 }
 
 gd_pelican_certbot() {
