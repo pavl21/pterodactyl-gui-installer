@@ -109,6 +109,18 @@ gd_check_environment() {
         fi
         gd_warn_colors_off
     fi
+
+    # Port 80/443 von einem anderen Webserver belegt (z. B. Apache)? Sonst scheitert nginx mitten in der Installation.
+    local blocker
+    blocker="$(ss -Hltnp '( sport = :80 or sport = :443 )' 2>/dev/null | grep -oE 'users:\(\("[^"]+"' | cut -d'"' -f2 | grep -vx nginx | sort -u | tr '\n' ' ')"
+    if [ -n "$blocker" ]; then
+        if grep -qw apache2 <<< "$blocker" && gd_yesno "Port 80/443 belegt" "Auf diesem Server läuft bereits der Webserver Apache und belegt Port 80/443. Pterodactyl benötigt nginx auf diesen Ports.\n\nSoll Apache gestoppt und deaktiviert werden? (Seiten, die über Apache laufen, sind danach nicht mehr erreichbar.)" 14 76; then
+            systemctl disable --now apache2 >> "$GD_LOG" 2>&1
+        else
+            gd_msg "Port 80/443 belegt" "Port 80 bzw. 443 wird bereits verwendet von: ${blocker}\n\nPterodactyl benötigt diese Ports für nginx und das SSL-Zertifikat. Beende bzw. deaktiviere das Programm und starte die Installation erneut." 13 74
+            clear; echo "Die Installation wurde abgebrochen (Port 80/443 belegt: ${blocker})."; exit 1
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -172,10 +184,25 @@ EOF
     umask 022
 }
 
+gd_check_database() {
+    # Nur für die Panel-Installation (Pelican nutzt SQLite, reine Wings-Server brauchen keine Datenbank)
+    # MySQL statt MariaDB: mariadb-server würde mysql-server entfernen, vorhandene Datenbanken wären unbrauchbar
+    if dpkg-query -W -f='${Status}' 'mysql-server*' 2>/dev/null | grep -q "install ok installed"; then
+        gd_msg "MySQL ist installiert" "Auf diesem Server ist MySQL installiert. Die Installation würde es durch MariaDB ersetzen, vorhandene Datenbanken wären danach nicht mehr nutzbar.\n\nDie Installation wird abgebrochen. Nutze einen frischen Server oder entferne MySQL vorher selbst (nach einem Backup)." 13 76
+        clear; echo "Die Installation wurde abgebrochen (MySQL ist installiert)."; exit 1
+    fi
+    # MariaDB vorhanden, aber root nicht per unix_socket erreichbar (root-Passwort gesetzt)?
+    if command -v mariadb >/dev/null 2>&1 && systemctl is-active --quiet mariadb && ! gd_mysql -e "SELECT 1" >/dev/null 2>&1; then
+        gd_msg "Kein Zugriff auf MariaDB" "MariaDB ist installiert, aber root kann sich nicht ohne Passwort anmelden (unix_socket). Das Skript benötigt diesen Zugriff, um die Panel-Datenbank anzulegen.\n\nHinterlege das Passwort in /root/.my.cnf (Rechte 600):\n\n[client]\nuser=root\npassword=DEIN_PASSWORT\n\nStarte die Installation danach erneut." 18 76
+        clear; echo "Die Installation wurde abgebrochen (kein root-Zugriff auf MariaDB)."; exit 1
+    fi
+}
+
 gd_fresh_install() {
     local mode="$1"   # panel_wings | panel
     local with_wings=false
     [ "$mode" = "panel_wings" ] && with_wings=true
+    gd_check_database
 
     # --- Eingaben -------------------------------------------------------------
     GD_DOMAIN="$(gd_ask_domain "⌂ Domain für das Panel" "Gib die Domain (FQDN) ein, unter der das Panel erreichbar sein soll, z. B. panel.deinedomain.de.\n\nDer DNS-Eintrag (A-Eintrag) muss bereits auf diesen Server zeigen, das wird im nächsten Schritt geprüft.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
@@ -214,7 +241,11 @@ gd_fresh_install() {
     if command -v mariadb >/dev/null 2>&1 && gd_panel_db_has_tables; then
         gd_warn_colors_on
         if gd_yesno "Alte Panel-Datenbank gefunden" "Es existiert bereits eine Datenbank '${GD_PANEL_DB}' mit Tabellen, vermutlich von einer früheren Installation.\n\nSoll sie gelöscht werden? Bei 'Nein' wird die Installation abgebrochen, damit keine Daten verloren gehen." 14 74; then
-            gd_mysql -e "DROP DATABASE \`${GD_PANEL_DB}\`;" >> "$GD_LOG" 2>&1
+            if ! gd_mysql -e "DROP DATABASE \`${GD_PANEL_DB}\`;" >> "$GD_LOG" 2>&1; then
+                gd_warn_colors_off
+                gd_msg "Fehler" "Die alte Datenbank konnte nicht gelöscht werden. Details: $GD_LOG" 9 70
+                clear; echo "Die Installation wurde abgebrochen."; exit 1
+            fi
         else
             gd_warn_colors_off
             clear; echo "Die Installation wurde abgebrochen."; exit 0

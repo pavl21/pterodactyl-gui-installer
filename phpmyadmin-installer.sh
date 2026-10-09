@@ -38,6 +38,11 @@ install_phpmyadmin() {
             || { echo "Prüfsumme stimmt nicht überein – Abbruch."; return 1; }
     fi
     unzip -q "$GD_TMP/pma.zip" -d "$GD_TMP/pma" || return 1
+    # Gehört das Verzeichnis zum Paket "phpmyadmin" aus Debian/Ubuntu, nicht überschreiben (dpkg wäre danach inkonsistent)
+    if dpkg -S "$PMA_DIR" >/dev/null 2>&1; then
+        echo "$PMA_DIR gehört zum Systempaket phpmyadmin – entferne es zuerst mit 'apt purge phpmyadmin' oder nutze die vorhandene Installation."
+        return 1
+    fi
     rm -rf "$PMA_DIR"
     mv "$GD_TMP/pma/phpMyAdmin-${version}-all-languages" "$PMA_DIR" || return 1
     mkdir -p "$PMA_DIR/tmp"

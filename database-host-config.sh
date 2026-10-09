@@ -67,7 +67,7 @@ systemctl restart mariadb 2>/dev/null || systemctl restart mysql
 echo "MariaDB wurde neu gestartet."
 
 # Firewall: nur wenn UFW aktiv ist
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+if gd_ufw_active; then
     if $OPEN_WORLD; then
         ufw allow 3306/tcp comment 'MariaDB (Database-Host)' >> "$GD_LOG" 2>&1
     else

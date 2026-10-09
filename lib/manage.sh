@@ -91,7 +91,7 @@ gd_collect_status() {
     else
         line2+="Backups: aus   "
     fi
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then line2+="Firewall ✔   "
+    if gd_ufw_active; then line2+="Firewall ✔   "
     else line2+="Firewall: aus   "; fi
     usage="$(df -P / | awk 'NR==2{print $5}' | tr -d '%')"
     if [ "$usage" -ge 90 ]; then line2+="Speicher ✖ ${usage} %"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
@@ -323,7 +323,7 @@ gd_ports_dialog() {
         gd_valid_port_or_range "$ports" && break
         gd_msg "Ungültige Eingabe" "Bitte gib einen Port (z. B. 27015) oder einen Bereich (z. B. 27015-27030) an." 9 70
     done
-    command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active" && fw=true
+    gd_ufw_active && fw=true
     gd_yesno "⚑ Ports freigeben" "Folgende Ports werden freigegeben:\n\nPorts:    $ports\nIP:       $ip${alias:+ (Alias: $alias)}\nNode-ID:  $node\nFirewall: $($fw && echo 'wird für TCP und UDP geöffnet' || echo 'nicht aktiv – nichts zu tun')\n\nFortfahren?" 15 72 || return
 
     clear; echo "Ports werden freigegeben..."
@@ -368,7 +368,7 @@ gd_system_update() {
 # ---------------------------------------------------------------------------
 gd_firewall_open_dialog() {
     local ports proto
-    command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active" || {
+    gd_ufw_active || {
         gd_msg "Firewall aus" "Die Firewall ist nicht aktiv – alle Ports sind bereits erreichbar." 8 64; return; }
     while true; do
         ports="$(gd_input "✚ Port öffnen" "Welcher Port oder Bereich soll geöffnet werden? (z. B. 25565 oder 27015-27030)" "" 10 70)" || return
@@ -390,7 +390,7 @@ gd_firewall_menu() {
     local c active rules items=() num
     command -v ufw >/dev/null 2>&1 || gd_apt_install ufw >> "$GD_LOG" 2>&1
     while true; do
-        active=false; ufw status | grep -q "Status: active" && active=true
+        active=false; gd_ufw_active && active=true
         c=$(gd_submenu "✚ Firewall" "Status: $($active && echo 'aktiv' || echo 'aus')" \
             "1" "☰ Regeln anzeigen" \
             "2" "✚ Port öffnen" \
@@ -405,10 +405,10 @@ gd_firewall_menu() {
                while IFS= read -r line; do
                    num="$(grep -oE '^\[ *[0-9]+\]' <<< "$line" | tr -d '[] ')"
                    [ -n "$num" ] && items+=("$num" "$(sed -E 's/^\[ *[0-9]+\] *//' <<< "$line" | tr -s ' ' | cut -c1-60)")
-               done < <(ufw status numbered)
+               done < <(LC_ALL=C ufw status numbered)
                [ ${#items[@]} -eq 0 ] && { gd_msg "Keine Regeln" "Es sind keine Regeln vorhanden." 8 50; continue; }
                num=$(whiptail --title "✖ Port schließen" --menu "Welche Regel soll entfernt werden?" 20 78 10 "${items[@]}" 3>&1 1>&2 2>&3) || continue
-               if grep -qwE "$(gd_ssh_ports | paste -sd'|' -)" <<< "$(ufw status numbered | grep -E "^\[ *$num\]")" \
+               if grep -qwE "$(gd_ssh_ports | paste -sd'|' -)" <<< "$(LC_ALL=C ufw status numbered | grep -E "^\[ *$num\]")" \
                    && ! gd_yesno "⚠ SSH-Regel" "Diese Regel gibt deinen SSH-Zugang frei. Wenn du sie entfernst, kannst du dich eventuell nicht mehr verbinden!\n\nTrotzdem entfernen?" 11 70; then
                    continue
                fi

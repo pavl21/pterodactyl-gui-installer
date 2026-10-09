@@ -36,10 +36,13 @@ gd_mariadb_harden() {
     # Entspricht den wichtigsten Schritten von mysql_secure_installation (ohne Rückfragen)
     gd_mysql <<'SQL' || return 1
 DROP USER IF EXISTS ''@'localhost';
-DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 SQL
+    # Die Beispiel-Datenbank "test" nur entfernen, wenn sie leer ist (auf bestehenden Servern evtl. in Benutzung)
+    if [ "$(gd_mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='test';" 2>/dev/null)" = "0" ]; then
+        gd_mysql -e "DROP DATABASE IF EXISTS test;"
+    fi
     # MariaDB darf nur lokal erreichbar sein (Standard unter Debian/Ubuntu). Nur prüfen und protokollieren.
     local bind
     bind="$(my_print_defaults mysqld mariadbd 2>/dev/null | grep -- '--bind-address' | tail -n1 | cut -d= -f2)"

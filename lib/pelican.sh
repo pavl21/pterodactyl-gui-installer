@@ -36,6 +36,7 @@ gd_pelican_nginx() {
 # Angelegt von GermanDactyl Setup (vorläufig, wird nach der Zertifikatsausstellung ersetzt)
 server {
     listen 80;
+$(gd_has_ipv6 && echo "    listen [::]:80;")
     server_name ${domain};
     server_tokens off;
     root ${PELICAN_DIR}/public;
@@ -48,6 +49,7 @@ EOF
 # Angelegt von GermanDactyl Setup – Grundlage: offizielle Pelican-Dokumentation
 server {
     listen 80;
+$(gd_has_ipv6 && echo "    listen [::]:80;")
     server_name ${domain};
     server_tokens off;
     location /.well-known/acme-challenge/ { root ${PELICAN_DIR}/public; allow all; }
@@ -56,6 +58,7 @@ server {
 
 server {
     listen 443 ssl http2;
+$(gd_has_ipv6 && echo "    listen [::]:443 ssl http2;")
     server_name ${domain};
     server_tokens off;
 
@@ -71,7 +74,7 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
-    ssl_session_cache shared:SSL:10m;
+    ssl_session_cache shared:germandactyl_ssl:10m;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";
     ssl_prefer_server_ciphers on;
@@ -114,10 +117,7 @@ EOF
 }
 
 gd_pelican_certbot() {
-    local domain="$1" email="$2"
-    [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ] && return 0
-    certbot certonly --webroot -w "${PELICAN_DIR}/public" -d "$domain" \
-        --email "$email" --agree-tos --no-eff-email --non-interactive
+    gd_certbot_webroot "$1" "$2" "${PELICAN_DIR}/public"
 }
 
 gd_pelican_env_set() {

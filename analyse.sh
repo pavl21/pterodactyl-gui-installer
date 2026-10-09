@@ -119,8 +119,8 @@ check_nginx() {
         if [ -S "$sock" ]; then ok "PHP-Socket vorhanden: $sock"
         else fail "nginx nutzt $sock, der nicht existiert → Fehler 502 Bad Gateway"; add_fix "PHP-Socket in nginx korrigieren (Ursache für 502)" "fix_php_socket"; fi
     done
-    if [ -d "$PTERO_DIR" ] && [ ! -e /etc/nginx/sites-enabled/pterodactyl.conf ]; then
-        warn "Die nginx-Seite für das Panel ist nicht aktiviert (/etc/nginx/sites-enabled/pterodactyl.conf fehlt)"
+    if [ -d "$PTERO_DIR" ] && [ ! -e /etc/nginx/sites-enabled/pterodactyl.conf ] && [ ! -e /etc/nginx/conf.d/pterodactyl.conf ]; then
+        warn "Die nginx-Seite für das Panel ist nicht aktiviert (pterodactyl.conf fehlt in sites-enabled bzw. conf.d)"
     fi
 }
 
@@ -289,9 +289,9 @@ check_network() {
         elif gd_is_cloudflare_ip "$(head -n1 <<< "$dns_ips")"; then warn "Die Domain $PANEL_DOMAIN läuft über den Cloudflare-Proxy – für Wings und Zertifikate 'DNS only' verwenden"
         else fail "Die Domain $PANEL_DOMAIN zeigt auf $(head -n1 <<< "$dns_ips"), dieser Server hat $server_ip"; fi
     fi
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    if gd_ufw_active; then
         ok "Firewall (UFW) ist aktiv"
-        if [ -x /usr/local/bin/wings ] && ! ufw status | grep -qE '^(8080|8080/tcp) '; then
+        if [ -x /usr/local/bin/wings ] && ! LC_ALL=C ufw status | grep -qE '^(8080|8080/tcp) '; then
             warn "Die Firewall gibt Port 8080 (Wings) nicht frei"
         fi
     fi

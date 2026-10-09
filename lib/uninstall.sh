@@ -49,7 +49,7 @@ gd_uninstall_panel() {
         rm -rf /usr/share/phpmyadmin
     fi
     rm -f /etc/nginx/snippets/germandactyl-phpmyadmin.conf
-    rm -f /etc/nginx/sites-enabled/pterodactyl.conf /etc/nginx/sites-available/pterodactyl.conf
+    rm -f /etc/nginx/sites-enabled/pterodactyl.conf /etc/nginx/conf.d/pterodactyl.conf /etc/nginx/sites-available/pterodactyl.conf
     nginx -t 2>/dev/null && systemctl reload nginx
     rm -rf "$PTERO_DIR"
     return 0

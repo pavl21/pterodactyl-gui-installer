@@ -106,7 +106,7 @@ gd_wings_install_local() {
     done
 
     GD_SEC_UFW=false
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+    if gd_ufw_active; then
         GD_SEC_UFW=true   # Firewall ist bereits aktiv -> Wings-Ports ergänzen
     elif gd_yesno "✚ Firewall" "Soll die Firewall (UFW) aktiviert werden? Dein SSH-Port sowie 80, 443, 8080, 2022 und die Gameserver-Ports werden automatisch freigegeben." 11 74; then
         GD_SEC_UFW=true
