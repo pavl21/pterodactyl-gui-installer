@@ -54,7 +54,7 @@ create_admin_account() {
 # Panel reparieren = auf die gewünschte Version neu aufspielen
 # ---------------------------------------------------------------------------
 repair_panel() {
-    gd_msg "⚙ Panel reparieren" "Beim Reparieren werden die Dateien des Panels neu heruntergeladen und alle Abhängigkeiten, die Datenbank-Struktur und die Berechtigungen neu eingerichtet. Deine Daten (Benutzer, Server, Einstellungen) bleiben erhalten.\n\nAchtung: Änderungen an Dateien des Panels (Themes, Addons) werden dabei überschrieben." 14 78
+    gd_msg "⚙ Panel reparieren" "Beim Reparieren werden die Dateien des Panels neu heruntergeladen und alle Abhängigkeiten, die Datenbank-Struktur und die Berechtigungen neu eingerichtet. Deine Daten (Benutzer, Server, Einstellungen) bleiben erhalten.\n\nVorher wird automatisch eine Sicherung (Dateien + Datenbank) erstellt. Eigene Änderungen an Dateien des Panels (Themes, Addons) werden erkannt – du kannst sie sichern und danach wieder anwenden lassen; sonst werden sie überschrieben." 16 78
     gd_panel_update
 }
 
@@ -89,7 +89,13 @@ check_nginx_config() {
         gd_yesno "Kein SSL-Zertifikat" "Für $domain wurde kein SSL-Zertifikat gefunden. Soll es jetzt erstellt werden?" 9 70 || return
         email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:" "$(gd_conf_get PANEL_EMAIL)")" || return
         clear; echo "SSL-Zertifikat wird angefordert..."
-        if ! { gd_nginx_http_config "$domain" && gd_certbot_issue "$domain" "$email"; } >> "$GD_LOG" 2>&1; then
+        # Panel hinter dem Cloudflare-Proxy: das Zertifikat wurde per DNS-Challenge (API-Token) ausgestellt – Webroot
+        # würde über den Proxy scheitern
+        local cert_cmd=gd_certbot_issue
+        if [ "$(gd_conf_get SSL_METHOD)" = "cloudflare" ] && [ -s /etc/letsencrypt/cloudflare.ini ]; then
+            cert_cmd=gd_certbot_dns_cloudflare
+        fi
+        if ! { gd_nginx_http_config "$domain" && "$cert_cmd" "$domain" "$email"; } >> "$GD_LOG" 2>&1; then
             # Vorherige Konfiguration zurückspielen, statt das Panel mit der vorläufigen Seite (503) zurückzulassen
             if [ -n "$backup" ]; then
                 cp -p "$backup" /etc/nginx/sites-available/pterodactyl.conf

@@ -69,13 +69,19 @@ gd_wings_fetch() {
 }
 
 gd_wings_binary() {
-    local arch version
+    # gd_wings_binary [version] – lädt Wings (ohne Angabe: die neueste Version) und ersetzt $WINGS_BIN. Setzt
+    # GD_WINGS_BINARY_VERSION. WINGS_VERSION in setup.conf wird hier bewusst NICHT geschrieben: erst der Aufrufer
+    # speichert sie, nachdem Wings mit der neuen Datei erfolgreich gestartet ist.
+    local arch version="${1:-}"
+    GD_WINGS_BINARY_VERSION=""
     arch="$(gd_arch)"
     case "$arch" in amd64|arm64) ;; *) echo "Nicht unterstützte Architektur: $arch"; return 1 ;; esac
-    version="$(gd_latest_release pterodactyl/wings)" || { echo "Die aktuelle Wings-Version konnte nicht ermittelt werden."; return 1; }
+    if [ -z "$version" ]; then
+        version="$(gd_latest_release pterodactyl/wings)" || { echo "Die aktuelle Wings-Version konnte nicht ermittelt werden."; return 1; }
+    fi
     mkdir -p /etc/pterodactyl /var/lib/pterodactyl/volumes
     gd_wings_fetch "https://github.com/pterodactyl/wings/releases/download/v${version}/wings_linux_${arch}" "$WINGS_BIN" || return 1
-    gd_conf_set WINGS_VERSION "$version"
+    GD_WINGS_BINARY_VERSION="$version"
 }
 
 gd_wings_service() {
@@ -485,6 +491,9 @@ gd_wings_local_steps() {
     gd_step $((p + 17 * span / 17)) "Verbindung zwischen Panel und Wings wird geprüft..." gd_wings_verify "$GD_WINGS_FQDN"
     gd_conf_set WINGS_FQDN "$GD_WINGS_FQDN"
     gd_conf_set WINGS_NODE_ID "$GD_NODE_ID"
+    # Erst jetzt, nach erfolgreichem Start und bestandener Prüfung, gilt die Version als installiert
+    [ -n "${GD_WINGS_BINARY_VERSION:-}" ] && gd_conf_set WINGS_VERSION "$GD_WINGS_BINARY_VERSION"
+    return 0
 }
 
 gd_wings_remote_steps() {
@@ -519,20 +528,208 @@ gd_wings_configure_remote() {
     if (cd /etc/pterodactyl && "$WINGS_BIN" configure --panel-url "$url" --token "$token" --node "$node" --override) >> "$GD_LOG" 2>&1 \
         && gd_wings_network_prepare >> "$GD_LOG" 2>&1 && gd_wings_start >> "$GD_LOG" 2>&1; then
         gd_conf_set WINGS_PANEL_URL "$url"
+        # Wings läuft mit der neuen Datei: Version erst jetzt speichern
+        [ -n "${GD_WINGS_BINARY_VERSION:-}" ] && gd_conf_set WINGS_VERSION "$GD_WINGS_BINARY_VERSION"
         return 0
     fi
     gd_msg "✖ Verbindung fehlgeschlagen" "Wings konnte nicht mit dem Panel verbunden werden.\n\nPrüfe, ob das Panel erreichbar ist und der Token noch gültig ist (er kann nur einmal verwendet werden).\n\nLog: $GD_LOG" 14 78
     return 1
 }
 
+# ---------------------------------------------------------------------------
+# Wings aktualisieren
+# ---------------------------------------------------------------------------
+gd_wings_installed_version() {
+    # Installierte Wings-Version aus "wings version", z. B. 1.11.13 (leer + Rückgabe 1, wenn nicht ermittelbar)
+    local v
+    [ -x "$WINGS_BIN" ] || return 1
+    v="$(timeout 15 "$WINGS_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+    [ -n "$v" ] || return 1
+    echo "$v"
+}
+
+gd_wings_update_available() {
+    # Gibt die neuere Wings-Version aus, falls es eine gibt. Rückgabe 1, wenn Wings aktuell ist oder eine der
+    # Versionen nicht ermittelt werden kann.
+    local installed latest
+    installed="$(gd_wings_installed_version)" || return 1
+    latest="$(gd_latest_release pterodactyl/wings)" || return 1
+    [ -n "$latest" ] || return 1
+    gd_version_ge "$installed" "$latest" && return 1
+    echo "$latest"
+}
+
+# shellcheck disable=SC2034  # Ergebnisvariablen werden von Aufrufern gelesen
+gd_wings_major_mismatch() {
+    # gd_wings_major_mismatch <wings-version> – weicht die Major-Version von der des Panels ab? Das Panel ist die lokale
+    # Installation, sonst die Version aus setup.conf (PANEL_VERSION). Rückgabe 0 = Abweichung (GD_WINGS_UPDATE_MESSAGE
+    # beschreibt sie), 1 = passt oder Panel-Version unbekannt (z. B. Wings auf einem eigenen Server).
+    local wv="$1" pv=""
+    GD_WINGS_UPDATE_MESSAGE=""
+    if [ -f "$PTERO_DIR/artisan" ] && declare -F gd_panel_installed_version >/dev/null; then
+        pv="$(gd_panel_installed_version)"
+    fi
+    [ -n "$pv" ] || pv="$(gd_conf_get PANEL_VERSION)"
+    GD_WINGS_PANEL_VERSION="$pv"
+    [ -n "$pv" ] && [ -n "$wv" ] || return 1
+    [ "${pv%%.*}" != "${wv%%.*}" ] || return 1
+    GD_WINGS_UPDATE_MESSAGE="Wings v${wv} gehört zur Major-Version ${wv%%.*}, dein Panel (v${pv}) zur Major-Version ${pv%%.*}. Beide müssen dieselbe Major-Version haben – sonst kann sich Wings nicht mehr mit dem Panel verbinden."
+    return 0
+}
+
+gd_wings_fqdn() {
+    # FQDN der Wings-Node: aus setup.conf, sonst aus dem Zertifikatspfad in der config.yml
+    local f
+    f="$(gd_conf_get WINGS_FQDN)"
+    [ -n "$f" ] || f="$(awk '$1=="cert:"{print $2; exit}' "$WINGS_CONFIG" 2>/dev/null | tr -d "'\"" | sed -nE 's#.*/live/([^/]+)/.*#\1#p')"
+    echo "$f"
+}
+
+gd_wings_update_check() {
+    # Funktionsprüfung nach einem Update: Dienst läuft stabil und – wenn eine config.yml vorhanden ist – die
+    # Wings-API antwortet mit dem Node-Token (wie das grüne Herz im Panel)
+    local fqdn ssl
+    sleep 3
+    systemctl is-active --quiet wings || return 1
+    [ -f "$WINGS_CONFIG" ] || return 0
+    fqdn="$(gd_wings_fqdn)"
+    ssl="$(awk '/^[[:space:]]+ssl:/{s=1;next} s && $1=="enabled:"{print $2; exit}' "$WINGS_CONFIG" 2>/dev/null)"
+    if [ -z "$fqdn" ] || [ "$ssl" = "false" ]; then
+        echo "Die Wings-API wird nicht geprüft (FQDN unbekannt oder SSL in der config.yml aus) – nur der Dienst wird kontrolliert."
+        sleep 5
+        systemctl is-active --quiet wings
+        return
+    fi
+    gd_wings_verify "$fqdn"
+}
+
+gd_wings_update_record() {
+    # gd_wings_update_record ok|fehler
+    gd_conf_set LAST_WINGS_UPDATE_RESULT "$1"
+    gd_conf_set LAST_WINGS_UPDATE_TIME "$(date '+%F %T')"
+}
+
+gd_wings_update_rollback() {
+    # gd_wings_update_rollback <grund> – bisherige Wings-Datei zurückspielen und Wings neu starten
+    GD_WINGS_UPDATE_MESSAGE="$1"
+    gd_log "Wings-Update fehlgeschlagen: $1"
+    if [ -f "$WINGS_BIN.bak" ]; then
+        gd_progress 90 "Die vorherige Wings-Version wird wiederhergestellt..."
+        if cp -p "$WINGS_BIN.bak" "$WINGS_BIN.rollback" && mv -f "$WINGS_BIN.rollback" "$WINGS_BIN"; then
+            if gd_wings_start >> "$GD_LOG" 2>&1; then
+                gd_log "Die vorherige Wings-Version ist wiederhergestellt und läuft."
+            else
+                gd_log "Die vorherige Wings-Version ist wiederhergestellt, Wings startet aber nicht (journalctl -u wings)."
+                GD_WINGS_UPDATE_MESSAGE="$1 Auch die vorherige Version startet nicht – siehe 'journalctl -u wings'."
+            fi
+        else
+            rm -f "$WINGS_BIN.rollback"
+            GD_WINGS_UPDATE_MESSAGE="$1 Die vorherige Version konnte nicht zurückgespielt werden (Sicherung: $WINGS_BIN.bak)."
+        fi
+    fi
+    gd_wings_update_record fehler
+}
+
+# shellcheck disable=SC2034  # Ergebnisvariablen werden von Aufrufern gelesen
+gd_wings_update_steps() {
+    # Aktualisiert Wings auf die neueste Version, dialogfrei. Variablen:
+    #   GD_WINGS_TARGET_VERSION   Zielversion (Standard: neueste)
+    #   GD_WINGS_IGNORE_MAJOR     true = Abweichung der Major-Version zum Panel nicht beanstanden
+    # Ergebnis: GD_WINGS_UPDATE_FROM, GD_WINGS_UPDATE_TO, GD_WINGS_UPDATE_MESSAGE und die Einstellungen WINGS_VERSION
+    # (erst nach erfolgreichem Start), LAST_WINGS_UPDATE_RESULT (ok|fehler) und LAST_WINGS_UPDATE_TIME.
+    # Rückgabe: 0 = aktualisiert, 1 = fehlgeschlagen (vorherige Version wiederhergestellt), 3 = Major-Version von Panel
+    # und Wings weichen ab (nichts verändert, der Aufrufer entscheidet; mit GD_WINGS_IGNORE_MAJOR=true wiederholen).
+    local target
+    GD_WINGS_UPDATE_MESSAGE=""
+    GD_WINGS_UPDATE_FROM="$(gd_wings_installed_version)"
+    target="${GD_WINGS_TARGET_VERSION:-}"
+    gd_progress 5 "Neueste Wings-Version wird ermittelt..."
+    [ -n "$target" ] || target="$(gd_latest_release pterodactyl/wings)"
+    GD_WINGS_UPDATE_TO="$target"
+    if [ -z "$target" ]; then
+        GD_WINGS_UPDATE_MESSAGE="Die aktuelle Wings-Version konnte nicht ermittelt werden (github.com erreichbar?)."
+        gd_log "Wings-Update fehlgeschlagen: $GD_WINGS_UPDATE_MESSAGE"
+        gd_wings_update_record fehler
+        return 1
+    fi
+    if [ "${GD_WINGS_IGNORE_MAJOR:-false}" != true ] && gd_wings_major_mismatch "$target"; then
+        gd_log "Wings-Update nicht ausgeführt: $GD_WINGS_UPDATE_MESSAGE"
+        echo "$GD_WINGS_UPDATE_MESSAGE"
+        return 3
+    fi
+    gd_progress 10 "Die aktuelle Wings-Datei wird gesichert..."
+    rm -f "$WINGS_BIN.bak"
+    if [ -f "$WINGS_BIN" ]; then
+        cp -p "$WINGS_BIN" "$WINGS_BIN.bak" || {
+            GD_WINGS_UPDATE_MESSAGE="Die aktuelle Wings-Datei konnte nicht gesichert werden (Speicherplatz?)."
+            gd_log "Wings-Update fehlgeschlagen: $GD_WINGS_UPDATE_MESSAGE"
+            gd_wings_update_record fehler
+            return 1
+        }
+    fi
+    gd_progress 20 "Wings v${target} wird heruntergeladen..."
+    if ! gd_wings_binary "$target" >> "$GD_LOG" 2>&1; then
+        # gd_wings_fetch ersetzt die Datei erst nach erfolgreicher Prüfung: die bisherige Version ist unverändert
+        GD_WINGS_UPDATE_MESSAGE="Wings v${target} konnte nicht heruntergeladen werden. Die bisherige Version läuft unverändert weiter."
+        gd_log "Wings-Update fehlgeschlagen: $GD_WINGS_UPDATE_MESSAGE"
+        gd_wings_update_record fehler
+        return 1
+    fi
+    gd_progress 60 "Wings wird neu gestartet..."
+    if ! gd_wings_start >> "$GD_LOG" 2>&1; then
+        gd_wings_update_rollback "Wings v${target} startet nicht. Die vorherige Version wurde wiederhergestellt."
+        return 1
+    fi
+    gd_progress 80 "Wings wird geprüft..."
+    if ! gd_wings_update_check >> "$GD_LOG" 2>&1; then
+        gd_wings_update_rollback "Wings v${target} läuft, besteht aber die Funktionsprüfung nicht (Wings-API antwortet nicht). Die vorherige Version wurde wiederhergestellt."
+        return 1
+    fi
+    gd_conf_set WINGS_VERSION "$target"
+    gd_wings_update_record ok
+    gd_log "Wings aktualisiert: ${GD_WINGS_UPDATE_FROM:-unbekannt} -> $target"
+    return 0
+}
+
 gd_wings_update() {
-    # Wings auf die neueste Version aktualisieren
+    # Wings auf die neueste Version aktualisieren (interaktiv)
+    local installed latest rc
+    latest="$(gd_latest_release pterodactyl/wings)"
+    if [ -z "$latest" ]; then
+        gd_msg "Fehler" "Die aktuelle Wings-Version konnte nicht ermittelt werden. Prüfe die Internetverbindung (github.com)." 9 70
+        return 1
+    fi
+    installed="$(gd_wings_installed_version)"
+    if [ -n "$installed" ] && gd_version_ge "$installed" "$latest"; then
+        gd_msg "✔ Wings ist aktuell" "Installiert ist Wings v${installed} – das ist die neueste Version." 8 64
+        return 0
+    fi
+    gd_yesno "↑ Wings aktualisieren" "Installiert: v${installed:-unbekannt}\nNeu: v${latest}\n\nWings startet kurz neu, laufende Gameserver laufen weiter.\n\nVorher wird die aktuelle Datei gesichert; startet die neue Version nicht oder besteht sie die Prüfung nicht, wird sie automatisch zurückgespielt.\n\nMöchtest du fortfahren?" 17 74 || return 1
+    GD_WINGS_TARGET_VERSION="$latest"
+    GD_WINGS_IGNORE_MAJOR=false
+    if gd_wings_major_mismatch "$latest"; then
+        gd_warn_colors_on
+        gd_whip --title "⚠ Panel und Wings passen nicht zusammen" --defaultno --yesno "${GD_WINGS_UPDATE_MESSAGE}\n\nMit dem Update verliert Wings sehr wahrscheinlich die Verbindung zum Panel – deine Gameserver lassen sich dann nicht mehr über das Panel steuern.\n\nEmpfehlung: Abbrechen und zuerst das Panel aktualisieren.\n\nTrotzdem aktualisieren?" 16 74
+        rc=$?
+        gd_warn_colors_off
+        [ "$rc" -eq 0 ] || return 1
+        GD_WINGS_IGNORE_MAJOR=true
+    fi
     gd_gauge_open "↑ Wings wird aktualisiert" "Aktualisierung wird vorbereitet..."
-    gd_step 20 "Neueste Wings-Version wird heruntergeladen..." gd_wings_binary
-    gd_step 80 "Wings wird neu gestartet..." gd_wings_start
-    gd_progress 100 "Fertig."
+    gd_wings_update_steps
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        gd_progress 100 "Fertig."
+    fi
     gd_gauge_close
-    gd_msg "✔ Wings aktualisiert" "Wings wurde auf v$(gd_conf_get WINGS_VERSION) aktualisiert und neu gestartet." 9 60
+    GD_WINGS_IGNORE_MAJOR=false
+    GD_WINGS_TARGET_VERSION=""
+    if [ $rc -eq 0 ]; then
+        gd_msg "✔ Wings aktualisiert" "Wings wurde auf v$(gd_conf_get WINGS_VERSION) aktualisiert und neu gestartet." 9 60
+        return 0
+    fi
+    gd_msg "✖ Wings-Update fehlgeschlagen" "${GD_WINGS_UPDATE_MESSAGE:-Das Update ist fehlgeschlagen.}\n\nDetails: $GD_LOG" 13 74
+    return 1
 }
 
 gd_swap_create() {

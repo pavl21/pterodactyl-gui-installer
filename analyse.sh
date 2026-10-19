@@ -861,8 +861,10 @@ cron_has_schedule() {
         | grep -vE '^[[:space:]]*#' | grep -qF "$PTERO_DIR/artisan schedule:run"
 }
 fix_cron() {
+    # Als Benutzer www-data anlegen (gd_panel_cron migriert auch einen alten root-Eintrag)
     cron_has_schedule && return 0
-    { crontab -l 2>/dev/null | grep -vF "$PTERO_DIR/artisan schedule:run"; echo "* * * * * php $PTERO_DIR/artisan schedule:run >> /dev/null 2>&1"; } | crontab -
+    gd_source_lib panel
+    gd_panel_cron
 }
 fix_deploy_hook() { gd_source_lib security; gd_certbot_hook; }
 fix_certbot_timer() {

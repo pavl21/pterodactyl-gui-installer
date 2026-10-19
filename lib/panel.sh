@@ -100,13 +100,61 @@ gd_composer_install() {
     php "$GD_TMP/composer-setup.php" --quiet --install-dir=/usr/local/bin --filename=composer
 }
 
-gd_panel_download() {
-    # gd_panel_download <version> – lädt genau diese Version herunter und entpackt sie nach $PTERO_DIR
-    local version="$1"
+GD_REF_CACHE="/var/cache/germandactyl"            # Referenzbäume (Originalstand der installierten Version)
+GD_BACKUP_CUSTOM_ROOT="/var/backups/germandactyl"  # Gesicherte eigene Änderungen und Rejects
+
+gd_panel_need() {
+    # gd_panel_need <lib> <funktion> – bindet lib/<lib>.sh ein, falls die Funktion noch nicht existiert
+    declare -F "$2" >/dev/null || gd_source_lib "$1"
+}
+
+gd_panel_tarball_ok() {
+    # gd_panel_tarball_ok <datei> – größer als 1 MB und ein lesbares gzip-tar-Archiv
+    local size
+    size="$(stat -c %s "$1" 2>/dev/null || echo 0)"
+    [ "$size" -gt 1048576 ] && tar -tzf "$1" >/dev/null 2>&1
+}
+
+gd_panel_fetch() {
+    # gd_panel_fetch <version> [zieldatei] – lädt panel.tar.gz genau dieser Version (mit Wiederholungen) und prüft es.
+    # Standardziel: $GD_TMP/panel-<version>.tar.gz. Ein bereits geladenes, gültiges Archiv wird wiederverwendet.
+    # Das entpackte Panel wird dabei nicht verändert – so lässt sich vor dem Wartungsmodus laden und prüfen.
+    # Upstream veröffentlicht keine Prüfsummen; geprüft werden Größe und Lesbarkeit des Archivs.
+    local version="$1" file="${2:-$GD_TMP/panel-$1.tar.gz}"
+    if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+)+(-[0-9A-Za-z.]+)?$ ]]; then
+        echo "Ungültige Panel-Version: $version"
+        return 1
+    fi
+    if [ -s "$file" ] && gd_panel_tarball_ok "$file"; then
+        return 0
+    fi
+    rm -f "$file"
+    if ! curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 20 --max-time 600 \
+        "https://github.com/pterodactyl/panel/releases/download/v${version}/panel.tar.gz" -o "$file"; then
+        rm -f "$file"
+        echo "Der Download von Panel v${version} ist fehlgeschlagen (github.com erreichbar? Gibt es die Version?)."
+        return 1
+    fi
+    if ! gd_panel_tarball_ok "$file"; then
+        rm -f "$file"
+        echo "Die heruntergeladene Datei ist kein gültiges Panel-Archiv (zu klein oder beschädigt)."
+        return 1
+    fi
+    return 0
+}
+
+gd_panel_extract() {
+    # gd_panel_extract <version> – entpackt das mit gd_panel_fetch geladene Archiv nach $PTERO_DIR
+    local file="$GD_TMP/panel-$1.tar.gz"
+    [ -s "$file" ] || { echo "Das Archiv $file fehlt (zuerst gd_panel_fetch aufrufen)."; return 1; }
     mkdir -p "$PTERO_DIR"
-    curl -fL "https://github.com/pterodactyl/panel/releases/download/v${version}/panel.tar.gz" -o "$GD_TMP/panel.tar.gz" || return 1
-    tar -xzf "$GD_TMP/panel.tar.gz" -C "$PTERO_DIR" || return 1
+    tar -xzf "$file" -C "$PTERO_DIR" || return 1
     chmod -R 755 "$PTERO_DIR"/storage/* "$PTERO_DIR"/bootstrap/cache/
+}
+
+gd_panel_download() {
+    # gd_panel_download <version> – lädt genau diese Version herunter und entpackt sie nach $PTERO_DIR (Installation)
+    gd_panel_fetch "$1" && gd_panel_extract "$1"
 }
 
 gd_nginx_backup() {
@@ -679,10 +727,32 @@ gd_panel_permissions() {
     chmod 640 "$PTERO_DIR/.env"
 }
 
+gd_panel_cron() {
+    # Cronjob für die Zeitpläne des Panels (schedule:run) als Benutzer www-data: Läuft er als root, legt das Panel
+    # root-eigene Dateien in storage/ an, und der Webserver (www-data) scheitert danach mit Fehler 500.
+    # Bestehende Installationen werden migriert: ein root-Eintrag für dieses Panel wird entfernt. Andere Einträge bleiben.
+    # Läuft bei der Installation und bei jedem Update.
+    local marker="${PTERO_DIR}/artisan schedule:run" cron_line root_tab www_tab rest
+    cron_line="* * * * * php ${PTERO_DIR}/artisan schedule:run >> /dev/null 2>&1"
+    command -v crontab >/dev/null 2>&1 || gd_apt_install cron || return 1
+    www_tab="$(crontab -u www-data -l 2>/dev/null | grep -vF "$marker")"
+    { [ -n "$www_tab" ] && printf '%s\n' "$www_tab"; echo "$cron_line"; } | crontab -u www-data - || return 1
+    root_tab="$(crontab -l 2>/dev/null)"
+    if grep -qF "$marker" <<< "$root_tab"; then
+        echo "Der Cronjob lief bisher als root und wird auf www-data umgestellt."
+        rest="$(grep -vF "$marker" <<< "$root_tab")"
+        if [ -n "$rest" ]; then
+            printf '%s\n' "$rest" | crontab - || return 1
+        else
+            crontab -r || return 1
+        fi
+    fi
+    return 0
+}
+
 gd_panel_services() {
-    # Cronjob (bestehende Einträge bleiben erhalten) und Queue-Worker
-    local cron_line="* * * * * php ${PTERO_DIR}/artisan schedule:run >> /dev/null 2>&1"
-    { crontab -l 2>/dev/null | grep -vF "${PTERO_DIR}/artisan schedule:run"; echo "$cron_line"; } | crontab - || return 1
+    # Cronjob (als www-data) und Queue-Worker
+    gd_panel_cron || return 1
 
     cat > /etc/systemd/system/pteroq.service <<EOF
 # Pterodactyl Queue Worker File
@@ -760,7 +830,7 @@ gd_panel_install_steps() {
     gd_step 62 "Cronjob und Hintergrunddienst (Queue) werden eingerichtet..." gd_panel_services
     # Reihenfolge wichtig: Blueprint ersetzt Dateien der Oberfläche, die Übersetzung kommt danach
     if [ "${GD_BLUEPRINT:-false}" = "true" ]; then
-        gd_blueprint_install_step 63
+        gd_blueprint_install_step 63 latest
     fi
     if [ "$GD_APPLY_PATCH" = "true" ]; then
         gd_germandactyl_steps 64
@@ -794,46 +864,537 @@ gd_panel_installed_version() {
     grep "'version' =>" "$PTERO_DIR/config/app.php" 2>/dev/null | cut -d\' -f4
 }
 
+# ---------------------------------------------------------------------------
+# Erkennung eigener Änderungen: Vergleich mit dem Originalstand der installierten Version
+# ---------------------------------------------------------------------------
+GD_PANEL_CHECK_DIRS=(app resources routes config database public)
+
+gd_panel_translation_for() {
+    # gd_panel_translation_for <version> – gehört die installierte deutsche Übersetzung (GermanDactyl) zu dieser Version?
+    # Wurde das Panel später ohne Übersetzung aktualisiert, steht in der Konfiguration noch die alte Version.
+    [ -n "$1" ] && [ "$(gd_conf_get GD_GERMANDACTYL)" = "$1" ]
+}
+
+gd_panel_reference_cache() {
+    # gd_panel_reference_cache <version> – Pfad des Referenzbaums im Cache (mit Übersetzung: panel-<version>-de)
+    local suffix=""
+    gd_panel_translation_for "$1" && suffix="-de"
+    echo "$GD_REF_CACHE/panel-$1$suffix"
+}
+
+gd_panel_reference_tree() {
+    # gd_panel_reference_tree <version> <zielverzeichnis> – baut den Originalstand der Panel-Version auf (panel.tar.gz,
+    # bei installierter Übersetzung zusätzlich mit dem GermanDactyl-Patch) und legt ihn unter <zielverzeichnis> ab.
+    # Der Referenzbaum wird pro Version einmal unter /var/cache/germandactyl/panel-<version>[-de]/ (Rechte 700)
+    # gehalten und wiederverwendet; ist <zielverzeichnis> dieser Pfad (gd_panel_reference_cache), wird nichts kopiert.
+    # Setzt GD_REFERENCE_DIR. Rückgabe 1, wenn der Aufbau nicht möglich ist (Download, Archiv, Patch).
+    local version="$1" target="$2" cache build tarball
+    [ -n "$version" ] && [ -n "$target" ] || return 1
+    cache="$(gd_panel_reference_cache "$version")"
+    if [ ! -f "$cache/.gd-referenz-fertig" ]; then
+        install -d -m 700 "$GD_REF_CACHE" || return 1
+        build="$cache.neu.$$"
+        rm -rf "$build"
+        mkdir -p "$build" && chmod 700 "$build" || return 1
+        tarball="$GD_TMP/panel-referenz-$version.tar.gz"
+        if ! gd_panel_fetch "$version" "$tarball" || ! tar -xzf "$tarball" -C "$build"; then
+            rm -rf "$build" "$tarball"
+            return 1
+        fi
+        rm -f "$tarball"
+        if gd_panel_translation_for "$version"; then
+            # In einer Subshell: gd_patch_apply wechselt das Verzeichnis und meldet Teilergebnisse über GD_WARNINGS,
+            # die hier niemanden betreffen
+            if ! ( GD_WARNINGS=""; gd_patch_apply "$version" "$build" ); then
+                echo "Die Übersetzung v${version} konnte nicht auf den Referenzstand angewendet werden."
+                rm -rf "$build"
+                return 1
+            fi
+        fi
+        : > "$build/.gd-referenz-fertig"
+        chmod 700 "$build"
+        rm -rf "$cache"
+        mv "$build" "$cache" || { rm -rf "$build"; return 1; }
+        # Referenzen anderer Versionen werden nicht mehr gebraucht
+        find "$GD_REF_CACHE" -mindepth 1 -maxdepth 1 -name 'panel-*' ! -name "panel-${version}" ! -name "panel-${version}-de" \
+            -exec rm -rf {} + 2>/dev/null
+    fi
+    if [ "$target" != "$cache" ]; then
+        rm -rf "$target"
+        mkdir -p "$target" && cp -a "$cache/." "$target/" || return 1
+    fi
+    GD_REFERENCE_DIR="$target"
+    return 0
+}
+
+gd_panel_change_exclude() {
+    # Ausdruck (egrep) für Pfade, die beim Vergleich nicht zählen: Laufzeitdaten, gebaute Oberfläche, Blueprint-Verwaltung,
+    # Reste von Patches und – bei installierter Übersetzung – die Sprachdateien (Referenz enthält sie bereits)
+    local ex='^(public/assets/|public/build/|public/\.well-known/|\.blueprint/|storage/|vendor/|node_modules/|bootstrap/cache/)'
+    ex+='|(^|/)node_modules/|\.(rej|orig)$|(^|/)\.gd-referenz-fertig$|(^|/)\.env$'
+    if [ -n "$(gd_conf_get GD_GERMANDACTYL)" ]; then
+        ex+='|^resources/lang/de(/|\.json$)'
+    fi
+    echo "$ex"
+}
+
+gd_panel_hashes() {
+    # gd_panel_hashes <basisverzeichnis> <ausschlussausdruck> – "<sha256>  <relativer pfad>" je Datei in den geprüften Ordnern
+    local d dirs=()
+    for d in "${GD_PANEL_CHECK_DIRS[@]}"; do
+        [ -d "$1/$d" ] && dirs+=("$d")
+    done
+    [ ${#dirs[@]} -gt 0 ] || return 0
+    ( cd "$1" && find "${dirs[@]}" -type f -print0 | grep -zvE "$2" | xargs -0 -r sha256sum ) | LC_ALL=C sort -k2
+}
+
+gd_panel_detect_changes() {
+    # gd_panel_detect_changes <installierte-version> – vergleicht $PTERO_DIR mit dem Originalstand dieser Version
+    # (app resources routes config database public; ohne .env, storage, vendor, node_modules, bootstrap/cache,
+    # public/assets, public/build, .blueprint, *.rej/*.orig und bei installierter Übersetzung resources/lang/de).
+    # Setzt GD_FOREIGN_FILES (Zeilen "M pfad" geändert, "A pfad" neu, "D pfad" gelöscht), GD_FOREIGN_COUNT,
+    # GD_FOREIGN_VERSION, GD_REFERENCE_DIR, GD_FOREIGN_BLUEPRINT (true/false) und GD_BLUEPRINT_EXTENSIONS.
+    # Rückgabe: 0 = keine fremden Änderungen, 1 = fremde Änderungen, 2 = Prüfung nicht möglich (z. B. Download).
+    # Ist Blueprint installiert, verändert es Kerndateien – diese sind von eigenen Änderungen nicht zu unterscheiden
+    # und stehen deshalb ebenfalls in der Liste.
+    local version="$1" ref ex a b nref
+    GD_FOREIGN_FILES=""
+    GD_FOREIGN_COUNT=0
+    GD_FOREIGN_VERSION=""
+    GD_FOREIGN_BLUEPRINT=false
+    GD_BLUEPRINT_EXTENSIONS=""
+    if [ -z "$version" ] || [ ! -f "$PTERO_DIR/artisan" ]; then
+        gd_log "Prüfung auf eigene Änderungen nicht möglich: Version oder Panel-Ordner unbekannt"
+        return 2
+    fi
+    ref="$(gd_panel_reference_cache "$version")"
+    if ! gd_panel_reference_tree "$version" "$ref"; then
+        gd_log "Prüfung auf eigene Änderungen nicht möglich: Referenzstand von v${version} nicht verfügbar"
+        return 2
+    fi
+    ex="$(gd_panel_change_exclude)"
+    a="$GD_TMP/referenz-hashes.txt"
+    b="$GD_TMP/panel-hashes.txt"
+    gd_panel_hashes "$ref" "$ex" > "$a"
+    gd_panel_hashes "$PTERO_DIR" "$ex" > "$b"
+    nref="$(wc -l < "$a")"
+    if [ "${nref:-0}" -lt 100 ]; then
+        gd_log "Prüfung auf eigene Änderungen nicht möglich: Referenzstand unvollständig ($nref Dateien)"
+        rm -f "$a" "$b"
+        return 2
+    fi
+    # Zeile = 64 Zeichen Prüfsumme, 2 Leerzeichen, Pfad
+    GD_FOREIGN_FILES="$(awk '
+        NR == FNR { r[substr($0, 67)] = substr($0, 1, 64); next }
+        { p = substr($0, 67)
+          if (!(p in r)) print "A " p
+          else { if (r[p] != substr($0, 1, 64)) print "M " p; delete r[p] } }
+        END { for (p in r) print "D " p }' "$a" "$b" | LC_ALL=C sort -k2)"
+    rm -f "$a" "$b"
+    GD_FOREIGN_COUNT=0
+    [ -n "$GD_FOREIGN_FILES" ] && GD_FOREIGN_COUNT="$(wc -l <<< "$GD_FOREIGN_FILES")"
+    GD_FOREIGN_VERSION="$version"
+    gd_panel_need blueprint gd_blueprint_installed
+    if gd_blueprint_installed; then
+        GD_FOREIGN_BLUEPRINT=true
+        GD_BLUEPRINT_EXTENSIONS="$(gd_blueprint_extensions)"
+    fi
+    gd_log "Prüfung auf eigene Änderungen (v${version}): ${GD_FOREIGN_COUNT} abweichende Datei(en)$( [ "$GD_FOREIGN_BLUEPRINT" = true ] && echo ', Blueprint ist installiert')"
+    [ -n "$GD_FOREIGN_FILES" ] && printf '%s\n' "$GD_FOREIGN_FILES" | head -n 200 >> "$GD_LOG"
+    [ "$GD_FOREIGN_COUNT" -eq 0 ]
+}
+
+# shellcheck disable=SC2034  # Ergebnisvariablen werden von Aufrufern gelesen
+gd_panel_custom_save() {
+    # gd_panel_custom_save <version> – sichert die fremden Änderungen als Patch
+    #   /var/backups/germandactyl/eigene-aenderungen-<version>-<datum>.patch (Rechte 600) und als Kopie der geänderten und
+    #   neuen Dateien in .../eigene-aenderungen-<version>-<datum>/ (Rechte 700). Grundlage ist GD_FOREIGN_FILES
+    #   (gd_panel_detect_changes); fehlt die Liste für diese Version, wird sie erzeugt. Setzt GD_CUSTOM_PATCH und
+    #   GD_CUSTOM_FILES_DIR (leer, wenn es nichts zu sichern gibt). Rückgabe 0 = gesichert oder nichts zu sichern, 1 = Fehler.
+    local version="$1" ref stamp patch dest work rc line kind path pe pr left right
+    GD_CUSTOM_PATCH=""
+    GD_CUSTOM_FILES_DIR=""
+    if [ "${GD_FOREIGN_VERSION:-}" != "$version" ]; then
+        gd_panel_detect_changes "$version"
+        rc=$?
+        [ $rc -eq 2 ] && { echo "Die eigenen Änderungen konnten nicht ermittelt werden."; return 1; }
+    fi
+    [ -n "$GD_FOREIGN_FILES" ] || return 0
+    ref="${GD_REFERENCE_DIR:-$(gd_panel_reference_cache "$version")}"
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    patch="$GD_BACKUP_CUSTOM_ROOT/eigene-aenderungen-${version}-${stamp}.patch"
+    dest="$GD_BACKUP_CUSTOM_ROOT/eigene-aenderungen-${version}-${stamp}"
+    work="$GD_TMP/eigene-aenderungen.$$"
+    rm -rf "$work"
+    mkdir -p "$GD_BACKUP_CUSTOM_ROOT" "$work/a" "$work/b" "$dest" || return 1
+    chmod 700 "$GD_BACKUP_CUSTOM_ROOT" "$dest" "$work"
+    # Nur die gelisteten Pfade: links der Originalstand (geändert, gelöscht), rechts der aktuelle Stand (geändert, neu)
+    awk '$1 == "M" || $1 == "D" { print substr($0, 3) }' <<< "$GD_FOREIGN_FILES" > "$work/original.liste"
+    awk '$1 == "M" || $1 == "A" { print substr($0, 3) }' <<< "$GD_FOREIGN_FILES" > "$work/aktuell.liste"
+    if [ -s "$work/original.liste" ]; then
+        tar -C "$ref" -cf - -T "$work/original.liste" | tar -C "$work/a" -xf - || { rm -rf "$work" "$dest"; return 1; }
+    fi
+    if [ -s "$work/aktuell.liste" ]; then
+        tar -C "$PTERO_DIR" -cf - -T "$work/aktuell.liste" | tar -C "$work/b" -xf - || { rm -rf "$work" "$dest"; return 1; }
+    fi
+    # Je Datei ein Diff (git diff --no-index): Bei neuen/gelöschten Dateien setzt git die Verzeichnisnamen a/b unterschiedlich
+    # in die Kopfzeilen – sie werden danach einheitlich auf a/<pfad> und b/<pfad> gesetzt
+    : > "$work/roh.patch"
+    while IFS= read -r line; do
+        kind="${line%% *}"
+        path="${line#? }"
+        pe="$(sed -E 's/[][\\.*^$\/#|+?(){}]/\\&/g' <<< "$path")"
+        pr="$(sed -E 's/[\\&#]/\\&/g' <<< "$path")"
+        case "$kind" in
+            M) left="a/$path"; right="b/$path" ;;
+            A) left=/dev/null; right="b/$path" ;;
+            D) left="a/$path"; right=/dev/null ;;
+            *) continue ;;
+        esac
+        ( cd "$work" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git -c core.quotepath=off diff --no-index \
+            --binary --no-color --no-ext-diff -- "$left" "$right" ) \
+            | sed -E "/^(diff --git |--- |\+\+\+ )/ { s#(^| )a/[ab]/${pe}#\1a/${pr}#g; s#(^| )b/[ab]/${pe}#\1b/${pr}#g }" >> "$work/roh.patch"
+    done <<< "$GD_FOREIGN_FILES"
+    if [ ! -s "$work/roh.patch" ]; then
+        echo "Der Patch mit den eigenen Änderungen konnte nicht erstellt werden."
+        rm -rf "$work" "$dest"
+        return 1
+    fi
+    ( umask 077; cp "$work/roh.patch" "$patch" ) || { rm -rf "$work" "$dest"; return 1; }
+    chmod 600 "$patch"
+    cp -a "$work/b/." "$dest/" || { rm -rf "$work" "$dest" "$patch"; return 1; }
+    chmod 700 "$dest"
+    rm -rf "$work"
+    GD_CUSTOM_PATCH="$patch"
+    GD_CUSTOM_FILES_DIR="$dest"
+    gd_log "Eigene Änderungen gesichert: ${GD_FOREIGN_COUNT} Datei(en) – Patch: $patch, Kopie: $dest"
+    return 0
+}
+
+# shellcheck disable=SC2034  # Ergebnisvariablen werden von Aufrufern gelesen
+gd_panel_custom_reapply() {
+    # gd_panel_custom_reapply <patchdatei> – wendet den mit gd_panel_custom_save gesicherten Patch im Panel an.
+    # Dateien einzeln: Ist eine Änderung schon enthalten (z. B. von Blueprint oder der Übersetzung neu erzeugt, oder die
+    # neue Version hat sie übernommen), wird sie übersprungen. Sonst "git apply --reject" (innerhalb eines Git-Repos zuerst
+    # --3way; ohne Repo hat --3way keine Grundlage und scheitert). Rejects werden nach
+    # /var/backups/germandactyl/rejects-eigene-<datum>/ verschoben (GD_CUSTOM_REJECT_DIR); eine Meldung steht in GD_WARNINGS
+    # und im Log. GD_CUSTOM_NEEDS_BUILD=true, wenn Quelltext der Oberfläche (resources/scripts) angewendet wurde.
+    # Rückgabe: 0 = vollständig, 1 = teilweise, 2 = gar nicht.
+    local patch="$1" stamp rej_dir paths p out rc in_repo=false list n
+    local ok=0 already=0 partial=() failed=() applied=() rejected=() before after
+    GD_CUSTOM_REJECT_DIR=""
+    GD_CUSTOM_NEEDS_BUILD=false
+    [ -s "$patch" ] || { echo "Die Patch-Datei fehlt oder ist leer: $patch"; return 2; }
+    cd "$PTERO_DIR" || return 2
+    paths="$(git apply --numstat "$patch" 2>/dev/null | cut -f3-)"
+    [ -n "$paths" ] || { echo "Der Patch enthält keine Dateien oder ist nicht lesbar."; return 2; }
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 && in_repo=true
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        if git apply --reverse --check --include="$p" "$patch" >/dev/null 2>&1; then
+            already=$((already + 1))
+            continue
+        fi
+        if $in_repo && git apply --3way --whitespace=nowarn --include="$p" "$patch" >/dev/null 2>&1; then
+            ok=$((ok + 1)); applied+=("$p")
+            continue
+        fi
+        rm -f "$p.rej"
+        before="$(sha256sum "$p" 2>/dev/null)"
+        out="$(git apply --reject --whitespace=nowarn -v --include="$p" "$patch" 2>&1)"
+        rc=$?
+        echo "$out"
+        [ -f "$p.rej" ] && rejected+=("$p")
+        after="$(sha256sum "$p" 2>/dev/null)"
+        if [ $rc -eq 0 ]; then
+            ok=$((ok + 1)); applied+=("$p")
+        elif [ "$before" != "$after" ]; then
+            partial+=("$p")      # einzelne Teile angewendet, der Rest liegt als Reject vor
+        else
+            failed+=("$p")       # Datei unverändert
+        fi
+    done <<< "$paths"
+    # Rejects (nicht angewendete Teile) einsammeln, mit Verzeichnisstruktur zur Nacharbeit
+    rej_dir="$GD_BACKUP_CUSTOM_ROOT/rejects-eigene-${stamp}"
+    for p in "${rejected[@]}"; do
+        mkdir -p "$rej_dir/$(dirname "$p")" && mv -f "$p.rej" "$rej_dir/$p.rej" && GD_CUSTOM_REJECT_DIR="$rej_dir"
+    done
+    [ -n "$GD_CUSTOM_REJECT_DIR" ] && chmod 700 "$GD_BACKUP_CUSTOM_ROOT" "$rej_dir"
+    for p in "${applied[@]}" "${partial[@]}"; do
+        case "$p" in resources/scripts/*) GD_CUSTOM_NEEDS_BUILD=true ;; esac
+    done
+    GD_CUSTOM_APPLIED=$((ok + already))
+    gd_log "Eigene Änderungen wieder angewendet: ${ok} angewendet, ${already} bereits enthalten, ${#partial[@]} teilweise, ${#failed[@]} nicht"
+    if [ ${#partial[@]} -eq 0 ] && [ ${#failed[@]} -eq 0 ]; then
+        return 0
+    fi
+    list="$(printf '%s\n' "${partial[@]}" "${failed[@]}" | grep . | sort -u)"
+    n="$(wc -l <<< "$list")"
+    gd_log "Nicht vollständig übernommen:"
+    printf '%s\n' "$list" >> "$GD_LOG"
+    list="$(head -n 5 <<< "$list" | paste -sd, - | sed 's/,/, /g')"
+    [ "$n" -gt 5 ] && list+=" und $((n - 5)) weitere"
+    GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Eigene Änderungen konnten nicht vollständig übernommen werden: ${list}."
+    if [ $((ok + already)) -gt 0 ] || [ ${#partial[@]} -gt 0 ]; then
+        return 1
+    fi
+    return 2
+}
+
+# shellcheck disable=SC2034  # Ergebnisvariablen werden von Aufrufern gelesen
+gd_panel_custom_reapply_step() {
+    # Schritt im Update: eigene Änderungen wieder anwenden, Zwischenspeicher leeren, ggf. Oberfläche neu bauen.
+    # Gibt immer 0 zurück – Teilergebnisse stehen in GD_WARNINGS, das Update selbst soll daran nicht scheitern.
+    gd_panel_custom_reapply "$GD_CUSTOM_PATCH"
+    GD_CUSTOM_REAPPLY_RC=$?
+    gd_panel_permissions
+    if [ "${GD_CUSTOM_NEEDS_BUILD:-false}" = true ]; then
+        echo "Eigene Änderungen am Oberflächen-Quelltext: Oberfläche wird neu gebaut..."
+        if ! { gd_install_node && gd_panel_build; }; then
+            GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Die Oberfläche konnte nach dem Wiederanwenden deiner Änderungen nicht neu gebaut werden (Details im Log)."
+        fi
+    fi
+    ( cd "$PTERO_DIR" && php artisan view:clear && php artisan optimize:clear ) || true
+    return 0
+}
+
+gd_panel_tools_ensure() {
+    # git (Patch/Vergleich), tar/unzip/curl (Panel, Blueprint) – nur nachinstallieren, was fehlt
+    local miss=() c
+    for c in git tar unzip curl; do
+        command -v "$c" >/dev/null 2>&1 || miss+=("$c")
+    done
+    [ ${#miss[@]} -eq 0 ] && return 0
+    gd_apt_update
+    gd_apt_install "${miss[@]}"
+}
+
+gd_panel_maintenance_on() {
+    # Wartungsmodus einschalten (ein Fehler hier ist nicht fatal, z. B. bei kaputtem Panel)
+    (cd "$PTERO_DIR" && php artisan down) || true
+    return 0
+}
+
+gd_panel_update_record() {
+    # gd_panel_update_record ok|fehler – Ergebnis des letzten Updates (liest u. a. die Statuszeile/MOTD)
+    gd_conf_set LAST_UPDATE_RESULT "$1"
+    gd_conf_set LAST_UPDATE_TIME "$(date '+%F %T')"
+}
+
+gd_panel_update_backup() {
+    # Sicherung (Dateien + Datenbank) vor dem Update nach $GD_BACKUP_PANEL/vor-update-<version>-<datum>.tar.gz.
+    # Setzt GD_UPDATE_BACKUP_FILE und LAST_UPDATE_BACKUP. Rückgabe 1, wenn die Sicherung nicht gelingt.
+    local target need avail size
+    GD_UPDATE_BACKUP_FILE=""
+    if [ ! -f "$PTERO_DIR/artisan" ]; then
+        echo "Kein Panel unter $PTERO_DIR vorhanden – es gibt nichts zu sichern."
+        return 0
+    fi
+    gd_panel_need backup gd_backup_panel_create
+    gd_backup_prepare
+    # Platz grob prüfen: das Archiv ist komprimiert, daher reicht die Hälfte der Panel-Größe plus Reserve für die Datenbank
+    size="$(du -sk --exclude=node_modules "$PTERO_DIR" 2>/dev/null | cut -f1)"
+    need=$(( ${size:-0} / 2 + 102400 ))
+    avail="$(df -Pk "$GD_BACKUP_ROOT" 2>/dev/null | awk 'NR==2{print $4}')"
+    if [ -n "$avail" ] && [ "$avail" -lt "$need" ]; then
+        echo "Zu wenig Speicherplatz für die Sicherung in $GD_BACKUP_ROOT (frei: $((avail / 1024)) MB, benötigt: etwa $((need / 1024)) MB)."
+        return 1
+    fi
+    target="$GD_BACKUP_PANEL/vor-update-${GD_PANEL_VERSION}-$(date +%Y%m%d-%H%M%S).tar.gz"
+    if ! gd_backup_panel_create "$target" false; then
+        echo "Die Sicherung vor dem Update ist fehlgeschlagen (Details im Log)."
+        return 1
+    fi
+    GD_UPDATE_BACKUP_FILE="$target"
+    gd_conf_set LAST_UPDATE_BACKUP "$target"
+    echo "Sicherung vor dem Update: $target"
+}
+
+gd_panel_update_custom_save() {
+    # Eigene Änderungen vor dem Update sichern (nur bei GD_UPDATE_REAPPLY=true). Die Liste wird hier neu ermittelt:
+    # zwischen Rückfrage und Update können Minuten liegen. Ist die Prüfung nicht möglich, bricht das Update ab,
+    # solange noch nichts verändert ist.
+    local rc
+    GD_CUSTOM_PATCH=""
+    [ "${GD_UPDATE_REAPPLY:-false}" = true ] || return 0
+    if [ -z "${GD_UPDATE_FROM_VERSION:-}" ]; then
+        echo "Die installierte Version ist unbekannt – eigene Änderungen lassen sich nicht sichern."
+        return 1
+    fi
+    gd_panel_detect_changes "$GD_UPDATE_FROM_VERSION"
+    rc=$?
+    if [ $rc -eq 2 ]; then
+        echo "Die Prüfung auf eigene Änderungen war nicht möglich – das Update wird nicht gestartet."
+        return 1
+    fi
+    [ $rc -eq 1 ] || { echo "Keine eigenen Änderungen gefunden."; return 0; }
+    gd_panel_custom_save "$GD_UPDATE_FROM_VERSION"
+}
+
 gd_panel_update_steps() {
-    # Erwartet GD_PANEL_VERSION und GD_APPLY_PATCH
+    # Erwartet GD_PANEL_VERSION und GD_APPLY_PATCH. Dialogfrei (auch für den automatischen Betrieb nutzbar).
+    # Steuervariablen:
+    #   GD_UPDATE_REAPPLY=true        fremde Änderungen vorher sichern und nachher wieder anwenden (Standard: false)
+    #   GD_UPDATE_BACKUP=false        Sicherung vor dem Update weglassen (Standard: true)
+    #   GD_UPDATE_AUTO_ROLLBACK=true  nach einem Fehler nach dem Entpacken die Sicherung automatisch zurückspielen
+    # Ergebnis: GD_UPDATE_BACKUP_FILE, GD_CUSTOM_PATCH, GD_CUSTOM_REJECT_DIR, GD_WARNINGS sowie die Einstellungen
+    # PANEL_VERSION, LAST_UPDATE_RESULT (ok|fehler), LAST_UPDATE_TIME und LAST_UPDATE_BACKUP.
     local current
+    GD_UPDATE_PHASE=vor_entpacken
+    GD_UPDATE_BACKUP_FILE=""
+    GD_UPDATE_ROLLED_BACK=false
+    GD_CUSTOM_PATCH=""
+    GD_CUSTOM_REJECT_DIR=""
+    GD_FAIL_HINT=""
+    GD_UPDATE_FROM_VERSION="$(gd_panel_installed_version)"
+    # Scheitert ein Schritt, räumt gd_panel_update_cleanup auf (vor dem Entpacken: Wartungsmodus beenden, danach:
+    # Panel nicht freigeben, sondern Sicherung zurückspielen bzw. Hinweis setzen)
+    GD_FAIL_CLEANUP=gd_panel_update_cleanup
+    gd_panel_need blueprint gd_blueprint_installed
+    gd_step 2 "Benötigte Werkzeuge (git, tar, unzip, curl) werden geprüft..." gd_panel_tools_ensure
     current="$(gd_php_current)"
     if [ -z "$current" ] || ! gd_version_ge "$current" "8.2"; then
         gd_step 5 "PHP wird von ${current:-unbekannt} auf ${GD_PHP_VERSION} aktualisiert..." gd_php_migrate
     fi
-    # Scheitert ein späterer Schritt, das Panel nicht im Wartungsmodus zurücklassen
-    GD_FAIL_CLEANUP=gd_panel_update_cleanup
-    gd_step 12 "Panel wird in den Wartungsmodus versetzt..." bash -c "cd '$PTERO_DIR' && (php artisan down || true)"
-    gd_step 20 "Pterodactyl Panel v${GD_PANEL_VERSION} wird heruntergeladen..." gd_panel_download "$GD_PANEL_VERSION"
+    # Herunterladen und prüfen, solange das Panel noch läuft: ein Netzwerkfehler legt es so nicht lahm
+    gd_step 8 "Pterodactyl Panel v${GD_PANEL_VERSION} wird heruntergeladen..." gd_panel_fetch "$GD_PANEL_VERSION"
+    if [ "${GD_UPDATE_BACKUP:-true}" != "false" ]; then
+        gd_step 12 "Sicherung (Dateien + Datenbank) wird erstellt..." gd_panel_update_backup
+    else
+        gd_log "Sicherung vor dem Update ist ausgeschaltet (GD_UPDATE_BACKUP=false)."
+    fi
+    if [ "${GD_UPDATE_REAPPLY:-false}" = true ]; then
+        gd_step 16 "Eigene Änderungen am Panel werden gesichert..." gd_panel_update_custom_save
+    fi
+    gd_step 18 "Panel wird in den Wartungsmodus versetzt..." gd_panel_maintenance_on
+    # Ab jetzt ist das Panel verändert: ein Fehler lässt es im Wartungsmodus
+    GD_UPDATE_PHASE=nach_entpacken
+    gd_step 20 "Panel-Dateien v${GD_PANEL_VERSION} werden entpackt..." gd_panel_extract "$GD_PANEL_VERSION"
     gd_step 35 "Composer wird aktualisiert..." bash -c "composer self-update --2 >/dev/null 2>&1 || true"
     gd_step 40 "Composer-Abhängigkeiten werden installiert..." gd_panel_composer
     gd_step 55 "Zwischenspeicher werden geleert..." bash -c "cd '$PTERO_DIR' && php artisan view:clear && php artisan config:clear"
     gd_step 60 "Datenbank wird aktualisiert..." bash -c "cd '$PTERO_DIR' && php artisan migrate --seed --force"
     gd_step 65 "Berechtigungen werden gesetzt..." gd_panel_permissions
+    gd_step_optional 66 "Cronjob wird geprüft..." "Der Cronjob des Panels konnte nicht als Benutzer www-data eingerichtet werden (Zeitpläne laufen sonst nicht)." gd_panel_cron
     gd_step 68 "Hintergrunddienste werden neu gestartet..." bash -c "cd '$PTERO_DIR' && php artisan queue:restart && systemctl restart pteroq"
-    # Blueprint wird durch das Update teilweise überschrieben und muss erneut angewendet werden
+    # Blueprint wird durch das Update teilweise überschrieben und mit der gespeicherten Version erneut angewendet
+    # (eine neuere Version nur über Blueprint → Aktualisieren). blueprint.sh beendet den Wartungsmodus selbst.
     if gd_blueprint_installed; then
         gd_blueprint_install_step 69
+        gd_step 69 "Panel bleibt im Wartungsmodus..." gd_panel_maintenance_on
     fi
     if [ "$GD_APPLY_PATCH" = "true" ]; then
         gd_germandactyl_steps 70
     fi
+    if [ "${GD_UPDATE_REAPPLY:-false}" = true ] && [ -n "$GD_CUSTOM_PATCH" ]; then
+        gd_step 85 "Eigene Änderungen werden wieder angewendet..." gd_panel_custom_reapply_step
+    fi
     gd_step 95 "Panel wird wieder freigegeben..." bash -c "cd '$PTERO_DIR' && php artisan up"
     GD_FAIL_CLEANUP=""
+    GD_UPDATE_PHASE=fertig
     gd_conf_set PANEL_VERSION "$GD_PANEL_VERSION"
+    gd_panel_update_record ok
 }
 
+# shellcheck disable=SC2034  # Ergebnisvariablen werden von Aufrufern gelesen
 gd_panel_update_cleanup() {
-    (cd "$PTERO_DIR" && php artisan up) >> "$GD_LOG" 2>&1
+    # Aufräumen nach einem fehlgeschlagenen Update-Schritt (von gd_fail aufgerufen). Danach zeigt gd_fail GD_FAIL_HINT an.
+    local file="${GD_UPDATE_BACKUP_FILE:-}"
+    gd_panel_update_record fehler
+    if [ "${GD_UPDATE_PHASE:-}" = nach_entpacken ]; then
+        # Das Panel ist halb aktualisiert: nicht öffentlich schalten
+        if [ -n "$file" ] && [ -f "$file" ] && [ "${GD_UPDATE_AUTO_ROLLBACK:-false}" = true ]; then
+            gd_log "Das Update ist fehlgeschlagen – das Panel wird automatisch aus der Sicherung $file wiederhergestellt."
+            gd_panel_need backup gd_backup_panel_restore
+            if gd_backup_panel_restore "$file" >> "$GD_LOG" 2>&1; then
+                gd_log "Wiederherstellung erfolgreich: ${GD_RESTORE_INFO:-}"
+                GD_UPDATE_ROLLED_BACK=true
+                GD_FAIL_HINT="Das Panel wurde automatisch auf den Stand vor dem Update zurückgesetzt (Sicherung: $file)."
+            else
+                gd_log "Wiederherstellung fehlgeschlagen: ${GD_RESTORE_INFO:-unbekannt}"
+                GD_FAIL_HINT="Die automatische Wiederherstellung ist fehlgeschlagen (${GD_RESTORE_INFO:-unbekannt}). Das Panel bleibt im Wartungsmodus. Sicherung vor dem Update: $file – über Backups → Panel wiederherstellen einspielen."
+            fi
+        elif [ -n "$file" ] && [ -f "$file" ]; then
+            GD_FAIL_HINT="Das Panel bleibt im Wartungsmodus. Sicherung vor dem Update: $file – über Backups → Panel wiederherstellen einspielen."
+        else
+            GD_FAIL_HINT="Das Panel bleibt im Wartungsmodus, weil das Update unvollständig ist. Es wurde keine Sicherung vor dem Update erstellt. Starte das Update erneut (Problembehandlung → Panel reparieren)."
+        fi
+    else
+        # Vor dem Entpacken ist das Panel unverändert
+        (cd "$PTERO_DIR" && php artisan up) >> "$GD_LOG" 2>&1
+    fi
     declare -F gd_build_swap_off >/dev/null && gd_build_swap_off >> "$GD_LOG" 2>&1
     return 0
 }
 
+gd_panel_update_changes_dialog() {
+    # gd_panel_update_changes_dialog <installierte-version> – roter Warndialog zu fremden Änderungen (GD_FOREIGN_FILES)
+    # und Auswahl, wie damit umgegangen wird. Setzt GD_UPDATE_REAPPLY. Rückgabe 1 = Abbruch.
+    local installed="$1" shown rest text choice lines
+    shown="$(head -n 8 <<< "$GD_FOREIGN_FILES" | awk '{ k = $1; sub(/^. /, ""); print "  " (k == "M" ? "geändert" : (k == "A" ? "neu      " : "gelöscht ")) "  " $0 }')"
+    text="Im Panel (v${installed}) weichen ${GD_FOREIGN_COUNT} Datei(en) vom Original ab:\n\n${shown}"
+    if [ "$GD_FOREIGN_COUNT" -gt 8 ]; then
+        rest=$((GD_FOREIGN_COUNT - 8))
+        text+="\n  … und ${rest} weitere"
+    fi
+    if [ "${GD_FOREIGN_BLUEPRINT:-false}" = true ]; then
+        text+="\n\nBlueprint ist installiert und verändert selbst Kerndateien des Panels – darunter können also Blueprint-Änderungen sein (nicht unterscheidbar)."
+        if [ -n "$GD_BLUEPRINT_EXTENSIONS" ]; then
+            text+="\nErweiterungen: $(head -n 10 <<< "$GD_BLUEPRINT_EXTENSIONS" | paste -sd, - | sed 's/,/, /g')"
+        fi
+    fi
+    text+="\n\nEin Update überschreibt diese Dateien."
+    lines=$(( 11 + $(printf '%b' "$text" | fold -s -w 70 | wc -l) ))
+    [ "$lines" -gt 26 ] && lines=26
+    gd_warn_colors_on
+    gd_whip --title "⚠ Eigene Änderungen am Panel erkannt" --scrolltext --msgbox "$text" "$lines" 78
+    gd_warn_colors_off
+    choice="$(gd_whip --title "Wie soll das Update mit den Änderungen umgehen?" --menu "Update von v${installed} auf v${GD_PANEL_VERSION}.\nDas Panel ist dabei einige Minuten nicht erreichbar. Vor dem Update wird automatisch eine Sicherung (Dateien + Datenbank) erstellt." 16 78 3 \
+        "1" "Änderungen sichern und nach dem Update wieder anwenden (empfohlen)" \
+        "2" "Ohne Übernahme (Änderungen gehen verloren, bleiben im Backup)" \
+        "3" "Abbrechen" 3>&1 1>&2 2>&3)" || return 1
+    case "$choice" in
+        1) GD_UPDATE_REAPPLY=true ;;
+        2) GD_UPDATE_REAPPLY=false ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+gd_panel_yellow_on() {
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
+    GD_OLD_NEWT_COLORS_Y="${NEWT_COLORS:-}"
+    export NEWT_COLORS='
+    root=,yellow
+    window=black,yellow
+    border=black,yellow
+    title=black,yellow
+    textbox=black,yellow
+    button=black,white
+    actbutton=white,black
+    compactbutton=black,yellow
+    '
+}
+
+gd_panel_yellow_off() {
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
+    export NEWT_COLORS="${GD_OLD_NEWT_COLORS_Y:-}"
+}
+
 gd_panel_update() {
     # Interaktive Aktualisierung/Reparatur inklusive GermanDactyl
-    local installed
+    local installed rc=0 text lines
     installed="$(gd_panel_installed_version)"
     GD_WARNINGS=""
+    GD_UPDATE_REAPPLY=false
+    GD_UPDATE_BACKUP=true
+    GD_UPDATE_AUTO_ROLLBACK=false
+    GD_FOREIGN_FILES=""
+    GD_FOREIGN_COUNT=0
+    GD_FOREIGN_VERSION=""
+    GD_CUSTOM_REJECT_DIR=""
+    GD_CUSTOM_PATCH=""
     gd_choose_panel_version || return 1
     # Downgrade-Schutz: Eine ältere Version würde die Datenbank-Struktur nicht zurückführen und das Panel beschädigen.
     # Dieselbe Version ist erlaubt (Reparatur).
@@ -841,10 +1402,35 @@ gd_panel_update() {
         gd_msg "Downgrade nicht möglich" "Installiert ist v${installed}, ausgewählt wurde die ältere Version v${GD_PANEL_VERSION}.\n\nEin Wechsel auf eine ältere Panel-Version wird nicht unterstützt, da die Datenbank nicht zurückgeführt werden kann und das Panel dadurch beschädigt würde.\n\nWähle die installierte oder eine neuere Version." 15 74
         return 1
     fi
-    gd_yesno "↑ Panel aktualisieren" "Installiert: v${installed:-unbekannt}\nZiel: v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(mit deutscher Übersetzung)' || echo '(Englisch)')\n\nDas Panel ist während der Aktualisierung einige Minuten nicht erreichbar. Änderungen an Dateien des Panels (Themes/Addons) werden dabei überschrieben.\n\nEmpfehlung: Erstelle vorher ein Backup über die Backup-Verwaltung.\n\nMöchtest du fortfahren?" 18 78 || return 1
+    # Vergleich mit dem Originalstand der installierten Version: erkennt Themes, Addons und eigene Anpassungen
+    if [ -n "$installed" ]; then
+        gd_whip --title "Panel prüfen" --infobox "Das Panel wird auf eigene Änderungen geprüft.\n\nBeim ersten Mal wird dafür die Originalversion v${installed} geladen..." 9 70
+        gd_panel_detect_changes "$installed" >> "$GD_LOG" 2>&1
+        rc=$?
+    fi
+    text="Installiert: v${installed:-unbekannt}\nZiel: v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(mit deutscher Übersetzung)' || echo '(Englisch)')\n\nDas Panel ist während der Aktualisierung einige Minuten nicht erreichbar. Änderungen an Dateien des Panels (Themes/Addons) werden dabei überschrieben.\n\nVor dem Update wird automatisch eine Sicherung (Dateien + Datenbank) erstellt.\n\nMöchtest du fortfahren?"
+    case "$rc" in
+        1) gd_panel_update_changes_dialog "$installed" || return 1 ;;
+        2)
+            gd_panel_yellow_on
+            gd_whip --title "⚠ Prüfung nicht möglich" --defaultno --yesno "Prüfung auf eigene Änderungen nicht möglich (Download fehlgeschlagen) – trotzdem fortfahren?\n\nEigene Änderungen an Dateien des Panels würden beim Update überschrieben. Vor dem Update wird automatisch eine Sicherung (Dateien + Datenbank) erstellt." 12 74
+            rc=$?
+            gd_panel_yellow_off
+            [ "$rc" -eq 0 ] || return 1 ;;
+        *) gd_yesno "↑ Panel aktualisieren" "$text" 18 78 || return 1 ;;
+    esac
     gd_gauge_open "↑ Panel wird aktualisiert" "Aktualisierung wird vorbereitet..."
     gd_panel_update_steps
     gd_progress 100 "Aktualisierung abgeschlossen."
     gd_gauge_close
-    gd_msg "✔ Aktualisierung abgeschlossen" "Das Panel wurde auf v${GD_PANEL_VERSION} aktualisiert$(gd_blueprint_installed && echo ', Blueprint wurde erneut angewendet').\n\nFalls dein Browser noch die alte Oberfläche anzeigt, lade die Seite mit Strg + F5 neu.${GD_WARNINGS:+\n\n$GD_WARNINGS}" "$([ -n "${GD_WARNINGS:-}" ] && echo 20 || echo 12)" 70
+    text="Das Panel wurde auf v${GD_PANEL_VERSION} aktualisiert$(gd_blueprint_installed && echo ', Blueprint wurde erneut angewendet').\n\nFalls dein Browser noch die alte Oberfläche anzeigt, lade die Seite mit Strg + F5 neu."
+    [ -n "${GD_UPDATE_BACKUP_FILE:-}" ] && text+="\n\nSicherung vor dem Update:\n${GD_UPDATE_BACKUP_FILE}"
+    [ -n "${GD_WARNINGS:-}" ] && text+="\n\n${GD_WARNINGS}"
+    if [ -n "${GD_CUSTOM_REJECT_DIR:-}" ]; then
+        text+="\n\nNicht übernommene Teile deiner Änderungen:\n${GD_CUSTOM_REJECT_DIR}"
+        [ -n "${GD_CUSTOM_PATCH:-}" ] && text+="\nGesicherter Patch: ${GD_CUSTOM_PATCH}"
+    fi
+    lines=$(( 8 + $(printf '%b' "$text" | fold -s -w 66 | wc -l) ))
+    [ "$lines" -gt 24 ] && lines=24
+    gd_whip --title "✔ Aktualisierung abgeschlossen" --scrolltext --msgbox "$text" "$lines" 70
 }

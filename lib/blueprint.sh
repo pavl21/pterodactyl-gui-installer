@@ -12,13 +12,35 @@ gd_blueprint_installed() {
     [ -f "$PTERO_DIR/$GD_BLUEPRINT_MARKER" ]
 }
 
-gd_blueprint_tag_for() {
-    # gd_blueprint_tag_for <panelversion> – passende Blueprint-Version (neueste ab Panel 1.14, sonst die letzte für 1.12)
+gd_blueprint_tag_latest_for() {
+    # gd_blueprint_tag_latest_for <panelversion> – neueste passende Blueprint-Version (ab Panel 1.14 das neueste Release,
+    # sonst die letzte für 1.12). Nur für "Blueprint installieren/aktualisieren" – ein Panel-Update nutzt gd_blueprint_tag_for.
     if gd_version_ge "$1" "1.14.0"; then
         gd_latest_tag "$GD_BLUEPRINT_REPO"
     else
         echo "$GD_BLUEPRINT_LEGACY_TAG"
     fi
+}
+
+gd_blueprint_tag_for() {
+    # gd_blueprint_tag_for <panelversion> – Blueprint-Version, die bei Installation und Panel-Update angewendet wird.
+    # Ein Panel-Update zieht Blueprint nicht still auf das neueste Release, sondern wendet die in setup.conf gespeicherte
+    # Version (BLUEPRINT_TAG) erneut an. Neu ermittelt wird nur, wenn nichts gespeichert ist (Erstinstallation) oder die
+    # gespeicherte Version nicht zum Ziel passt (die Legacy-Version läuft nicht mit Pterodactyl ab 1.14).
+    local stored
+    if ! gd_version_ge "$1" "1.14.0"; then
+        echo "$GD_BLUEPRINT_LEGACY_TAG"
+        return 0
+    fi
+    stored="$(gd_conf_get BLUEPRINT_TAG)"
+    if [[ "$stored" =~ ^[0-9A-Za-z._-]+$ ]]; then
+        if [ "$stored" != "$GD_BLUEPRINT_LEGACY_TAG" ]; then
+            echo "$stored"
+            return 0
+        fi
+        gd_log "Gespeicherte Blueprint-Version $stored läuft nicht mit Panel $1 – die neueste Version wird verwendet."
+    fi
+    gd_latest_tag "$GD_BLUEPRINT_REPO"
 }
 
 gd_blueprint_rc() {
@@ -51,6 +73,17 @@ gd_blueprint_apply() {
     gd_conf_set BLUEPRINT_TAG "$tag"
 }
 
+gd_blueprint_extensions() {
+    # Installierte Erweiterungen als Zeilen (Kennung = Ordnername unter .blueprint/extensions, ohne Blueprint selbst)
+    local d
+    for d in "$PTERO_DIR"/.blueprint/extensions/*/; do
+        [ -d "$d" ] || continue
+        d="$(basename "$d")"
+        [ "$d" = "blueprint" ] && continue
+        echo "$d"
+    done
+}
+
 gd_blueprint_version() {
     command -v blueprint >/dev/null 2>&1 && blueprint -v 2>/dev/null | tail -n1
 }
@@ -79,9 +112,15 @@ gd_blueprint_ask() {
 }
 
 gd_blueprint_install_step() {
-    # gd_blueprint_install_step <prozent> – innerhalb eines offenen Fortschrittsbalkens
+    # gd_blueprint_install_step <prozent> [latest] – innerhalb eines offenen Fortschrittsbalkens. Verwendet die gespeicherte
+    # Blueprint-Version (siehe gd_blueprint_tag_for); bei einer Neuinstallation ("latest") die neueste. blueprint.sh kann
+    # den Wartungsmodus des Panels beenden – der Aufrufer (Panel-Update) schaltet ihn danach bei Bedarf wieder ein.
     local tag
-    tag="$(gd_blueprint_tag_for "$GD_PANEL_VERSION")"
+    if [ "${2:-}" = "latest" ]; then
+        tag="$(gd_blueprint_tag_latest_for "$GD_PANEL_VERSION")"
+    else
+        tag="$(gd_blueprint_tag_for "$GD_PANEL_VERSION")"
+    fi
     [ -z "$tag" ] && gd_fail "Die Blueprint-Version konnte nicht ermittelt werden."
     gd_step "$1" "Blueprint ${tag} wird installiert (Oberfläche wird gebaut, dauert einige Minuten)..." gd_blueprint_apply "$tag"
 }
@@ -127,10 +166,15 @@ gd_blueprint_menu() {
 }
 
 gd_blueprint_reapply_dialog() {
-    # Blueprint installieren/aktualisieren und danach die Übersetzung erneut anwenden
+    # Blueprint installieren/aktualisieren und danach die Übersetzung erneut anwenden. Nur hier wird auf die neueste
+    # passende Blueprint-Version gewechselt; gd_blueprint_apply speichert sie danach als BLUEPRINT_TAG.
     local panel_version tag gd_version
     panel_version="$(gd_panel_installed_version)"
-    tag="$(gd_blueprint_tag_for "$panel_version")"
+    tag="$(gd_blueprint_tag_latest_for "$panel_version")"
+    if [ -z "$tag" ]; then
+        gd_msg "✖ Blueprint" "Die aktuelle Blueprint-Version konnte nicht ermittelt werden. Prüfe die Internetverbindung (github.com)." 9 70
+        return 1
+    fi
     gd_version="$(gd_conf_get GD_GERMANDACTYL)"
     gd_gauge_open "❖ Blueprint" "Blueprint wird vorbereitet..."
     gd_step 10 "Blueprint ${tag} wird installiert (Oberfläche wird gebaut, dauert einige Minuten)..." gd_blueprint_apply "$tag"
