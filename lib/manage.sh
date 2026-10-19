@@ -22,15 +22,13 @@ gd_panel_php_fpm() {
 gd_shortcut_body() {
     # gd_shortcut_body <pfad> <kurzbefehl|update> – schreibt ein Startskript auf die Standardausgabe.
     # Kurzbefehl (germandactyl) und Update-Skript (germandactyl-update, für den Timer der automatischen Updates)
-    # teilen sich denselben Rumpf: Branch, Repository und Public Key werden beim Anlegen eingetragen. Ist ein Public Key
-    # eingebettet und der Branch "main", prüft das Skript die Signatur der Prüfsummenliste und den Hash von installer.sh,
-    # bevor es ihn startet. Das Update-Skript setzt zusätzlich GD_HEADLESS=1, übergibt --auto-update und meldet
+    # teilen sich denselben Rumpf: Branch und Repository werden beim Anlegen eingetragen. Das Skript lädt installer.sh
+    # (fehlt der Branch, von main) und startet es. Das Update-Skript setzt zusätzlich GD_HEADLESS=1, übergibt --auto-update und meldet
     # Fehler (ohne Terminal) in setup.conf, damit sie in der Statuszeile und im Login-Hinweis erscheinen.
     # Argumente des Aufrufs (z. B. "gmd backup") gehen unverändert an installer.sh (dort: gd_dispatch); beim
     # Update-Skript steht --auto-update davor.
-    local path="$1" kind="$2" q_branch q_pubkey q_repo
+    local path="$1" kind="$2" q_branch q_repo
     q_branch="$(printf '%q' "${GD_BRANCH}")"
-    q_pubkey="$(printf '%q' "${GD_SIGNING_PUBKEY:-}")"
     q_repo="$(printf '%q' "${GD_REPO}")"
     cat <<EOF
 #!/bin/bash
@@ -39,7 +37,7 @@ EOF
     if [ "$kind" = update ]; then
         cat <<'EOF'
 # Geplantes Update von Panel und Wings (Timer germandactyl-update.timer, Einstellungen: auto-update.conf).
-# Lädt wie der Kurzbefehl germandactyl die signierte Skriptliste, prüft sie und startet dann installer.sh --auto-update.
+# Lädt wie der Kurzbefehl germandactyl installer.sh und startet es mit --auto-update.
 EOF
     else
         cat <<'EOF'
@@ -48,7 +46,6 @@ EOF
     fi
     cat <<EOF
 branch=${q_branch}
-pubkey=${q_pubkey}
 repo=${q_repo}
 EOF
     if [ "$kind" = update ]; then
@@ -75,31 +72,6 @@ EOF
     cat <<'EOF'
 if [ "$(id -u)" != "0" ]; then exec sudo "$0" "$@"; fi
 
-if [ -n "$pubkey" ] && [ "$branch" = "main" ]; then
-    # Signierter Start: SHA256SUMS + Signatur laden und prüfen, dann installer.sh gegen die Liste prüfen.
-    # (Kein "exec", damit das Temp-Verzeichnis nach dem Beenden wieder gelöscht wird.)
-    # RESULT=uebersprungen abort ...: Netzwerkprobleme sind kein Sicherheitsfehler (nur für das Update-Skript wichtig)
-    abort() { echo "Abbruch: $*"; echo "Aus Sicherheitsgründen wird GermanDactyl Setup nicht gestartet."; report "${RESULT:-fehler}" "Abbruch: $*"; exit 1; }
-    command -v ssh-keygen >/dev/null 2>&1         || abort "ssh-keygen wurde nicht gefunden, die Signatur kann nicht geprüft werden. Installiere es mit: apt-get install openssh-client"
-    tmp="$(mktemp -d /tmp/germandactyl-start.XXXXXX)" || abort "Temporäres Verzeichnis konnte nicht angelegt werden."
-    trap 'rm -rf "$tmp"' EXIT
-    raw="https://raw.githubusercontent.com/$repo/main"
-    for f in SHA256SUMS SHA256SUMS.sig installer.sh; do
-        curl -fsSL "$raw/$f" -o "$tmp/$f" || RESULT=uebersprungen abort "$f konnte nicht geladen werden. Prüfe die Internetverbindung."
-    done
-    ( umask 077; printf 'germandactyl-setup %s\n' "$pubkey" > "$tmp/allowed_signers" )
-    ssh-keygen -Y verify -f "$tmp/allowed_signers" -I germandactyl-setup -n germandactyl-setup \
-        -s "$tmp/SHA256SUMS.sig" < "$tmp/SHA256SUMS" >/dev/null 2>&1 \
-        || abort "Die Signatur der Prüfsummenliste ist ungültig. Die Dateien im Repository wurden möglicherweise verändert. Falls du den Schlüssel gewechselt hast, führe den Installationsbefehl aus der README erneut aus."
-    want="$(awk '$2 == "installer.sh" { print $1; exit }' "$tmp/SHA256SUMS")"
-    have="$(sha256sum "$tmp/installer.sh" | awk '{ print $1 }')"
-    [ -n "$want" ] && [ "$want" = "$have" ] || abort "installer.sh passt nicht zur signierten Prüfsummenliste."
-    # installer.sh prüft anschließend die Bibliotheken (neben der Datei liegt kein lib/, also kein "lokaler Checkout")
-    GD_BRANCH="$branch" bash "$tmp/installer.sh" "${args[@]}" "$@"
-    exit $?
-fi
-
-# Ohne Public Key (noch nicht aktiviert) oder bei einem Test-Branch: wie bisher ohne Signaturprüfung
 script="$(curl -fsSL "https://raw.githubusercontent.com/$repo/$branch/installer.sh")" || {
     # Branch existiert nicht mehr (z. B. Test-Branch gelöscht) -> auf main zurückfallen
     branch="main"
@@ -197,7 +169,7 @@ gd_run_plain() {
     local script="$1" target="$GD_TMP/run-$1"
     shift
     if ! gd_fetch "$script" "$target"; then
-        echo "Das Skript $script konnte nicht geladen werden. Prüfe die Internetverbindung – oder die Datei ist nicht signiert (Details im Log: $GD_LOG)." >&2
+        echo "Das Skript $script konnte nicht geladen werden. Prüfe die Internetverbindung (Details im Log: $GD_LOG)." >&2
         return 1
     fi
     GD_LIB_DIR="${GD_LIB_DIR:-}" GD_LOCAL_DIR="${GD_LOCAL_DIR:-}" GD_BRANCH="$GD_BRANCH" \
@@ -242,7 +214,6 @@ gd_dispatch() {
             gd_prepare_system
         fi
         command -v whiptail >/dev/null 2>&1 || { echo "whiptail wurde nicht gefunden (apt-get install whiptail)." >&2; return 1; }
-        gd_signature_notice
     fi
     gd_log "Kurzbefehl: $cmd${*:+ $*}"
     # Wie im Hauptmenü: Kurzbefehl erneuern, damit auch gd bzw. gmd nachgezogen werden
@@ -430,7 +401,7 @@ gd_update_check() {
 gd_main_menu() {
     local choice items
     gd_shortcut_install >/dev/null 2>&1
-    # Das Skript der geplanten Updates mit der aktuellen Vorlage erneuern (Signaturprüfung, Branch, Public Key)
+    # Das Skript der geplanten Updates mit der aktuellen Vorlage erneuern (Branch, Repository)
     gd_autoupdate_enabled && gd_autoupdate_write_script >/dev/null 2>&1
     gd_update_check
     while true; do

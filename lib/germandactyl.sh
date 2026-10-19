@@ -8,14 +8,9 @@ GD_PATCH_REPO="pavl21/GermanDactyl"
 GD_PATCH_FALLBACK="1.15.1"   # Neueste bekannte Patch-Version – nur Rückfallwert, falls die Patch-Liste nicht abgerufen werden kann
 GD_NODE_MAJOR="22"
 
-# Prüfung der Patches: patches/SHA256SUMS im GermanDactyl-Repository ist mit einem festen Schlüssel signiert
-# (SHA256SUMS.asc). Schlüssel und Quelle sind identisch mit dem Schwesterprojekt
-# https://github.com/pavl21/GermanDactyl (scripts/install.sh: SIGNING_KEY_FPR / SIGNING_KEY_B64, SIGNATURE_BASE).
-# GD_PATCH_SIGNING_FPR:     Fingerabdruck des Schlüssels (40 Hex-Zeichen, ohne Leerzeichen)
-# GD_PATCH_SIGNING_KEY_B64: gpg --export <Fingerabdruck> | base64 -w0
-GD_PATCH_SIGNATURE_BASE="https://raw.githubusercontent.com/pavl21/GermanDactyl/main/patches"
-GD_PATCH_SIGNING_FPR="2CB69766DC1E05E8D805D4C0DF5A303D401576B8"
-GD_PATCH_SIGNING_KEY_B64="mDMEarlszRYJKwYBBAHaRw8BAQdA1wvFzK9PQQL8O8H7ZEZVUyNka2ss34DjIkIBxWpClgy0NEdlcm1hbkRhY3R5bCBQYXRjaCBTaWduaW5nIChodHRwczovL2dlcm1hbmRhY3R5bC5kZSmIkwQTFgoAOxYhBCy2l2bcHgXo2AXUwN9aMD1AFXa4BQJquWzNAhsDBQsJCAcCAiICBhUKCQgLAgQWAgMBAh4HAheAAAoJEN9aMD1AFXa41lABAKJvPQhh6P4CKW54qnN6pCKuYa+ZbY6/rSxUnXToMNxrAQDyL23730jn08Pu6UaSTZQZ/wnXJznaQFuudwFuMpORBg=="
+# Prüfung der Patches: Die Prüfsumme des Patches wird mit patches/SHA256SUMS aus dem GermanDactyl-Repository
+# (https://github.com/pavl21/GermanDactyl) verglichen.
+GD_PATCH_CHECKSUM_BASE="https://raw.githubusercontent.com/pavl21/GermanDactyl/main/patches"
 
 gd_patch_exists() {
     # gd_patch_exists <version> -> wahr, wenn es einen GermanDactyl-Patch gibt
@@ -126,55 +121,35 @@ gd_build_swap_off() {
 }
 
 gd_patch_verify() {
-    # gd_patch_verify <version> <patch-datei> – prüft die Signatur der Prüfsummenliste (SHA256SUMS.asc) mit dem
-    # fest hinterlegten Schlüssel und danach die Prüfsumme der heruntergeladenen Patch-Datei (v<version>.patch).
-    # Ohne gültige Signatur und passende Prüfsumme wird der Patch nicht angewendet (Rückgabe 1, Grund auf stdout).
+    # gd_patch_verify <version> <patch-datei> – lädt patches/SHA256SUMS und vergleicht die Prüfsumme der
+    # heruntergeladenen Patch-Datei (v<version>.patch) mit dem Eintrag der Liste.
+    # Ohne passende Prüfsumme wird der Patch nicht angewendet (Rückgabe 1, Grund auf stdout).
     # Der Patch ändert PHP- und JavaScript-Dateien des Panels und läuft anschließend im Build bzw. im Webserver –
-    # er darf deshalb nur aus einer vertrauenswürdigen Quelle stammen.
-    local version="$1" file="$2" dir="$GD_TMP/patch-signatur" name expected actual
-    if [[ ! "$GD_PATCH_SIGNING_FPR" =~ ^[0-9A-F]{40}$ ]]; then
-        echo "Es ist kein gültiger Signaturschlüssel hinterlegt."
-        return 1
-    fi
-    if ! command -v gpgv >/dev/null 2>&1; then
-        echo "gpgv wird installiert (zum Prüfen der Signatur)..."
-        gd_apt_install gpgv || { echo "gpgv konnte nicht installiert werden."; return 1; }
-    fi
+    # eine fehlerhafte oder unvollständige Datei soll deshalb nie angewendet werden.
+    local version="$1" file="$2" dir="$GD_TMP/patch-pruefsumme" name expected actual
     rm -rf "$dir"
-    mkdir -p "$dir/gnupg" && chmod 700 "$dir" "$dir/gnupg" || return 1
-    if ! gd_curl --proto '=https' --proto-redir '=https' --max-time 30 -o "$dir/SHA256SUMS" "$GD_PATCH_SIGNATURE_BASE/SHA256SUMS" \
-        || ! gd_curl --proto '=https' --proto-redir '=https' --max-time 30 -o "$dir/SHA256SUMS.asc" "$GD_PATCH_SIGNATURE_BASE/SHA256SUMS.asc"; then
-        echo "Die signierte Prüfsummenliste konnte nicht geladen werden."
-        return 1
-    fi
-    # Schlüssel in ein leeres, temporäres gnupg-Verzeichnis legen – der Schlüsselbund des Servers wird nicht verwendet
-    if ! printf '%s' "$GD_PATCH_SIGNING_KEY_B64" | base64 -d > "$dir/key.gpg" 2>/dev/null || [ ! -s "$dir/key.gpg" ]; then
-        echo "Der hinterlegte Signaturschlüssel ist beschädigt."
-        return 1
-    fi
-    # VALIDSIG nennt den Fingerabdruck des Signaturschlüssels (3. Feld) und des zugehörigen Hauptschlüssels (letztes Feld)
-    if ! gpgv --homedir "$dir/gnupg" --keyring "$dir/key.gpg" --status-fd 3 "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS" 3> "$dir/status" 2>&1 \
-        || ! awk -v fpr="$GD_PATCH_SIGNING_FPR" '$1=="[GNUPG:]" && $2=="VALIDSIG" && ($3==fpr || $NF==fpr) {ok=1} END{exit !ok}' "$dir/status"; then
-        echo "Die Signatur der Prüfsummenliste ist ungültig."
+    mkdir -p "$dir" && chmod 700 "$dir" || return 1
+    if ! gd_curl --proto '=https' --proto-redir '=https' --max-time 30 -o "$dir/SHA256SUMS" "$GD_PATCH_CHECKSUM_BASE/SHA256SUMS"; then
+        echo "Die Prüfsummenliste konnte nicht geladen werden."
         return 1
     fi
     name="v${version}.patch"
     expected="$(awk -v f="$name" '$2 == f || $2 == "*" f { print $1; exit }' "$dir/SHA256SUMS")"
     if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
-        echo "Für $name gibt es keine signierte Prüfsumme."
+        echo "Für $name gibt es keine Prüfsumme."
         return 1
     fi
     actual="$(sha256sum "$file" | cut -d' ' -f1)"
     if [ "$actual" != "$expected" ]; then
-        echo "Die Prüfsumme von $name stimmt nicht mit der signierten Liste überein."
+        echo "Die Prüfsumme von $name stimmt nicht mit der Liste überein."
         return 1
     fi
-    echo "Signatur und Prüfsumme von $name sind gültig ($actual)."
+    echo "Prüfsumme von $name ist gültig ($actual)."
     return 0
 }
 
 gd_patch_apply() {
-    # gd_patch_apply <version> [panel-pfad] – lädt den Patch, prüft Signatur und Prüfsumme und wendet ihn an.
+    # gd_patch_apply <version> [panel-pfad] – lädt den Patch, prüft die Prüfsumme und wendet ihn an.
     # Rückgabe: 0 = Patch (ggf. teilweise) angewendet oder bereits vorhanden, 1 = Download/Prüfung/Anwendung komplett fehlgeschlagen
     local version="$1" dir="${2:-$PTERO_DIR}"
     local patch="$GD_TMP/germandactyl.patch" backup_root="/var/backups/germandactyl"
@@ -184,7 +159,7 @@ gd_patch_apply() {
     gd_curl --proto '=https' --proto-redir '=https' "$GD_PATCH_SERVER/$version" -o "$patch" || return 1
     # Ungeprüfte Patches werden nie angewendet, eine Option zum Überspringen gibt es bewusst nicht
     if ! gd_patch_verify "$version" "$patch"; then
-        echo "Signatur/Prüfsumme des Patches ungültig – wird aus Sicherheitsgründen nicht angewendet"
+        echo "Prüfsumme des Patches ungültig – wird aus Sicherheitsgründen nicht angewendet"
         rm -f "$patch"
         return 1
     fi

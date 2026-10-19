@@ -6,9 +6,7 @@
 #                   SC1090 "Quelle nicht verfolgbar", weil die Bibliotheken zur Laufzeit per source geladen werden).
 #                   Sie werden schrittweise abgebaut; sobald der Bericht leer ist, kann continue-on-error entfallen
 #                   und der Schwellwert auf -S warning angehoben werden.
-#   3. Prüfsummen:  scripts/sign-release.sh --check (SHA256SUMS vollständig und Signatur gültig – siehe auch
-#                   verify-signature.yml). Nach jeder Änderung an einem Skript lokal: scripts/sign-release.sh --sign
-#   4. Tests:       bash tests/run.sh (reine Funktionen aus lib/ und analyse.sh; ohne root, Netz und whiptail)
+#   3. Tests:       bash tests/run.sh (reine Funktionen aus lib/ und analyse.sh; ohne root, Netz und whiptail)
 name: CI
 
 on:
@@ -67,15 +65,6 @@ jobs:
         run: |
           mapfile -t files < <(git ls-files '*.sh')
           shellcheck -S warning "${files[@]}"
-
-  signatur:
-    name: Prüfsummen und Signatur
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: SHA256SUMS prüfen
-        run: bash scripts/sign-release.sh --check
 
   tests:
     name: Tests

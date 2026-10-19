@@ -1,8 +1,8 @@
 #!/bin/bash
 # Pfad: lib/autoupdate.sh
 # Geplante Updates von Panel und Wings als systemd-Timer (standardmäßig AUS, nur über das Menü mit Warnung aktivierbar).
-# Der Timer startet /usr/local/sbin/germandactyl-update. Das Skript lädt wie der Kurzbefehl "germandactyl" die signierte
-# Skriptliste, prüft sie und startet installer.sh --auto-update, das gd_autoupdate_run im Headless-Modus (GD_HEADLESS=1,
+# Der Timer startet /usr/local/sbin/germandactyl-update. Das Skript lädt wie der Kurzbefehl "germandactyl" installer.sh
+# und startet es mit --auto-update, das gd_autoupdate_run im Headless-Modus (GD_HEADLESS=1,
 # keine Dialoge) ausführt. Rückmeldung gibt es nur über die Statuszeile im Hauptmenü, die Analyse und den Login-Hinweis
 # (MOTD) – es werden keine E-Mails oder Webhooks verschickt.
 # Benötigt: common, panel, wings, manage (gd_shortcut_body, gd_submenu, gd_has_panel, gd_has_wings)
@@ -73,7 +73,7 @@ EOF
 # Skript und systemd-Units
 # ---------------------------------------------------------------------------
 gd_autoupdate_write_script() {
-    # Dasselbe Startskript wie der Kurzbefehl (gleiche Signaturprüfung), mit GD_HEADLESS=1 und --auto-update
+    # Dasselbe Startskript wie der Kurzbefehl mit GD_HEADLESS=1 und --auto-update
     declare -F gd_shortcut_body >/dev/null || return 1
     mkdir -p "$(dirname "$GD_AU_SCRIPT")"
     gd_shortcut_body "$GD_AU_SCRIPT" update > "$GD_AU_SCRIPT" || return 1
@@ -522,7 +522,7 @@ gd_autoupdate_run_now() {
     echo ""
     # Eigene Arbeitsumgebung: GD_TMP/GD_LOG dieser Sitzung dürfen vom Update-Lauf nicht übernommen (und gelöscht) werden
     local rc
-    env -u GD_TMP -u GD_LOG -u GD_SUMS -u GD_LIB_DIR -u GD_LOCAL_DIR -u GD_SIG_NOTICED "$GD_AU_SCRIPT"
+    env -u GD_TMP -u GD_LOG -u GD_LIB_DIR -u GD_LOCAL_DIR "$GD_AU_SCRIPT"
     rc=$?
     echo ""
     echo "Fertig (Rückgabecode $rc). Drücke Enter, um zum Menü zurückzukehren."

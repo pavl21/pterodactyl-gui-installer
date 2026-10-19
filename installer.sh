@@ -6,12 +6,6 @@
 # Das Skript ist eigenständig: Panel und Wings werden nach der offiziellen Dokumentation selbst eingerichtet,
 # es werden keine fremden Installationsskripte mehr ausgeführt.
 
-# Öffentlicher Schlüssel für die Signaturprüfung der nachgeladenen Skripte (SHA256SUMS + SHA256SUMS.sig).
-# Inhalt der .pub-Datei, z. B. "ssh-ed25519 AAAA... germandactyl-setup"; leer = Prüfung noch nicht aktiv.
-# Muss denselben Wert tragen wie GD_SIGNING_PUBKEY in lib/common.sh (hier wird er schon vor dem Laden von
-# common.sh gebraucht). "scripts/sign-release.sh --check" prüft, dass beide Stellen übereinstimmen.
-GD_SIGNING_PUBKEY=""
-
 # Geplantes Update (--auto-update, gestartet vom systemd-Timer über /usr/local/sbin/germandactyl-update):
 # Headless-Modus ohne Terminal und ohne Dialoge. Bei jedem anderen Start gilt er nie (auch nicht aus der Umgebung).
 if [ "${1:-}" = "--auto-update" ]; then
@@ -36,9 +30,6 @@ fi
 # ---------------------------------------------------------------------------
 # Bibliotheken laden: aus einem lokalen Checkout oder aus dem Repository
 # ---------------------------------------------------------------------------
-# Aus dem Repository geladene Dateien werden gegen eine signierte Prüfsummenliste (SHA256SUMS) geprüft, sobald
-# GD_SIGNING_PUBKEY gesetzt ist und der Branch "main" ist. Test-Branches sind nicht signiert, lokale Checkouts
-# werden nicht geprüft; beides vermerkt gd_signature_notice später im Log.
 _gd_headless_report() {
     # _gd_headless_report <ergebnis> <hinweis> – nur im Headless-Modus: Fehler, die vor dem Laden der Bibliotheken
     # auftreten, landen in setup.conf (Statuszeile und Login-Hinweis) und im Log, weil niemand zuschaut
@@ -51,76 +42,29 @@ _gd_headless_report() {
     printf 'LAST_UPDATE_RESULT=%q\nLAST_UPDATE_TIME=%q\nLAST_UPDATE_NOTE=%q\n' "$1" "$(date '+%F %T')" "$2" >> "$state"
 }
 
-_gd_sig_abort() {
-    echo ""
-    echo "Abbruch: $*"
-    echo "Aus Sicherheitsgründen werden die Skripte nicht ausgeführt."
-    _gd_headless_report fehler "Abbruch: $*"
-    exit 1
-}
-
-_gd_sum_ok() {
-    # _gd_sum_ok <pfad im repo> <datei> – Prüfsumme der Datei gegen den Eintrag in der geprüften SHA256SUMS
-    local want have
-    want="$(awk -v f="$1" '$2 == f { print $1; exit }' "$GD_TMP/SHA256SUMS")"
-    [ -n "$want" ] || return 1
-    have="$(sha256sum "$2" 2>/dev/null | awk '{ print $1 }')"
-    [ -n "$have" ] && [ "$have" = "$want" ]
-}
-
-_gd_verify_sums() {
-    # Lädt SHA256SUMS und SHA256SUMS.sig und prüft die Signatur mit OpenSSH (ssh-keygen -Y verify).
-    # Erst danach gilt die Liste als vertrauenswürdig (GD_SUMS wird gesetzt und exportiert).
-    local allowed
-    command -v ssh-keygen >/dev/null 2>&1 \
-        || _gd_sig_abort "ssh-keygen wurde nicht gefunden, die Signatur der Skripte kann nicht geprüft werden. Installiere es mit: apt-get install openssh-client"
-    command -v sha256sum >/dev/null 2>&1 || _gd_sig_abort "sha256sum wurde nicht gefunden (Paket coreutils)."
-    if ! curl -fsSL "$_gd_raw/SHA256SUMS" -o "$GD_TMP/SHA256SUMS" \
-        || ! curl -fsSL "$_gd_raw/SHA256SUMS.sig" -o "$GD_TMP/SHA256SUMS.sig"; then
-        _gd_sig_abort "Die signierte Prüfsummenliste (SHA256SUMS und SHA256SUMS.sig) konnte nicht geladen werden. Prüfe die Internetverbindung."
-    fi
-    allowed="$(umask 077; mktemp "$GD_TMP/allowed_signers.XXXXXX")" || _gd_sig_abort "Temporäre Datei konnte nicht angelegt werden."
-    printf 'germandactyl-setup %s\n' "$GD_SIGNING_PUBKEY" > "$allowed"
-    if ! ssh-keygen -Y verify -f "$allowed" -I germandactyl-setup -n germandactyl-setup \
-        -s "$GD_TMP/SHA256SUMS.sig" < "$GD_TMP/SHA256SUMS" >/dev/null 2>&1; then
-        rm -f "$allowed"
-        _gd_sig_abort "Die Signatur der Prüfsummenliste (SHA256SUMS.sig) ist ungültig. Die Dateien im Repository wurden möglicherweise verändert."
-    fi
-    rm -f "$allowed"
-    GD_SUMS="$GD_TMP/SHA256SUMS"
-    export GD_SUMS
-}
-
 GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup autoupdate uninstall manage)
 GD_BRANCH="${GD_BRANCH:-main}"
 _gd_self="${BASH_SOURCE[0]:-}"
-unset GD_SUMS   # gilt erst nach erfolgreicher Signaturprüfung (aus der Umgebung wird nichts übernommen)
 # Lokaler Checkout nur, wenn neben dem Skript lib/common.sh liegt. Startet der Kurzbefehl installer.sh als Datei aus
-# einem Temp-Verzeichnis, liegt dort nur installer.sh samt Signaturdateien, kein lib/ – dann gilt der Zweig "Repository".
+# einem Temp-Verzeichnis, liegt dort nur installer.sh, kein lib/ – dann gilt der Zweig "Repository".
 if [ -n "$_gd_self" ] && [ -f "$_gd_self" ] && [ -f "$(dirname "$_gd_self")/lib/common.sh" ]; then
     GD_LOCAL_DIR="$(cd "$(dirname "$_gd_self")" && pwd)"
     GD_LIB_DIR="$GD_LOCAL_DIR/lib"
 else
     GD_LOCAL_DIR=""
     GD_LIB_DIR="$(mktemp -d /tmp/germandactyl-lib.XXXXXX)"
-    # Arbeitsverzeichnis schon jetzt anlegen: common.sh übernimmt es, und die geprüfte Liste liegt darin
+    # Arbeitsverzeichnis schon jetzt anlegen: common.sh übernimmt es
     if [ -z "${GD_TMP:-}" ]; then
         GD_TMP="$(mktemp -d /tmp/germandactyl.XXXXXX)"
         export GD_TMP
     fi
     trap 'rm -rf "$GD_LIB_DIR" "$GD_TMP"' EXIT
     _gd_raw="https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH}"
-    if [ -n "$GD_SIGNING_PUBKEY" ] && [ "$GD_BRANCH" = "main" ]; then
-        _gd_verify_sums
-    fi
     for _gd_lib in "${GD_LIBS[@]}"; do
         if ! curl -fsSL "$_gd_raw/lib/${_gd_lib}.sh" -o "$GD_LIB_DIR/${_gd_lib}.sh"; then
             echo "Abbruch: Die Datei lib/${_gd_lib}.sh konnte nicht geladen werden. Prüfe die Internetverbindung."
             _gd_headless_report uebersprungen "Die Datei lib/${_gd_lib}.sh konnte nicht geladen werden (Internetverbindung?)"
             exit 1
-        fi
-        if [ -n "${GD_SUMS:-}" ] && ! _gd_sum_ok "lib/${_gd_lib}.sh" "$GD_LIB_DIR/${_gd_lib}.sh"; then
-            _gd_sig_abort "Die Datei lib/${_gd_lib}.sh passt nicht zur signierten Prüfsummenliste (oder steht nicht darin)."
         fi
     done
 fi
@@ -201,7 +145,7 @@ gd_check_environment() {
             clear; exit 1 ;;
     esac
 
-    # Systemzeit: Ohne synchronisierte Uhr scheitern Zertifikate (Let's Encrypt) und die Signaturprüfung von apt.
+    # Systemzeit: Ohne synchronisierte Uhr scheitern Zertifikate (Let's Encrypt) und apt-Updates.
     # Nur bei einer eindeutigen Antwort ("no") eingreifen; in Containern ohne systemd liefert timedatectl nichts.
     if command -v timedatectl >/dev/null 2>&1 && [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "no" ]; then
         gd_log "Systemzeit nicht per NTP synchronisiert – systemd-timesyncd wird aktiviert"
@@ -570,10 +514,9 @@ gd_install_menu() {
 # ---------------------------------------------------------------------------
 # Geplantes Update (--auto-update): kein Banner, keine Vorbereitung mit whiptail, keine Dialoge
 # ---------------------------------------------------------------------------
-# Die Bibliotheken sind oben bereits (mit Signaturprüfung) geladen. Dieser Zweig steht bewusst vor dem Startblock.
+# Die Bibliotheken sind oben bereits geladen. Dieser Zweig steht bewusst vor dem Startblock.
 if [ "${GD_HEADLESS:-}" = 1 ]; then
     gd_log "Automatisches Update gestartet (Branch: $GD_BRANCH, lokal: ${GD_LOCAL_DIR:-nein})"
-    gd_signature_notice
     gd_autoupdate_run
     exit $?
 fi
@@ -603,9 +546,6 @@ if ! command -v whiptail >/dev/null 2>&1 || ! command -v dig >/dev/null 2>&1 \
     || { [ ! -d "$PTERO_DIR" ] && [ ! -f /etc/pterodactyl/config.yml ] && [ ! -d /var/www/pelican ]; }; then
     gd_prepare_system
 fi
-
-# Vermerkt im Log, ob die Skripte per Signatur geprüft wurden (bei Test-Branches zusätzlich ein Hinweis)
-gd_signature_notice
 
 # Sicherheitskorrektur für ältere Installationen: Die Loginseite war früher für alle Benutzer beschreibbar (777)
 if [ -f /etc/motd.sh ]; then

@@ -98,13 +98,13 @@ gd_panel_packages() {
 }
 
 gd_composer_install() {
-    # Composer mit Prüfung der offiziellen Signatur installieren
+    # Composer mit Prüfung der offiziellen Prüfsumme (SHA-384) installieren
     local expected actual
     expected="$(gd_curl https://composer.github.io/installer.sig)" || return 1
     gd_curl https://getcomposer.org/installer -o "$GD_TMP/composer-setup.php" || return 1
     actual="$(php -r "echo hash_file('sha384', '$GD_TMP/composer-setup.php');")"
     if [ "$expected" != "$actual" ]; then
-        echo "Die Signatur des Composer-Installers stimmt nicht überein – Abbruch."
+        echo "Die Prüfsumme des Composer-Installers stimmt nicht überein – Abbruch."
         return 1
     fi
     php "$GD_TMP/composer-setup.php" --quiet --install-dir=/usr/local/bin --filename=composer
