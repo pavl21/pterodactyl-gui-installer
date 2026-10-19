@@ -4,6 +4,12 @@
 # Logging, whiptail-Helfer, Fortschrittsbalken, Validierung, IP/DNS, apt, Passwörter.
 # Diese Datei wird nur eingebunden (source), nicht direkt ausgeführt.
 
+# Öffentlicher Schlüssel für die Signaturprüfung der nachgeladenen Skripte (SHA256SUMS + SHA256SUMS.sig).
+# Inhalt der .pub-Datei, z. B. "ssh-ed25519 AAAA... germandactyl-setup"; leer = Prüfung noch nicht aktiv.
+# Muss denselben Wert tragen wie GD_SIGNING_PUBKEY in installer.sh (dort wird er vor dem Laden dieser Datei gebraucht).
+# Die Quelle für gd_fetch und den Kurzbefehl ist diese Stelle; "scripts/sign-release.sh --check" prüft beide Werte.
+GD_SIGNING_PUBKEY=""
+
 # Doppeltes Einbinden verhindern
 [ -n "${GD_COMMON_LOADED:-}" ] && return 0
 GD_COMMON_LOADED=1
@@ -679,14 +685,60 @@ gd_ask_email() {
 # ---------------------------------------------------------------------------
 # Weitere Skripte aus dem Repository ausführen/laden
 # ---------------------------------------------------------------------------
+gd_verify_sum() {
+    # gd_verify_sum <pfad im repo> <datei> – vergleicht die Prüfsumme der Datei mit dem Eintrag in der
+    # signierten Liste (GD_SUMS). Rückgabe 1 bei Abweichung, fehlendem Eintrag oder fehlender Liste.
+    local want have
+    [ -n "${GD_SUMS:-}" ] && [ -f "$GD_SUMS" ] || return 1
+    want="$(awk -v f="$1" '$2 == f { print $1; exit }' "$GD_SUMS")"
+    [ -n "$want" ] || return 1
+    have="$(sha256sum "$2" 2>/dev/null | awk '{ print $1 }')"
+    [ -n "$have" ] && [ "$have" = "$want" ]
+}
+
 gd_fetch() {
-    # gd_fetch <pfad im repo> <ziel> – lokale Kopie bevorzugen, sonst herunterladen
+    # gd_fetch <pfad im repo> <ziel> – lokale Kopie bevorzugen, sonst herunterladen.
+    # Ist die Signaturprüfung aktiv (GD_SUMS, von installer.sh gesetzt), wird jeder Download gegen die signierte
+    # Prüfsummenliste geprüft: Abweichung oder fehlender Eintrag -> Datei wird gelöscht, Rückgabe 1.
+    # Lokale Kopien (GD_LOCAL_DIR, Entwicklung aus einem Checkout) werden nicht geprüft.
     local rel="$1" dest="$2"
     if [ -n "${GD_LOCAL_DIR:-}" ] && [ -f "$GD_LOCAL_DIR/$rel" ]; then
         cp "$GD_LOCAL_DIR/$rel" "$dest"
     else
-        curl -fsSL "$GD_RAW/$rel" -o "$dest"
+        curl -fsSL "$GD_RAW/$rel" -o "$dest" || return 1
+        # Ist GD_SUMS gesetzt, die Liste aber verschwunden, gilt das als Fehler (nicht als "keine Prüfung")
+        if [ -n "${GD_SUMS:-}" ] && ! gd_verify_sum "$rel" "$dest"; then
+            gd_log "ABGELEHNT: $rel passt nicht zur signierten Prüfsummenliste oder steht nicht darin"
+            rm -f "$dest"
+            return 1
+        fi
     fi
+}
+
+gd_signature_notice() {
+    # Hält einmal pro Lauf im Log fest, ob die nachgeladenen Skripte geprüft wurden (und mit welcher Liste).
+    # Bei einem Test-Branch zusätzlich ein kurzer Hinweis; ohne whiptail (z. B. beim allerersten Start) nur als Text.
+    [ -n "${GD_SIG_NOTICED:-}" ] && return 0
+    GD_SIG_NOTICED=1
+    export GD_SIG_NOTICED
+    local reason
+    if [ -n "${GD_SUMS:-}" ] && [ -f "$GD_SUMS" ]; then
+        gd_log "Skripte per Signatur geprüft (Branch: $GD_BRANCH, SHA256SUMS: sha256 $(sha256sum "$GD_SUMS" | awk '{ print $1 }'))"
+        return 0
+    fi
+    if [ -n "${GD_LOCAL_DIR:-}" ]; then reason="lokaler Checkout (Entwicklung)"
+    elif [ "$GD_BRANCH" != "main" ]; then reason="Test-Branch $GD_BRANCH"
+    elif [ -z "$GD_SIGNING_PUBKEY" ]; then reason="noch kein Public Key hinterlegt"
+    else reason="Prüfung nicht aktiv"; fi
+    gd_log "Skripte werden ohne Signaturprüfung geladen: $reason"
+    if [ -z "${GD_LOCAL_DIR:-}" ] && [ "$GD_BRANCH" != "main" ]; then
+        if command -v whiptail >/dev/null 2>&1; then
+            gd_msg "Test-Branch" "Test-Branch $GD_BRANCH: Die Skripte sind nicht signiert.\n\nVerwende ihn nur zum Testen." 9 66 || true
+        else
+            echo "Hinweis: Test-Branch $GD_BRANCH: Die Skripte sind nicht signiert."
+        fi
+    fi
+    return 0
 }
 
 gd_source_lib() {
@@ -698,7 +750,7 @@ gd_source_lib() {
         return
     fi
     mkdir -p "$GD_TMP/lib"
-    gd_fetch "lib/$name.sh" "$GD_TMP/lib/$name.sh" || gd_die "Die Datei lib/$name.sh konnte nicht geladen werden."
+    gd_fetch "lib/$name.sh" "$GD_TMP/lib/$name.sh" || gd_die "Die Datei lib/$name.sh konnte nicht geladen werden (Internetverbindung prüfen – oder die Datei ist nicht signiert)."
     # shellcheck disable=SC1090
     . "$GD_TMP/lib/$name.sh"
 }
@@ -709,7 +761,7 @@ gd_run() {
     local script="$1" target="$GD_TMP/run-$1"
     shift
     if ! gd_fetch "$script" "$target"; then
-        gd_msg "Fehler" "Das Skript $script konnte nicht geladen werden. Prüfe die Internetverbindung." 9 70
+        gd_msg "Fehler" "Das Skript $script konnte nicht geladen werden. Prüfe die Internetverbindung – oder die Datei ist nicht signiert (Details im Log)." 10 70
         return 1
     fi
     GD_LIB_DIR="${GD_LIB_DIR:-}" GD_LOCAL_DIR="${GD_LOCAL_DIR:-}" GD_BRANCH="$GD_BRANCH" \

@@ -19,20 +19,57 @@ gd_panel_php_fpm() {
 }
 
 gd_shortcut_install() {
-    # "germandactyl" startet immer die aktuelle Version; "gmd" nur, wenn es den Befehl noch nicht gibt
-    cat > "$GD_SHORTCUT" <<EOF
+    # "germandactyl" startet immer die aktuelle Version; "gmd" nur, wenn es den Befehl noch nicht gibt.
+    # Branch, Repository und Public Key werden beim Anlegen eingetragen. Ist ein Public Key eingebettet und der Branch
+    # "main", prüft der Kurzbefehl die Signatur der Prüfsummenliste und den Hash von installer.sh, bevor er ihn startet.
+    local q_branch q_pubkey q_repo
+    q_branch="$(printf '%q' "${GD_BRANCH}")"
+    q_pubkey="$(printf '%q' "${GD_SIGNING_PUBKEY:-}")"
+    q_repo="$(printf '%q' "${GD_REPO}")"
+    {
+        cat <<EOF
 #!/bin/bash
 # Pfad: $GD_SHORTCUT – angelegt von GermanDactyl Setup
 # Startet die jeweils aktuelle Version von GermanDactyl Setup (Installation und Verwaltung).
-if [ "\$(id -u)" != "0" ]; then exec sudo "\$0" "\$@"; fi
-branch="${GD_BRANCH}"
-script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/\${branch}/installer.sh")" || {
+branch=${q_branch}
+pubkey=${q_pubkey}
+repo=${q_repo}
+EOF
+        cat <<'EOF'
+if [ "$(id -u)" != "0" ]; then exec sudo "$0" "$@"; fi
+
+if [ -n "$pubkey" ] && [ "$branch" = "main" ]; then
+    # Signierter Start: SHA256SUMS + Signatur laden und prüfen, dann installer.sh gegen die Liste prüfen.
+    # (Kein "exec", damit das Temp-Verzeichnis nach dem Beenden wieder gelöscht wird.)
+    abort() { echo "Abbruch: $*"; echo "Aus Sicherheitsgründen wird GermanDactyl Setup nicht gestartet."; exit 1; }
+    command -v ssh-keygen >/dev/null 2>&1         || abort "ssh-keygen wurde nicht gefunden, die Signatur kann nicht geprüft werden. Installiere es mit: apt-get install openssh-client"
+    tmp="$(mktemp -d /tmp/germandactyl-start.XXXXXX)" || abort "Temporäres Verzeichnis konnte nicht angelegt werden."
+    trap 'rm -rf "$tmp"' EXIT
+    raw="https://raw.githubusercontent.com/$repo/main"
+    for f in SHA256SUMS SHA256SUMS.sig installer.sh; do
+        curl -fsSL "$raw/$f" -o "$tmp/$f" || abort "$f konnte nicht geladen werden. Prüfe die Internetverbindung."
+    done
+    ( umask 077; printf 'germandactyl-setup %s\n' "$pubkey" > "$tmp/allowed_signers" )
+    ssh-keygen -Y verify -f "$tmp/allowed_signers" -I germandactyl-setup -n germandactyl-setup \
+        -s "$tmp/SHA256SUMS.sig" < "$tmp/SHA256SUMS" >/dev/null 2>&1 \
+        || abort "Die Signatur der Prüfsummenliste ist ungültig. Die Dateien im Repository wurden möglicherweise verändert. Falls du den Schlüssel gewechselt hast, führe den Installationsbefehl aus der README erneut aus."
+    want="$(awk '$2 == "installer.sh" { print $1; exit }' "$tmp/SHA256SUMS")"
+    have="$(sha256sum "$tmp/installer.sh" | awk '{ print $1 }')"
+    [ -n "$want" ] && [ "$want" = "$have" ] || abort "installer.sh passt nicht zur signierten Prüfsummenliste."
+    # installer.sh prüft anschließend die Bibliotheken (neben der Datei liegt kein lib/, also kein "lokaler Checkout")
+    GD_BRANCH="$branch" bash "$tmp/installer.sh"
+    exit $?
+fi
+
+# Ohne Public Key (noch nicht aktiviert) oder bei einem Test-Branch: wie bisher ohne Signaturprüfung
+script="$(curl -fsSL "https://raw.githubusercontent.com/$repo/$branch/installer.sh")" || {
     # Branch existiert nicht mehr (z. B. Test-Branch gelöscht) -> auf main zurückfallen
     branch="main"
-    script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/main/installer.sh")"
+    script="$(curl -fsSL "https://raw.githubusercontent.com/$repo/main/installer.sh")"
 } || { echo "GermanDactyl Setup konnte nicht geladen werden. Prüfe die Internetverbindung."; exit 1; }
-GD_BRANCH="\$branch" exec bash -c "\$script"
+GD_BRANCH="$branch" exec bash -c "$script"
 EOF
+    } > "$GD_SHORTCUT"
     chmod 755 "$GD_SHORTCUT"
     if [ ! -e "$GD_SHORTCUT_SHORT" ] && ! command -v gmd >/dev/null 2>&1; then
         ln -s "$GD_SHORTCUT" "$GD_SHORTCUT_SHORT"
