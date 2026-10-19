@@ -184,10 +184,29 @@ gd_php_fpm_socket() {
     echo "${sock:-/run/php/php${GD_PHP_VERSION}-fpm.sock}"
 }
 
+gd_nginx_version() {
+    # Gibt die installierte nginx-Version aus, z. B. 1.26.3 (leer, wenn nginx fehlt)
+    nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
+}
+
+gd_nginx_http2_directive() {
+    # Ab nginx 1.25.1 gilt die Direktive "http2 on;" – die alte Form "listen 443 ssl http2;" erzeugt dort bei
+    # "nginx -t" eine Warnung. Ältere Versionen (Debian 12: 1.22, Ubuntu 22.04: 1.18, Ubuntu 24.04: 1.24) kennen
+    # die neue Direktive nicht. Ist die Version unbekannt, bleibt es bei der alten Form (läuft überall).
+    local v
+    v="$(gd_nginx_version)"
+    [ -n "$v" ] && gd_version_ge "$v" 1.25.1
+}
+
 gd_nginx_ssl_config() {
     # Offizielle SSL-Konfiguration (https://pterodactyl.io/panel/1.0/webserver_configuration.html)
-    local domain="$1" sock
+    local domain="$1" sock listen4="listen 443 ssl http2;" listen6="listen [::]:443 ssl http2;" h2=false
     sock="$(gd_php_fpm_socket)"
+    if gd_nginx_http2_directive; then
+        listen4="listen 443 ssl;"
+        listen6="listen [::]:443 ssl;"
+        h2=true
+    fi
     gd_nginx_backup pterodactyl.conf
     cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
 # Angelegt von GermanDactyl Setup – Grundlage: offizielle Pterodactyl-Dokumentation
@@ -207,8 +226,9 @@ $(gd_has_ipv6 && echo "    listen [::]:80;")
 }
 
 server {
-    listen 443 ssl http2;
-$(gd_has_ipv6 && echo "    listen [::]:443 ssl http2;")
+    ${listen4}
+$(gd_has_ipv6 && echo "    ${listen6}")
+$($h2 && echo "    http2 on;")
     server_name ${domain};
     server_tokens off;
 
@@ -275,31 +295,288 @@ gd_certbot_issue() {
     gd_certbot_webroot "$domain" "$email" "${PTERO_DIR}/public"
 }
 
-gd_certbot_webroot() {
-    # gd_certbot_webroot <domain> <email> <webroot> – vorhandenes Zertifikat nur übernehmen, wenn es noch
-    # mindestens 14 Tage gilt und sich erneuern lässt (standalone scheitert später an nginx auf Port 80)
-    local domain="$1" email="$2" webroot="$3" cert days auth extra=()
-    cert="/etc/letsencrypt/live/${domain}/fullchain.pem"
-    # Ist die Firewall bereits aktiv, muss Port 80 für die Prüfung durch Let's Encrypt offen sein
+gd_panel_ports_open() {
+    # Ist die Firewall bereits aktiv, müssen Port 80 (Prüfung durch Let's Encrypt, Weiterleitung) und 443 offen sein
     if gd_ufw_active; then
         ufw allow 80/tcp comment "HTTP (Panel, Zertifikate)" >/dev/null
         ufw allow 443/tcp comment "HTTPS (Panel)" >/dev/null
     fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Zertifikate: Prüfung vorhandener Zertifikate und Umstellung des Erneuerungsverfahrens
+# ---------------------------------------------------------------------------
+gd_certbot_version() {
+    # Gibt die Certbot-Version aus, z. B. 2.9.0 (leer, wenn certbot fehlt)
+    certbot --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1
+}
+
+gd_certbot_auth() {
+    # gd_certbot_auth <name> – Verfahren, mit dem Certbot das Zertifikat erneuert (webroot, standalone, nginx, dns-cloudflare ...)
+    awk -F' *= *' '$1=="authenticator"{print $2}' "/etc/letsencrypt/renewal/${1}.conf" 2>/dev/null
+}
+
+gd_cert_is_staging() {
+    # gd_cert_is_staging <zertifikatsdatei> – stammt das Zertifikat von der Let's-Encrypt-Testumgebung?
+    openssl x509 -noout -issuer -in "$1" 2>/dev/null | grep -qiE 'STAGING|Fake LE'
+}
+
+gd_cert_reusable() {
+    # gd_cert_reusable <name> – Kann das vorhandene Zertifikat in /etc/letsencrypt/live/<name> bleiben?
+    # Es muss noch mindestens 14 Tage gelten, zur Domain passen und darf nicht aus der Testumgebung stammen.
+    # Setzt GD_CERT_DAYS (Resttage) und GD_CERT_REASON (Begründung, wenn nicht).
+    local cert="/etc/letsencrypt/live/${1}/fullchain.pem"
+    GD_CERT_DAYS="$(gd_cert_days_left "$cert" 2>/dev/null)"
+    GD_CERT_REASON=""
+    if [ -z "$GD_CERT_DAYS" ]; then
+        GD_CERT_REASON="Zertifikat nicht lesbar"
+    elif [ "$GD_CERT_DAYS" -lt 0 ]; then
+        GD_CERT_REASON="abgelaufen"
+    elif [ "$GD_CERT_DAYS" -lt 14 ]; then
+        GD_CERT_REASON="läuft in ${GD_CERT_DAYS} Tagen ab"
+    elif gd_cert_is_staging "$cert"; then
+        GD_CERT_REASON="Zertifikat stammt aus der Let's-Encrypt-Testumgebung (Staging)"
+    elif ! gd_cert_matches_domain "$cert" "$1"; then
+        GD_CERT_REASON="Zertifikat gehört zu einer anderen Domain"
+    fi
+    [ -z "$GD_CERT_REASON" ]
+}
+
+gd_certbot_conf_rewrite() {
+    # gd_certbot_conf_rewrite <conf-datei> <domain> <webroot|dns-cloudflare> <pfad>
+    # Stellt die Erneuerungskonfiguration (/etc/letsencrypt/renewal/<name>.conf) auf ein anderes Verfahren um
+    # (für Certbot unter 2.3 ohne "certbot reconfigure"). Webroot: authenticator, webroot_path und [[webroot_map]];
+    # DNS: authenticator, Zugangsdaten-Datei und Wartezeit. Alte Einträge des anderen Verfahrens werden entfernt.
+    local conf="$1" domain="$2" kind="$3" arg="$4" esc new names n
+    grep -qE '^[[:space:]]*authenticator[[:space:]]*=' "$conf" || return 1
+    esc="$(sed -e 's/[\\&|]/\\&/g' <<< "$arg")"
+    case "$kind" in
+        webroot) new="authenticator = webroot\\nwebroot_path = ${esc}," ;;
+        dns-cloudflare) new="authenticator = dns-cloudflare\\ndns_cloudflare_credentials = ${esc}\\ndns_cloudflare_propagation_seconds = 30" ;;
+        *) return 1 ;;
+    esac
+    sed -i -E \
+        -e '/^\[\[webroot_map\]\]/,/^\[/{/^\[\[webroot_map\]\]/d;/^\[/!d}' \
+        -e '/^[[:space:]]*(webroot_path|dns_cloudflare_credentials|dns_cloudflare_propagation_seconds|pref_challs)[[:space:]]*=/d' \
+        -e "s|^[[:space:]]*authenticator[[:space:]]*=.*|${new}|" "$conf" || return 1
+    if [ "$kind" = webroot ]; then
+        # Für jeden Namen des Zertifikats (außer Wildcards) einen Webroot-Eintrag anlegen
+        names="$(openssl x509 -noout -ext subjectAltName -in "/etc/letsencrypt/live/${domain}/cert.pem" 2>/dev/null | grep -oE 'DNS:[^, ]+' | cut -d: -f2)"
+        [ -n "$names" ] || names="$domain"
+        sed -i -e '$a\' "$conf"
+        {
+            echo "[[webroot_map]]"
+            for n in $names; do
+                [[ "$n" == \** ]] && continue
+                echo "$n = $arg"
+            done
+        } >> "$conf"
+    fi
+}
+
+gd_certbot_switch_auth() {
+    # gd_certbot_switch_auth <name> webroot <webroot-pfad> | dns-cloudflare <zugangsdaten-datei>
+    # Stellt nur die Erneuerung eines vorhandenen Zertifikats um – es wird nichts neu ausgestellt (das würde gegen das
+    # Let's-Encrypt-Limit von 5 Duplikaten pro Woche zählen). Certbot ab 2.3: "certbot reconfigure", sonst wird die
+    # Erneuerungskonfiguration angepasst (Sicherung vorher nach <conf>.germandactyl.bak). Zur Kontrolle folgt ein
+    # Testlauf der Erneuerung; scheitert er, wird der alte Stand wiederhergestellt (Rückgabe 1).
+    local name="$1" kind="$2" arg="$3" conf bak rc=1
+    conf="/etc/letsencrypt/renewal/${name}.conf"
+    bak="${conf}.germandactyl.bak"
+    [ -f "$conf" ] || return 1
+    cp -p "$conf" "$bak" || return 1
+    if gd_version_ge "$(gd_certbot_version)" 2.3; then
+        echo "Erneuerung von ${name} wird mit 'certbot reconfigure' auf ${kind} umgestellt..."
+        case "$kind" in
+            webroot)
+                certbot reconfigure --cert-name "$name" --webroot -w "$arg" --non-interactive && rc=0 ;;
+            dns-cloudflare)
+                certbot reconfigure --cert-name "$name" --dns-cloudflare --dns-cloudflare-credentials "$arg" \
+                    --dns-cloudflare-propagation-seconds 30 --non-interactive && rc=0 ;;
+        esac
+    else
+        echo "Certbot $(gd_certbot_version) hat kein 'reconfigure' – Erneuerung von ${name} wird in ${conf} auf ${kind} umgestellt (Sicherung: ${bak})."
+        gd_certbot_conf_rewrite "$conf" "$name" "$kind" "$arg" && rc=0
+    fi
+    if [ $rc -eq 0 ]; then
+        echo "Kontrolle: Testlauf der Erneuerung (certbot renew --dry-run)..."
+        certbot renew --cert-name "$name" --dry-run || rc=1
+    fi
+    if [ $rc -ne 0 ]; then
+        cp -p "$bak" "$conf"
+        echo "Die Umstellung ist fehlgeschlagen – die ursprüngliche Erneuerungskonfiguration wurde wiederhergestellt."
+        return 1
+    fi
+    return 0
+}
+
+gd_certbot_webroot() {
+    # gd_certbot_webroot <domain> <email> <webroot> – Zertifikat per Webroot. Ein vorhandenes Zertifikat bleibt
+    # erhalten, wenn es noch mindestens 14 Tage gilt, zur Domain passt und nicht aus der Testumgebung stammt. War es
+    # per "standalone" ausgestellt (scheitert später an nginx auf Port 80), wird nur die Erneuerung auf Webroot
+    # umgestellt. Neu ausgestellt wird (mit --force-renewal) nur, wenn das Zertifikat unbrauchbar ist oder die
+    # Umstellung scheitert – jede Neuausstellung zählt gegen das Let's-Encrypt-Limit (5 Duplikate pro Woche).
+    local domain="$1" email="$2" webroot="$3" cert conf auth extra=()
+    cert="/etc/letsencrypt/live/${domain}/fullchain.pem"
+    conf="/etc/letsencrypt/renewal/${domain}.conf"
+    gd_panel_ports_open
     if [ -f "$cert" ]; then
-        days="$(gd_cert_days_left "$cert")"
-        auth="$(awk -F' *= *' '$1=="authenticator"{print $2}' "/etc/letsencrypt/renewal/${domain}.conf" 2>/dev/null)"
-        if [ "${days:-0}" -ge 14 ] && [ "$auth" != "standalone" ]; then
-            echo "Zertifikat für ${domain} ist bereits vorhanden (noch ${days} Tage gültig)."
-            return 0
+        if gd_cert_reusable "$domain"; then
+            auth="$(gd_certbot_auth "$domain")"
+            if [ "$auth" != "standalone" ]; then
+                echo "Zertifikat für ${domain} ist bereits vorhanden (noch ${GD_CERT_DAYS} Tage gültig)."
+                return 0
+            fi
+            echo "Zertifikat für ${domain} ist noch ${GD_CERT_DAYS} Tage gültig, wurde aber per 'standalone' ausgestellt – nur die Erneuerung wird auf Webroot umgestellt."
+            gd_certbot_switch_auth "$domain" webroot "$webroot" && return 0
+            echo "Die Umstellung hat nicht funktioniert – das Zertifikat wird neu ausgestellt."
+        else
+            echo "Vorhandenes Zertifikat für ${domain} wird neu ausgestellt (${GD_CERT_REASON})."
         fi
-        echo "Vorhandenes Zertifikat für ${domain} wird neu ausgestellt (gültig: ${days:-?} Tage, Verfahren: ${auth:-unbekannt})."
         extra=(--force-renewal)
-    elif [ -e "/etc/letsencrypt/renewal/${domain}.conf" ]; then
+    elif [ -e "$conf" ]; then
         # Reste eines gelöschten Zertifikats würden certbot blockieren
         certbot delete --cert-name "$domain" --non-interactive
     fi
     certbot certonly --webroot -w "$webroot" -d "$domain" --cert-name "$domain" "${extra[@]}" \
         --email "$email" --agree-tos --no-eff-email --non-interactive
+}
+
+# ---------------------------------------------------------------------------
+# Zertifikate per DNS-Challenge über Cloudflare (optional, z. B. wenn der Cloudflare-Proxy aktiv bleiben soll)
+# ---------------------------------------------------------------------------
+GD_CF_INI="/etc/letsencrypt/cloudflare.ini"
+# Vorausgefüllter Link: Berechtigungen Zone:DNS:Edit und Zone:Zone:Read, Name "GermanDactyl Setup"
+GD_CF_TOKEN_URL='https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22dns%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%5D&accountId=%2A&zoneId=all&name=GermanDactyl%20Setup'
+
+gd_cloudflare_token_check() {
+    # gd_cloudflare_token_check <token> – prüft den Token über die Cloudflare-API.
+    # Rückgabe: 0 = gültig, 1 = ungültig oder nicht aktiv, 2 = Cloudflare nicht erreichbar, 3 = Token sieht keine Zone
+    # Den Token als Header aus einer privaten Datei übergeben ("-H @datei"): als curl-Argument stünde er in der
+    # Prozessliste und wäre für alle lokalen Benutzer sichtbar
+    local token="$1" hdr res
+    hdr="$(umask 077; mktemp "${GD_TMP:-/tmp}/cf-auth.XXXXXX")" || return 2
+    printf 'Authorization: Bearer %s\n' "$token" > "$hdr"
+    res="$(curl -s --max-time 20 -H "@${hdr}" https://api.cloudflare.com/client/v4/user/tokens/verify | tr -d ' \n')"
+    if [ -z "$res" ]; then
+        rm -f "$hdr"
+        return 2
+    fi
+    if ! grep -q '"success":true' <<< "$res" || ! grep -q '"status":"active"' <<< "$res"; then
+        rm -f "$hdr"
+        return 1
+    fi
+    # Zone:Zone:Read prüfen – ohne sieht der Token keine Domain, und die DNS-Challenge scheitert später
+    res="$(curl -s --max-time 20 -H "@${hdr}" 'https://api.cloudflare.com/client/v4/zones?per_page=1' | tr -d ' \n')"
+    rm -f "$hdr"
+    if grep -q '"success":true' <<< "$res" && ! grep -q '"result":\[\]' <<< "$res"; then
+        return 0
+    fi
+    return 3
+}
+
+gd_cloudflare_token_ask() {
+    # Fragt einen Cloudflare API-Token ab, prüft ihn und speichert ihn nur lokal in /etc/letsencrypt/cloudflare.ini
+    # (Rechte 600). Rückgabe 0 = Token gespeichert (oder vorhandener gültiger Token behalten), 1 = Abbruch.
+    local token rc
+    if [ -s "$GD_CF_INI" ]; then
+        token="$(sed -nE 's/^[[:space:]]*dns_cloudflare_api_token[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$GD_CF_INI" | head -n1)"
+        if [ -n "$token" ] && gd_cloudflare_token_check "$token"; then
+            if gd_yesno "☁ Cloudflare API-Token" "Es ist bereits ein gültiger Cloudflare API-Token gespeichert:\n\n${GD_CF_INI}\n\nSoll dieser Token weiterverwendet werden?" 12 74; then
+                chmod 600 "$GD_CF_INI"
+                return 0
+            fi
+        fi
+    fi
+    token=""
+    gd_msg "☁ Cloudflare API-Token erstellen" "Für die DNS-Challenge braucht GermanDactyl Setup einen Cloudflare API-Token. Er wird nur lokal in ${GD_CF_INI} gespeichert (nur für root lesbar) – nie im Log und nie in den Einstellungen.\n\nErstelle ihn über diesen Link (Berechtigungen Zone:DNS:Edit und Zone:Zone:Read sind vorausgefüllt):\n\n${GD_CF_TOKEN_URL}\n\nCloudflare zeigt den Token nur ein einziges Mal an. Kopiere ihn und füge ihn im nächsten Fenster ein." 22 78
+    while true; do
+        token="$(gd_whip --title "☁ Cloudflare API-Token" --passwordbox "Füge den Cloudflare API-Token ein (die Eingabe bleibt unsichtbar):" 10 74 3>&1 1>&2 2>&3)" || return 1
+        token="$(tr -d '[:space:]' <<< "$token")"
+        if ! [[ "$token" =~ ^[A-Za-z0-9_.-]{20,}$ ]]; then
+            gd_msg "Token ungültig" "Das sieht nicht nach einem Cloudflare API-Token aus. Er besteht nur aus Buchstaben, Zahlen, '-' und '_' und ist etwa 40 Zeichen lang.\n\nBitte kopiere ihn erneut, ohne Leerzeichen." 12 70
+            continue
+        fi
+        gd_cloudflare_token_check "$token"
+        rc=$?
+        case "$rc" in
+            0) break ;;
+            2) gd_msg "Cloudflare nicht erreichbar" "Die Cloudflare-API (api.cloudflare.com) ist von diesem Server aus nicht erreichbar. Prüfe die Internetverbindung und versuche es erneut." 10 70 ;;
+            3) gd_msg "Token ohne Zugriff auf Zonen" "Der Token ist gültig, sieht aber keine Domain (Zone). Erstelle ihn mit dem vorausgefüllten Link und wähle bei 'Zonenressourcen' die Zone deiner Domain bzw. 'Alle Zonen'. Es werden Zone:DNS:Edit und Zone:Zone:Read benötigt." 13 74 ;;
+            *) gd_msg "Token ungültig" "Cloudflare hat den Token abgelehnt (ungültig, abgelaufen oder deaktiviert).\n\nPrüfe, ob du ihn vollständig kopiert hast, oder erstelle einen neuen Token." 11 70 ;;
+        esac
+    done
+    ( umask 077; mkdir -p "$(dirname "$GD_CF_INI")"; printf 'dns_cloudflare_api_token = %s\n' "$token" > "$GD_CF_INI" ) \
+        || { token=""; gd_msg "Fehler" "Die Datei ${GD_CF_INI} konnte nicht geschrieben werden." 9 70; return 1; }
+    chmod 600 "$GD_CF_INI"
+    token=""
+    gd_log "Cloudflare API-Token geprüft und in ${GD_CF_INI} gespeichert (Inhalt wird nicht protokolliert)"
+    return 0
+}
+
+gd_certbot_dns_cloudflare() {
+    # gd_certbot_dns_cloudflare <domain> <email> – Zertifikat per DNS-Challenge über Cloudflare (benötigt
+    # /etc/letsencrypt/cloudflare.ini aus gd_cloudflare_token_ask). Ein noch gültiges Zertifikat wird nicht neu
+    # ausgestellt, es wird nur die Erneuerung auf dns-cloudflare umgestellt (Neuausstellung zählt gegen das Limit).
+    local domain="$1" email="$2" cert conf auth extra=()
+    cert="/etc/letsencrypt/live/${domain}/fullchain.pem"
+    conf="/etc/letsencrypt/renewal/${domain}.conf"
+    if [ ! -s "$GD_CF_INI" ]; then
+        echo "Die Zugangsdaten-Datei ${GD_CF_INI} fehlt – es wurde kein Cloudflare API-Token hinterlegt."
+        return 1
+    fi
+    chmod 600 "$GD_CF_INI"
+    command -v certbot >/dev/null 2>&1 || gd_apt_install certbot || return 1
+    certbot plugins 2>/dev/null | grep -q 'dns-cloudflare' || gd_apt_install python3-certbot-dns-cloudflare || return 1
+    if [ -f "$cert" ]; then
+        if gd_cert_reusable "$domain"; then
+            auth="$(gd_certbot_auth "$domain")"
+            if [ "$auth" = "dns-cloudflare" ]; then
+                echo "Zertifikat für ${domain} ist bereits vorhanden (noch ${GD_CERT_DAYS} Tage gültig, Erneuerung per Cloudflare)."
+                return 0
+            fi
+            echo "Zertifikat für ${domain} ist noch ${GD_CERT_DAYS} Tage gültig – nur die Erneuerung wird auf Cloudflare (DNS-01) umgestellt."
+            gd_certbot_switch_auth "$domain" dns-cloudflare "$GD_CF_INI" && return 0
+            echo "Die Umstellung hat nicht funktioniert – das Zertifikat wird neu ausgestellt."
+        else
+            echo "Vorhandenes Zertifikat für ${domain} wird neu ausgestellt (${GD_CERT_REASON})."
+        fi
+        extra=(--force-renewal)
+    elif [ -e "$conf" ]; then
+        certbot delete --cert-name "$domain" --non-interactive
+    fi
+    certbot certonly --dns-cloudflare --dns-cloudflare-credentials "$GD_CF_INI" --dns-cloudflare-propagation-seconds 30 \
+        -d "$domain" --cert-name "$domain" "${extra[@]}" -m "$email" --agree-tos --no-eff-email --non-interactive
+}
+
+gd_ssl_method_ask() {
+    # gd_ssl_method_ask <domain> – setzt GD_SSL_METHOD (webroot oder cloudflare). Standard ist Webroot ohne
+    # Rückfrage. Nur wenn die Domain über den Cloudflare-Proxy läuft (orange Wolke), kann Let's Encrypt den Server
+    # nicht direkt erreichen: Dann gibt es die Wahl zwischen Proxy ausschalten und DNS-Challenge per API-Token.
+    # Rückgabe 1 bei Abbruch.
+    local domain="$1" ip choice
+    GD_SSL_METHOD=webroot
+    ip="$(gd_resolve_a "$domain" | head -n1)"
+    gd_is_cloudflare_ip "$ip" || return 0
+    while true; do
+        choice="$(gd_whip --title "☁ Cloudflare-Proxy erkannt" --menu "Die Domain ${domain} läuft über den Cloudflare-Proxy (orange Wolke). Let's Encrypt kann den Server darüber nicht direkt prüfen.\n\nMit einem Cloudflare API-Token (DNS-01) kann der Proxy für das Panel an bleiben. Wings braucht trotzdem einen direkt erreichbaren FQDN ohne Proxy.\n\nWie soll das SSL-Zertifikat ausgestellt werden?" 21 78 2 \
+            "1" "Cloudflare-Proxy ausschalten (DNS only), Webroot nutzen" \
+            "2" "Cloudflare API-Token für DNS-01 verwenden" 3>&1 1>&2 2>&3)" || return 1
+        case "$choice" in
+            1)
+                gd_msg "☁ Proxy ausschalten" "Öffne das Cloudflare-Dashboard, wähle deine Domain unter 'DNS' und klicke beim Eintrag von ${domain} auf die orange Wolke, bis sie grau ist ('Nur DNS').\n\nDie Änderung wirkt nach wenigen Minuten. Im Anschluss wird die Domain erneut geprüft." 13 74
+                if gd_dns_check_dialog "$domain"; then
+                    GD_SSL_METHOD=webroot
+                    return 0
+                fi ;;
+            2)
+                if gd_cloudflare_token_ask; then
+                    GD_SSL_METHOD=cloudflare
+                    return 0
+                fi ;;
+        esac
+    done
 }
 
 gd_panel_database() {
@@ -456,7 +733,7 @@ gd_artisan_www() {
 # ---------------------------------------------------------------------------
 gd_panel_install_steps() {
     # Erwartet: GD_DOMAIN, GD_EMAIL, GD_ADMIN_USER, GD_ADMIN_PASSWORD, GD_DB_PASSWORD, GD_TELEMETRY,
-    #           GD_PANEL_VERSION, GD_APPLY_PATCH (aus gd_choose_panel_version)
+    #           GD_PANEL_VERSION, GD_APPLY_PATCH (aus gd_choose_panel_version), optional GD_SSL_METHOD (webroot|cloudflare)
     # Markierung: Bricht die Installation ab, erkennt der nächste Start die unvollständige Installation
     gd_conf_set INSTALL_STATE laeuft
     gd_step 2  "Paketquellen werden aktualisiert..." gd_apt_update
@@ -466,7 +743,13 @@ gd_panel_install_steps() {
     gd_step 24 "Composer wird installiert..." gd_composer_install
     gd_step 27 "Pterodactyl Panel v${GD_PANEL_VERSION} wird heruntergeladen..." gd_panel_download "$GD_PANEL_VERSION"
     gd_step 30 "Webserver wird für das SSL-Zertifikat vorbereitet..." gd_nginx_http_config "$GD_DOMAIN"
-    gd_step 33 "SSL-Zertifikat wird bei Let's Encrypt angefordert..." gd_certbot_issue "$GD_DOMAIN" "$GD_EMAIL"
+    if [ "${GD_SSL_METHOD:-webroot}" = "cloudflare" ]; then
+        # Panel hinter dem Cloudflare-Proxy: Let's Encrypt prüft per DNS-Eintrag (API-Token), nicht über Port 80
+        gd_panel_ports_open >> "$GD_LOG" 2>&1
+        gd_step 33 "SSL-Zertifikat wird über Cloudflare (DNS-01) angefordert..." gd_certbot_dns_cloudflare "$GD_DOMAIN" "$GD_EMAIL"
+    else
+        gd_step 33 "SSL-Zertifikat wird bei Let's Encrypt angefordert..." gd_certbot_issue "$GD_DOMAIN" "$GD_EMAIL"
+    fi
     gd_step 36 "Webserver wird mit SSL eingerichtet..." gd_nginx_ssl_config "$GD_DOMAIN"
     gd_step 37 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
     gd_step 39 "Datenbank für das Panel wird angelegt..." gd_panel_database "$GD_DB_PASSWORD"

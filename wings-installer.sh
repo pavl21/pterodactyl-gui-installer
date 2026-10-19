@@ -96,11 +96,11 @@ gd_wings_install_local() {
 
     GD_WINGS_FQDN="$domain"
     if ! gd_yesno "⇄ Domain für Wings" "Wings nutzt standardmäßig die Domain des Panels:\n\n${domain} (Port 8080)\n\nMöchtest du diese Domain verwenden? Bei 'Nein' kannst du eine eigene Subdomain angeben." 13 74; then
-        GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
+        GD_WINGS_FQDN="$(gd_ask_wings_domain "$domain" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
     elif gd_is_cloudflare_ip "$(gd_resolve_a "$domain" | head -n1)"; then
         # Über den Cloudflare-Proxy (orange Wolke) funktioniert Port 8080 nicht – die Konsole im Panel bliebe tot
         gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${domain} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) ist darüber nicht erreichbar.\n\nGib im nächsten Schritt eine eigene Subdomain für Wings an, die in Cloudflare auf 'DNS only' (graue Wolke) steht." 13 76
-        GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
+        GD_WINGS_FQDN="$(gd_ask_wings_domain "$domain" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
     fi
     if ! gd_valid_email "$email"; then
         email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:")" || return 1

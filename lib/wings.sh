@@ -105,24 +105,159 @@ EOF
     systemctl enable wings
 }
 
+gd_nginx_webroot_for() {
+    # gd_nginx_webroot_for <fqdn> – gibt den Webroot aus, wenn es für den FQDN bereits einen nginx-Server-Block von
+    # GermanDactyl Setup gibt (Pterodactyl oder Pelican). Rückgabe 1, wenn nicht.
+    local fqdn="$1" pair conf root
+    for pair in "pterodactyl.conf:${PTERO_DIR}/public" "pelican.conf:${PELICAN_DIR:-/var/www/pelican}/public"; do
+        conf="/etc/nginx/sites-available/${pair%%:*}"
+        root="${pair#*:}"
+        if [ -d "$root" ] && grep -qE "^[[:space:]]*server_name[[:space:]]+${fqdn//./\\.}[[:space:]]*;" "$conf" 2>/dev/null; then
+            echo "$root"
+            return 0
+        fi
+    done
+    return 1
+}
+
+gd_nginx_foreign_block() {
+    # gd_nginx_foreign_block <fqdn> – gibt es einen fremden nginx-Server-Block (nicht von GermanDactyl Setup) für den FQDN?
+    local fqdn="$1"
+    grep -RlsE "^[[:space:]]*server_name[[:space:]]+([^;]*[[:space:]])?${fqdn//./\\.}[[:space:];]" \
+        /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null \
+        | xargs -r -n1 readlink -f | grep -vE '/(germandactyl-acme|pterodactyl|pelican)\.conf$' | grep -q .
+}
+
+gd_acme_block_write() {
+    # gd_acme_block_write <fqdn> – minimaler HTTP-Server-Block nur für die Zertifikatsprüfung (Webroot-Verfahren):
+    # /.well-known/acme-challenge/ wird aus /var/www/letsencrypt bedient, alles andere ergibt 404. Weitere FQDNs
+    # werden in dieselbe Datei aufgenommen.
+    local fqdn="$1" f="/etc/nginx/sites-available/germandactyl-acme.conf" names
+    names="$(sed -nE 's/^[[:space:]]*server_name[[:space:]]+([^;]+);.*/\1/p' "$f" 2>/dev/null | head -n1)"
+    case " $names " in
+        *" $fqdn "*) ;;
+        *) names="${names:+$names }$fqdn" ;;
+    esac
+    mkdir -p /var/www/letsencrypt /etc/nginx/sites-available
+    gd_nginx_backup germandactyl-acme.conf
+    cat > "$f" <<ACME
+# Angelegt von GermanDactyl Setup: nur für die Zertifikatsprüfung (Let's Encrypt, Webroot-Verfahren)
+server {
+    listen 80;
+$(gd_has_ipv6 && echo "    listen [::]:80;")
+    server_name ${names};
+    server_tokens off;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        allow all;
+    }
+    location / {
+        return 404;
+    }
+}
+ACME
+    gd_nginx_activate germandactyl-acme.conf
+}
+
+gd_acme_webroot_prepare() {
+    # gd_acme_webroot_prepare <fqdn> – setzt GD_ACME_WEBROOT für den FQDN (nginx läuft). Gibt es für den FQDN schon
+    # einen Server-Block des Panels, wird dessen Webroot genutzt, sonst wird ein minimaler Block angelegt.
+    # Rückgabe 2: ein fremder Server-Block belegt den FQDN (Webroot unbekannt), 1: Fehler.
+    local fqdn="$1" root
+    GD_ACME_WEBROOT=""
+    if root="$(gd_nginx_webroot_for "$fqdn")"; then
+        GD_ACME_WEBROOT="$root"
+        return 0
+    fi
+    gd_nginx_foreign_block "$fqdn" && return 2
+    gd_acme_block_write "$fqdn" || return 1
+    GD_ACME_WEBROOT="/var/www/letsencrypt"
+}
+
 gd_wings_certificate() {
-    # gd_wings_certificate <fqdn> <email> – Zertifikat für die Wings-Domain, falls noch nicht vorhanden
-    local fqdn="$1" email="$2"
-    [ -f "/etc/letsencrypt/live/${fqdn}/fullchain.pem" ] && { echo "Zertifikat für ${fqdn} ist bereits vorhanden."; return 0; }
+    # gd_wings_certificate <fqdn> <email> – Zertifikat für die Wings-Domain. Ein vorhandenes Zertifikat bleibt nur,
+    # wenn es noch mindestens 14 Tage gilt, zur Domain passt, nicht aus der Testumgebung stammt und das
+    # Erneuerungsverfahren zum Server passt: Läuft nginx, scheitert "standalone" bei der Erneuerung (Port 80 belegt).
+    # Dann wird nur die Erneuerung auf Webroot umgestellt (keine Neuausstellung, das zählt gegen das
+    # Let's-Encrypt-Limit von 5 Duplikaten pro Woche). Benötigt lib/panel.sh (Zertifikatshilfen, nginx).
+    local fqdn="$1" email="$2" cert conf auth method nginx_on=false force=() rc
+    cert="/etc/letsencrypt/live/${fqdn}/fullchain.pem"
+    conf="/etc/letsencrypt/renewal/${fqdn}.conf"
+    method="${GD_SSL_METHOD:-$(gd_conf_get SSL_METHOD)}"
+    # Panel hinter dem Cloudflare-Proxy (Token vorhanden): auch das Wings-Zertifikat per DNS-01 ausstellen.
+    # Der FQDN von Wings muss trotzdem direkt erreichbar sein (DNS only), nur die Prüfung läuft über die DNS-API.
+    if [ "$method" = "cloudflare" ] && [ -s "${GD_CF_INI:-/etc/letsencrypt/cloudflare.ini}" ]; then
+        gd_certbot_dns_cloudflare "$fqdn" "$email"
+        return
+    fi
     command -v certbot >/dev/null 2>&1 || gd_apt_install certbot || return 1
+    systemctl is-active --quiet nginx && nginx_on=true
+    # Port 80 dauerhaft offen lassen, sonst scheitert die automatische Erneuerung später
     if gd_ufw_active; then ufw allow 80/tcp comment "HTTP (Zertifikate)" >/dev/null; fi
-    if systemctl is-active --quiet nginx; then
-        # certbot kann ohne das nginx-Plugin installiert sein
-        certbot plugins 2>/dev/null | grep -q '^\* nginx' || gd_apt_install python3-certbot-nginx || return 1
-        certbot certonly --nginx -d "$fqdn" --email "$email" --agree-tos --no-eff-email --non-interactive
-    else
-        # Ohne Webserver: Certbot startet kurzzeitig einen eigenen auf Port 80
-        if ss -Hltn 'sport = :80' 2>/dev/null | grep -q .; then
-            echo "Port 80 ist von einem anderen Programm belegt ($(ss -Hltnp 'sport = :80' 2>/dev/null | grep -oE '"[^"]+"' | head -n1)). Das Zertifikat kann so nicht ausgestellt werden."
+    if [ -f "$cert" ]; then
+        if gd_cert_reusable "$fqdn"; then
+            auth="$(gd_certbot_auth "$fqdn")"
+            if ! $nginx_on || [ "$auth" != "standalone" ]; then
+                echo "Zertifikat für ${fqdn} ist bereits vorhanden (noch ${GD_CERT_DAYS} Tage gültig, Verfahren: ${auth:-unbekannt})."
+                return 0
+            fi
+            echo "Zertifikat für ${fqdn} ist noch ${GD_CERT_DAYS} Tage gültig, wurde aber per 'standalone' ausgestellt – nginx belegt Port 80, deshalb wird nur die Erneuerung auf Webroot umgestellt."
+            gd_acme_webroot_prepare "$fqdn"
+            if [ -n "$GD_ACME_WEBROOT" ] && gd_certbot_switch_auth "$fqdn" webroot "$GD_ACME_WEBROOT"; then
+                return 0
+            fi
+            echo "Die Umstellung hat nicht funktioniert – das Zertifikat wird neu ausgestellt."
+        else
+            echo "Vorhandenes Zertifikat für ${fqdn} wird neu ausgestellt (${GD_CERT_REASON})."
+        fi
+        force=(--force-renewal)
+    elif [ -e "$conf" ]; then
+        # Reste eines gelöschten Zertifikats würden certbot blockieren
+        certbot delete --cert-name "$fqdn" --non-interactive
+    fi
+    if $nginx_on; then
+        gd_acme_webroot_prepare "$fqdn"
+        rc=$?
+        if [ $rc -eq 0 ]; then
+            certbot certonly --webroot -w "$GD_ACME_WEBROOT" -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
+                --email "$email" --agree-tos --no-eff-email --non-interactive
+        elif [ $rc -eq 2 ]; then
+            # Fremder Server-Block für den FQDN: Certbot muss ihn selbst finden (nginx-Plugin)
+            certbot plugins 2>/dev/null | grep -q '^\* nginx' || gd_apt_install python3-certbot-nginx || return 1
+            certbot certonly --nginx -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
+                --email "$email" --agree-tos --no-eff-email --non-interactive
+        else
+            echo "Der nginx-Server-Block für die Zertifikatsprüfung konnte nicht angelegt werden."
             return 1
         fi
-        certbot certonly --standalone -d "$fqdn" --email "$email" --agree-tos --no-eff-email --non-interactive
+    else
+        # Ohne Webserver: Certbot startet kurzzeitig einen eigenen auf Port 80 – der muss frei sein
+        if ss -Hltn 'sport = :80' 2>/dev/null | grep -q .; then
+            echo "Port 80 ist von einem anderen Programm belegt ($(ss -Hltnp 'sport = :80' 2>/dev/null | grep -oE '"[^"]+"' | head -n1))."
+            echo "Let's Encrypt prüft die Domain ${fqdn} über Port 80 – das Zertifikat kann so nicht ausgestellt werden."
+            echo "Beende das Programm, das Port 80 belegt, und starte die Einrichtung erneut."
+            return 1
+        fi
+        certbot certonly --standalone -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
+            --email "$email" --agree-tos --no-eff-email --non-interactive
     fi
+}
+
+gd_ask_wings_domain() {
+    # gd_ask_wings_domain <panel-domain> "Text" – fragt eine eigene Domain für Wings ab und gibt sie aus.
+    # Wings (Port 8080 und SFTP 2022) läuft nicht über den Cloudflare-Proxy – die Domain muss direkt auf den
+    # Server zeigen ("DNS only"). Rückgabe 1 bei Abbruch.
+    local fqdn
+    while true; do
+        fqdn="$(gd_ask_domain "⇄ Domain für Wings" "$2")" || return 1
+        if gd_is_cloudflare_ip "$(gd_resolve_a "$fqdn" | head -n1)"; then
+            gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${fqdn} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) und SFTP (Port 2022) sind darüber nicht erreichbar.\n\nStelle den Eintrag in Cloudflare auf 'DNS only' (graue Wolke) oder wähle eine andere Domain." 13 76
+            continue
+        fi
+        echo "$fqdn"
+        return 0
+    done
 }
 
 gd_wings_network_prepare() {

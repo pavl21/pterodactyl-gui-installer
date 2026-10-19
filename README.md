@@ -18,7 +18,7 @@ Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germa
 
 - Debian 12 oder 13 bzw. Ubuntu 22.04, 24.04 oder 26.04 (amd64 oder arm64)
 - Root-Rechte
-- Eine Domain bzw. Subdomain, deren A-Eintrag auf den Server zeigt. Bei Cloudflare muss der Proxy dafür deaktiviert sein.
+- Eine Domain bzw. Subdomain, deren A-Eintrag auf den Server zeigt. Bei Cloudflare kann der Proxy (orange Wolke) für das Panel an bleiben, wenn du bei der Installation einen Cloudflare API-Token (Berechtigungen Zone:DNS:Edit und Zone:Zone:Read) verwendest – das Zertifikat wird dann per DNS-Challenge ausgestellt. Für Wings muss der Proxy aus sein (DNS only), dafür ist bei aktivem Proxy eine eigene Subdomain nötig.
 
 ## Was wird eingerichtet?
 

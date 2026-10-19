@@ -273,6 +273,9 @@ gd_fresh_install() {
     # --- Eingaben -------------------------------------------------------------
     GD_DOMAIN="$(gd_ask_domain "⌂ Domain für das Panel" "Gib die Domain (FQDN) ein, unter der das Panel erreichbar sein soll, z. B. panel.deinedomain.de.\n\nDer DNS-Eintrag (A-Eintrag) muss bereits auf diesen Server zeigen, das wird im nächsten Schritt geprüft.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
 
+    # Läuft die Domain über den Cloudflare-Proxy, gibt es die Wahl: Proxy ausschalten oder DNS-01 per API-Token
+    gd_ssl_method_ask "$GD_DOMAIN" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+
     GD_EMAIL="$(gd_ask_email "✉ E-Mail-Adresse" "Gib deine E-Mail-Adresse ein. Sie wird für das SSL-Zertifikat (Let's Encrypt) und dein Administrator-Konto verwendet.\n\nMit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
 
     while true; do
@@ -290,8 +293,17 @@ gd_fresh_install() {
 
     if $with_wings; then
         GD_WINGS_FQDN="$GD_DOMAIN"
-        if ! gd_yesno "⇄ Domain für Wings" "Wings (die Verbindung zu deinen Gameservern) nutzt standardmäßig dieselbe Domain wie das Panel:\n\n${GD_DOMAIN} (Port 8080)\n\nDas ist die einfachste Variante. Möchtest du diese Domain verwenden?\n\nBei 'Nein' kannst du eine eigene Subdomain angeben (z. B. node1.deinedomain.de)." 15 76; then
-            GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss ebenfalls auf diesen Server zeigen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        if [ "$GD_SSL_METHOD" = "cloudflare" ]; then
+            # Das Panel bleibt hinter dem Cloudflare-Proxy – Wings darf das nicht: Die Verbindung zu Wings (Port 8080)
+            # und SFTP (Port 2022) laufen nicht über den Proxy. Deshalb ist eine eigene Subdomain Pflicht.
+            gd_msg "⇄ Eigene Domain für Wings" "Dein Panel (${GD_DOMAIN}) bleibt hinter dem Cloudflare-Proxy. Die Verbindung zu Wings (Port 8080) und SFTP (Port 2022) laufen nicht über den Cloudflare-Proxy.\n\nWings braucht deshalb eine eigene Subdomain, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und in Cloudflare auf 'DNS only' (graue Wolke) stehen." 15 76
+            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        elif ! gd_yesno "⇄ Domain für Wings" "Wings (die Verbindung zu deinen Gameservern) nutzt standardmäßig dieselbe Domain wie das Panel:\n\n${GD_DOMAIN} (Port 8080)\n\nDas ist die einfachste Variante. Möchtest du diese Domain verwenden?\n\nBei 'Nein' kannst du eine eigene Subdomain angeben (z. B. node1.deinedomain.de)." 15 76; then
+            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss ebenfalls auf diesen Server zeigen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        elif gd_is_cloudflare_ip "$(gd_resolve_a "$GD_DOMAIN" | head -n1)"; then
+            # Über den Cloudflare-Proxy (orange Wolke) funktioniert Port 8080 nicht – die Konsole im Panel bliebe tot
+            gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${GD_DOMAIN} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) ist darüber nicht erreichbar.\n\nGib im nächsten Schritt eine eigene Subdomain für Wings an, die in Cloudflare auf 'DNS only' (graue Wolke) steht." 13 76
+            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
         fi
         while true; do
             GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024). Du kannst später im Panel weitere Ports hinzufügen." "$GD_DEFAULT_PORT_RANGE" 14 74)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
@@ -322,6 +334,7 @@ gd_fresh_install() {
     # --- Zusammenfassung ------------------------------------------------------
     local summary
     summary="Panel:         https://${GD_DOMAIN}\nVersion:       v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(Deutsch, GermanDactyl)' || echo '(Englisch)')\nE-Mail:        ${GD_EMAIL}\nBenutzername:  ${GD_ADMIN_USER}\nTelemetrie:    $( $GD_TELEMETRY && echo an || echo aus)\n"
+    summary+="Zertifikat:    $( [ "$GD_SSL_METHOD" = cloudflare ] && echo "Let's Encrypt über Cloudflare (DNS-01), Proxy bleibt an" || echo "Let's Encrypt (Webroot)")\n"
     if $with_wings; then
         summary+="Wings:         https://${GD_WINGS_FQDN}:8080 (automatisch verbunden)\nGameserver:    Ports ${GD_PORT_RANGE}\n"
     fi
@@ -335,7 +348,8 @@ gd_fresh_install() {
     # --- Installation ---------------------------------------------------------
     GD_ADMIN_PASSWORD="$(gd_gen_password 24)"
     GD_DB_PASSWORD="$(gd_gen_password 48)"
-    gd_log "Installation gestartet: mode=$mode domain=$GD_DOMAIN version=$GD_PANEL_VERSION patch=$GD_APPLY_PATCH"
+    gd_log "Installation gestartet: mode=$mode domain=$GD_DOMAIN version=$GD_PANEL_VERSION patch=$GD_APPLY_PATCH ssl=$GD_SSL_METHOD"
+    gd_conf_set SSL_METHOD "$GD_SSL_METHOD"
 
     gd_gauge_open "➜ Pterodactyl wird installiert" "Installation wird vorbereitet..."
     gd_panel_install_steps
@@ -374,6 +388,7 @@ gd_fresh_install() {
         done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dazu die Verwaltung (Befehl: $(gd_shortcut_hint)) und wähle 'Gameserver & Wings → Wings installieren/verwalten'."
     fi
     [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
+    [ "$GD_SSL_METHOD" = "cloudflare" ] && done_text+="\n\nCloudflare: Stelle unter 'SSL/TLS' den Verschlüsselungsmodus auf 'Vollständig (streng)', sonst kann es zu Weiterleitungsschleifen kommen."
     gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
     done_text+="\n\nDie Verwaltung startest du künftig einfach mit dem Befehl: $(gd_shortcut_hint)"
     gd_msg "✔ Installation erfolgreich" "$done_text" 22 78
