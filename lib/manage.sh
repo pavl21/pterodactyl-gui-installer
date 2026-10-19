@@ -344,7 +344,7 @@ gd_ports_dialog() {
             ufw allow "${ports/-/:}/tcp" comment 'Gameserver' >> "$GD_LOG" 2>&1
             ufw allow "${ports/-/:}/udp" comment 'Gameserver' >> "$GD_LOG" 2>&1
         fi
-        gd_msg "✔ Ports freigegeben" "Die Ports $ports sind im Panel angelegt$($fw && echo ' und in der Firewall geöffnet').\n\nDu kannst sie jetzt beim Erstellen oder Bearbeiten eines Servers zuweisen." 11 74
+        gd_msg "✔ Ports freigegeben" "Die Ports $ports sind im Panel angelegt$($fw && echo ' und in der Firewall geöffnet').\n\nDu kannst sie jetzt beim Erstellen oder Bearbeiten eines Servers zuweisen.\n\nHinweis: Ports laufender Gameserver öffnet Docker direkt – sie lassen sich in der Firewall nicht schließen. Entferne dazu die Port-Zuweisung im Panel." 15 74
     else
         gd_msg "✖ Fehler" "Die Ports konnten nicht angelegt werden. Details: $GD_LOG" 9 70
     fi
@@ -383,7 +383,7 @@ gd_firewall_open_dialog() {
     gd_ufw_active || {
         gd_msg "Firewall aus" "Die Firewall ist nicht aktiv – alle Ports sind bereits erreichbar." 8 64; return; }
     while true; do
-        ports="$(gd_input "✚ Port öffnen" "Welcher Port oder Bereich soll geöffnet werden? (z. B. 25565 oder 27015-27030)" "" 10 70)" || return
+        ports="$(gd_input "✚ Port öffnen" "Welcher Port oder Bereich soll geöffnet werden? (z. B. 25565 oder 27015-27030)\n\nPorts von Gameservern öffnet Docker beim Start selbst – dafür brauchst du hier keine Regel." "" 12 70)" || return
         ports="$(tr -d '[:space:]' <<< "$ports")"
         [[ "$ports" =~ ^[0-9]{1,5}$ ]] && [ "$ports" -ge 1 ] && [ "$ports" -le 65535 ] && break
         if [[ "$ports" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]] && [ "${BASH_REMATCH[1]}" -ge 1 ] \
@@ -418,6 +418,7 @@ gd_firewall_menu() {
             "4" "$($active && echo '⊘ Firewall ausschalten' || echo '✔ Firewall einschalten (SSH wird automatisch freigegeben)')") || return
         case "$c" in
             1) ufw status verbose > "$GD_TMP/ufw.txt" 2>&1
+               printf '\nHinweis: Ports laufender Gameserver öffnet Docker direkt (an UFW vorbei).\nSie stehen hier nicht und lassen sich hier nicht schließen. Entferne dazu die\nPort-Zuweisung im Panel.\n' >> "$GD_TMP/ufw.txt"
                whiptail --title "Firewall-Regeln" --scrolltext --textbox "$GD_TMP/ufw.txt" 24 90 ;;
             2) gd_firewall_open_dialog ;;
             3) $active || { gd_msg "Firewall aus" "Die Firewall ist nicht aktiv." 8 50; continue; }
@@ -427,7 +428,7 @@ gd_firewall_menu() {
                    [ -n "$num" ] && items+=("$num" "$(sed -E 's/^\[ *[0-9]+\] *//' <<< "$line" | tr -s ' ' | cut -c1-60)")
                done < <(LC_ALL=C ufw status numbered)
                [ ${#items[@]} -eq 0 ] && { gd_msg "Keine Regeln" "Es sind keine Regeln vorhanden." 8 50; continue; }
-               num=$(whiptail --title "✖ Port schließen" --menu "Welche Regel soll entfernt werden?" 20 78 10 "${items[@]}" 3>&1 1>&2 2>&3) || continue
+               num=$(whiptail --title "✖ Port schließen" --menu "Welche Regel soll entfernt werden?\n\nHinweis: Ports laufender Gameserver öffnet Docker direkt – sie lassen sich hier nicht schließen. Entferne dazu die Port-Zuweisung im Panel." 23 78 10 "${items[@]}" 3>&1 1>&2 2>&3) || continue
                rule="$(LC_ALL=C ufw status numbered | grep -E "^\[ *$num\]" | sed -E 's/^\[ *[0-9]+\] *//')"
                if { grep -qE "^($(gd_ssh_ports | paste -sd'|' -))(/tcp)?([[:space:]]|$)" <<< "$rule" || grep -qiE '^(OpenSSH|SSH)([[:space:]]|$)' <<< "$rule"; } \
                    && ! gd_yesno "⚠ SSH-Regel" "Diese Regel gibt deinen SSH-Zugang frei. Wenn du sie entfernst, kannst du dich eventuell nicht mehr verbinden!\n\nTrotzdem entfernen?" 11 70; then
@@ -435,7 +436,7 @@ gd_firewall_menu() {
                fi
                ufw --force delete "$num" >> "$GD_LOG" 2>&1 && gd_msg "✔ Entfernt" "Die Regel wurde entfernt." 8 40 ;;
             4) if $active; then
-                   gd_yesno "⊘ Firewall ausschalten" "Danach sind alle Ports des Servers von außen erreichbar. Wirklich ausschalten?" 9 70 && ufw disable >> "$GD_LOG" 2>&1
+                   gd_yesno "⊘ Firewall ausschalten" "Danach sind alle Dienste dieses Servers von außen erreichbar, auch z. B. die Datenbank, wenn sie auf allen Schnittstellen lauscht.\n\nPorts von Gameservern öffnet Docker ohnehin direkt, unabhängig von der Firewall.\n\nWirklich ausschalten?" 14 70 && ufw disable >> "$GD_LOG" 2>&1
                else
                    gd_msg "✔ Firewall einschalten" "Freigegeben werden automatisch: dein SSH-Port, 80, 443$(gd_has_wings && echo ', 8080, 2022 und die Gameserver-Ports')." 9 74
                    clear; echo "Firewall wird eingerichtet..."

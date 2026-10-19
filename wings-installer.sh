@@ -90,6 +90,10 @@ gd_wings_install_local() {
     email="$(gd_conf_get PANEL_EMAIL)"
     [ -z "$email" ] && email="$(gd_panel_env APP_SERVICE_AUTHOR)"
 
+    # Domain aus Konfiguration/.env nicht ungeprüft übernehmen
+    gd_valid_domain "$domain" \
+        || domain="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen.")" || return 1
+
     GD_WINGS_FQDN="$domain"
     if ! gd_yesno "⇄ Domain für Wings" "Wings nutzt standardmäßig die Domain des Panels:\n\n${domain} (Port 8080)\n\nMöchtest du diese Domain verwenden? Bei 'Nein' kannst du eine eigene Subdomain angeben." 13 74; then
         GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1

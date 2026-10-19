@@ -22,8 +22,13 @@ gd_firewall_setup() {
     local with_wings="$1" range="${2:-}" p
     command -v ufw >/dev/null 2>&1 || gd_apt_install ufw || return 1
 
+    # Eingehend alles sperren, was nicht ausdrücklich freigegeben wird; ausgehend alles erlauben
+    ufw default deny incoming && ufw default allow outgoing || return 1
     for p in $(gd_ssh_ports); do
-        ufw allow "$p/tcp" comment 'SSH' || return 1
+        # limit = freigeben, aber mehr als 6 Verbindungsversuche in 30 Sekunden pro IP sperren (unabhängig von fail2ban)
+        ufw limit "$p/tcp" comment 'SSH' || return 1
+        # Eine ältere "allow"-Regel für denselben Port würde die Begrenzung aushebeln (erste passende Regel gilt)
+        ufw delete allow "$p/tcp" >/dev/null 2>&1 || true
     done
     ufw allow 80/tcp comment 'HTTP (Panel, Zertifikate)' || return 1
     ufw allow 443/tcp comment 'HTTPS (Panel)' || return 1
@@ -46,6 +51,12 @@ DROP USER IF EXISTS ''@'localhost';
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 SQL
+    # Root-Konten für fremde Hosts (z. B. 'root'@'%') entfernen – nur root über localhost/Socket bleibt.
+    # Über mysql.user (bei MariaDB >= 10.4 eine Ansicht auf mysql.global_priv, davor eine Tabelle),
+    # damit es mit MariaDB 10.5 bis 11.x und MySQL gleichermaßen funktioniert.
+    gd_mysql -N -e "SELECT CONCAT('DROP USER IF EXISTS \\'', User, '\\'@\\'', Host, '\\';') FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost','127.0.0.1','::1');" 2>/dev/null \
+        | gd_mysql || return 1
+    gd_mysql -e "FLUSH PRIVILEGES;" || return 1
     # Die Beispiel-Datenbank "test" nur entfernen, wenn sie leer ist (auf bestehenden Servern evtl. in Benutzung)
     if [ "$(gd_mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='test';" 2>/dev/null)" = "0" ]; then
         gd_mysql -e "DROP DATABASE IF EXISTS test;"

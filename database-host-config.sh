@@ -89,7 +89,10 @@ if gd_ufw_active; then
         ufw allow 3306/tcp comment 'MariaDB (Database-Host)' >> "$GD_LOG" 2>&1
     else
         ufw allow from "$IP_ADDRESS" to any port 3306 proto tcp comment 'MariaDB (Panel)' >> "$GD_LOG" 2>&1
-        ufw allow from 172.16.0.0/12 to any port 3306 proto tcp comment 'MariaDB (Gameserver-Container)' >> "$GD_LOG" 2>&1
+        # Nur das Docker-Netz von Wings (config.yml, Standard 172.18.0.0/16) freigeben, nicht den ganzen Bereich 172.16.0.0/12
+        DOCKER_SUBNET="$(awk '/v4:/{f=1} f && $1=="subnet:" {print $2; exit}' /etc/pterodactyl/config.yml 2>/dev/null | tr -d "'\"")"
+        [[ "$DOCKER_SUBNET" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || DOCKER_SUBNET="172.18.0.0/16"
+        ufw allow from "$DOCKER_SUBNET" to any port 3306 proto tcp comment 'MariaDB (Gameserver-Container)' >> "$GD_LOG" 2>&1
     fi
     echo "Firewall-Regeln für Port 3306 wurden gesetzt."
 elif ! $OPEN_WORLD; then
