@@ -87,7 +87,7 @@ check_nginx_config() {
 
     if [ ! -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
         gd_yesno "Kein SSL-Zertifikat" "Für $domain wurde kein SSL-Zertifikat gefunden. Soll es jetzt erstellt werden?" 9 70 || return
-        email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:" "$(gd_conf_get PANEL_EMAIL)")" || return
+        email="$(gd_ask_email_optional "✉ E-Mail-Adresse (optional)" "E-Mail-Adresse für das SSL-Zertifikat, oder leer lassen (anonym):")" || return
         clear; echo "SSL-Zertifikat wird angefordert..."
         # Panel hinter dem Cloudflare-Proxy: das Zertifikat wurde per DNS-Challenge (API-Token) ausgestellt – Webroot
         # würde über den Proxy scheitern

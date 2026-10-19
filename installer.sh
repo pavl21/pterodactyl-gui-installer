@@ -206,7 +206,7 @@ gd_check_environment() {
 # ---------------------------------------------------------------------------
 gd_show_credentials() {
     # gd_msg_secret statt whiptail --msgbox: Das Passwort darf nicht als Argument in der Prozessliste stehen
-    gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
+    gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_ADMIN_EMAIL:-$GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
 }
 
 GD_PENDING_CREDENTIALS="/etc/germandactyl/zugangsdaten-ausstehend"
@@ -250,8 +250,8 @@ gd_install_opts_clear() {
 gd_pending_credentials_save() {
     # Zugangsdaten zwischenspeichern (nur root), bis sie am Ende angezeigt wurden
     mkdir -p "$(dirname "$GD_PENDING_CREDENTIALS")"
-    ( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
-        "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_PASSWORD" > "$GD_PENDING_CREDENTIALS" )
+    ( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
+        "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_EMAIL" "$GD_ADMIN_PASSWORD" > "$GD_PENDING_CREDENTIALS" )
 }
 
 gd_resume_install() {
@@ -319,7 +319,7 @@ gd_save_credentials() {
 GermanDactyl Setup – Zugangsdaten ($(date '+%d.%m.%Y %H:%M'))
 Panel:          https://${GD_DOMAIN}
 Benutzername:   ${GD_ADMIN_USER}
-E-Mail-Adresse: ${GD_EMAIL}
+E-Mail-Adresse: ${GD_ADMIN_EMAIL:-$GD_EMAIL}
 Passwort:       ${GD_ADMIN_PASSWORD}
 $( [ "$GD_SEC_BACKUP" = true ] && [ -s "$GD_AB_PASS" ] && echo "Backup-Passwort: $(cat "$GD_AB_PASS")")
 
@@ -344,6 +344,26 @@ gd_check_database() {
     fi
 }
 
+gd_express_panel_version() {
+    # Wie gd_choose_panel_version, aber ohne Rückfrage: Gibt es für die neueste Version keinen GermanDactyl-Patch,
+    # wird die neueste übersetzte Version genommen (Oberfläche auf Deutsch). Nur wenn beides nicht ermittelbar ist,
+    # fragt gd_choose_panel_version (Fehlermeldung).
+    local latest patch_version
+    latest="$(gd_latest_release pterodactyl/panel)"
+    if [ -n "$latest" ]; then
+        if gd_patch_exists "$latest"; then
+            GD_PANEL_VERSION="$latest"; GD_APPLY_PATCH=true
+            return 0
+        fi
+        patch_version="$(gd_patch_latest)"
+        if [ -n "$patch_version" ]; then
+            GD_PANEL_VERSION="$patch_version"; GD_APPLY_PATCH=true
+            return 0
+        fi
+    fi
+    gd_choose_panel_version
+}
+
 gd_fresh_install() {
     local mode="$1"   # panel_wings | panel
     local with_wings=false
@@ -356,44 +376,73 @@ gd_fresh_install() {
     # Läuft die Domain über den Cloudflare-Proxy, gibt es die Wahl: Proxy ausschalten oder DNS-01 per API-Token
     gd_ssl_method_ask "$GD_DOMAIN" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
 
-    GD_EMAIL="$(gd_ask_email "✉ E-Mail-Adresse" "Gib deine E-Mail-Adresse ein. Sie wird für das SSL-Zertifikat (Let's Encrypt) und dein Administrator-Konto verwendet.\n\nMit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+    # Installationsart: Express fragt nur die Domain ab, alles Weitere kommt mit sicheren Standardwerten
+    local express=false choice
+    choice="$(gd_whip --title "⚡ Installationsart" --menu "Wie soll das Panel eingerichtet werden?\n\nExpress: Du gibst nur die Domain an. Alles Weitere wird mit sicheren Standardwerten eingerichtet.\nBenutzerdefiniert: Du wählst jede Einstellung selbst." 16 78 2 \
+        "1" "Express (empfohlen): nur die Domain, alles andere automatisch" \
+        "2" "Benutzerdefiniert: jede Einstellung selbst wählen" 3>&1 1>&2 2>&3)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+    if [ "$choice" = "1" ]; then express=true; fi
 
-    while true; do
-        GD_ADMIN_USER="$(gd_input "☺ Benutzername" "Wähle einen Benutzernamen für dein Administrator-Konto (nur Buchstaben, Zahlen, Punkt, Binde- und Unterstrich):" "admin" 11 70)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
-        [[ "$GD_ADMIN_USER" =~ ^[A-Za-z0-9._-]{3,191}$ ]] && break
-        gd_msg "Ungültiger Benutzername" "Der Benutzername muss mindestens 3 Zeichen lang sein und darf nur Buchstaben, Zahlen, Punkt, Binde- und Unterstrich enthalten." 10 70
-    done
-
-    GD_TELEMETRY=false
-    if gd_yesno "☰ Anonyme Telemetrie" "Pterodactyl kann anonyme Nutzungsdaten (z. B. Versionen und Anzahl der Server, keine persönlichen Daten) an die Entwickler senden. Das hilft bei der Weiterentwicklung.\n\nMöchtest du die anonyme Telemetrie aktivieren?" 13 74; then
-        GD_TELEMETRY=true
-    fi
-
-    gd_choose_panel_version || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
-
-    if $with_wings; then
-        GD_WINGS_FQDN="$GD_DOMAIN"
-        if [ "$GD_SSL_METHOD" = "cloudflare" ]; then
-            # Das Panel bleibt hinter dem Cloudflare-Proxy – Wings darf das nicht: Die Verbindung zu Wings (Port 8080)
-            # und SFTP (Port 2022) laufen nicht über den Proxy. Deshalb ist eine eigene Subdomain Pflicht.
-            gd_msg "⇄ Eigene Domain für Wings" "Dein Panel (${GD_DOMAIN}) bleibt hinter dem Cloudflare-Proxy. Die Verbindung zu Wings (Port 8080) und SFTP (Port 2022) laufen nicht über den Cloudflare-Proxy.\n\nWings braucht deshalb eine eigene Subdomain, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und in Cloudflare auf 'DNS only' (graue Wolke) stehen." 15 76
-            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
-        elif ! gd_yesno "⇄ Domain für Wings" "Wings (die Verbindung zu deinen Gameservern) nutzt standardmäßig dieselbe Domain wie das Panel:\n\n${GD_DOMAIN} (Port 8080)\n\nDas ist die einfachste Variante. Möchtest du diese Domain verwenden?\n\nBei 'Nein' kannst du eine eigene Subdomain angeben (z. B. node1.deinedomain.de)." 15 76; then
-            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss ebenfalls auf diesen Server zeigen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
-        elif gd_is_cloudflare_ip "$(gd_resolve_a "$GD_DOMAIN" | head -n1)"; then
-            # Über den Cloudflare-Proxy (orange Wolke) funktioniert Port 8080 nicht – die Konsole im Panel bliebe tot
-            gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${GD_DOMAIN} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) ist darüber nicht erreichbar.\n\nGib im nächsten Schritt eine eigene Subdomain für Wings an, die in Cloudflare auf 'DNS only' (graue Wolke) steht." 13 76
-            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+    if $express; then
+        # Standardwerte, ohne weitere Rückfragen (Ausnahme: Wings-Domain, wenn das Panel hinter Cloudflare liegt)
+        GD_EMAIL=""   # anonym: Zertifikat ohne Kontakt-Adresse
+        GD_ADMIN_EMAIL="$(gd_admin_email "" "$GD_DOMAIN")"
+        GD_ADMIN_USER="admin"
+        GD_TELEMETRY=false
+        gd_express_panel_version || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        if $with_wings; then
+            GD_PORT_RANGE="$GD_DEFAULT_PORT_RANGE"
+            GD_WINGS_FQDN="$GD_DOMAIN"
+            if [ "$GD_SSL_METHOD" = "cloudflare" ] || gd_is_cloudflare_ip "$(gd_resolve_a "$GD_DOMAIN" | head -n1)"; then
+                # Wings (Port 8080, SFTP 2022) funktioniert nicht über den Cloudflare-Proxy, daher ist hier eine eigene Domain Pflicht
+                gd_msg "⇄ Eigene Domain für Wings" "Dein Panel (${GD_DOMAIN}) läuft über den Cloudflare-Proxy. Wings (Port 8080) und SFTP (Port 2022) laufen nicht über den Proxy, deshalb braucht Wings eine eigene Subdomain.\n\nSie muss auf diesen Server zeigen und in Cloudflare auf 'DNS only' (graue Wolke) stehen." 15 76
+                GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+            fi
         fi
-        while true; do
-            GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024). Du kannst später im Panel weitere Ports hinzufügen." "$GD_DEFAULT_PORT_RANGE" 14 74)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
-            gd_valid_port_range "$GD_PORT_RANGE" && break
-            gd_msg "Ungültiger Portbereich" "Bitte gib einen Bereich wie 25565-25600 an (größer als 1024, höchstens 65535, maximal 1000 Ports)." 10 70
-        done
-    fi
+        GD_SEC_UFW=true; GD_SEC_FAIL2BAN=true; GD_SEC_UPDATES=true; GD_SEC_BACKUP=true
+        GD_BLUEPRINT=false
+        if gd_blueprint_supported; then GD_BLUEPRINT=true; fi
+    else
+        GD_EMAIL="$(gd_ask_email_optional "✉ E-Mail-Adresse (optional)" "Optional: Gib deine E-Mail-Adresse ein oder lass das Feld leer (anonym).\n\nMit E-Mail: Let's Encrypt kann dich vor Ablauf des Zertifikats warnen, und sie wird als Adresse deines Administrator-Kontos verwendet.\nOhne E-Mail: Das Zertifikat wird ohne Kontakt-Adresse ausgestellt (GermanDactyl Setup überwacht die Erneuerung selbst), dein Administrator-Konto erhält admin@${GD_DOMAIN}. Du kannst die Adresse später im Panel ändern.\n\nIn beiden Fällen stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        GD_ADMIN_EMAIL="$(gd_admin_email "$GD_EMAIL" "$GD_DOMAIN")"
 
-    gd_security_ask
-    gd_blueprint_ask
+        while true; do
+            GD_ADMIN_USER="$(gd_input "☺ Benutzername" "Wähle einen Benutzernamen für dein Administrator-Konto (nur Buchstaben, Zahlen, Punkt, Binde- und Unterstrich):" "admin" 11 70)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+            [[ "$GD_ADMIN_USER" =~ ^[A-Za-z0-9._-]{3,191}$ ]] && break
+            gd_msg "Ungültiger Benutzername" "Der Benutzername muss mindestens 3 Zeichen lang sein und darf nur Buchstaben, Zahlen, Punkt, Binde- und Unterstrich enthalten." 10 70
+        done
+
+        GD_TELEMETRY=false
+        if gd_yesno "☰ Anonyme Telemetrie" "Pterodactyl kann anonyme Nutzungsdaten (z. B. Versionen und Anzahl der Server, keine persönlichen Daten) an die Entwickler senden. Das hilft bei der Weiterentwicklung.\n\nMöchtest du die anonyme Telemetrie aktivieren?" 13 74; then
+            GD_TELEMETRY=true
+        fi
+
+        gd_choose_panel_version || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+
+        if $with_wings; then
+            GD_WINGS_FQDN="$GD_DOMAIN"
+            if [ "$GD_SSL_METHOD" = "cloudflare" ]; then
+                # Das Panel bleibt hinter dem Cloudflare-Proxy – Wings darf das nicht: Die Verbindung zu Wings (Port 8080)
+                # und SFTP (Port 2022) laufen nicht über den Proxy. Deshalb ist eine eigene Subdomain Pflicht.
+                gd_msg "⇄ Eigene Domain für Wings" "Dein Panel (${GD_DOMAIN}) bleibt hinter dem Cloudflare-Proxy. Die Verbindung zu Wings (Port 8080) und SFTP (Port 2022) laufen nicht über den Cloudflare-Proxy.\n\nWings braucht deshalb eine eigene Subdomain, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und in Cloudflare auf 'DNS only' (graue Wolke) stehen." 15 76
+                GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+            elif ! gd_yesno "⇄ Domain für Wings" "Wings (die Verbindung zu deinen Gameservern) nutzt standardmäßig dieselbe Domain wie das Panel:\n\n${GD_DOMAIN} (Port 8080)\n\nDas ist die einfachste Variante. Möchtest du diese Domain verwenden?\n\nBei 'Nein' kannst du eine eigene Subdomain angeben (z. B. node1.deinedomain.de)." 15 76; then
+                GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss ebenfalls auf diesen Server zeigen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+            elif gd_is_cloudflare_ip "$(gd_resolve_a "$GD_DOMAIN" | head -n1)"; then
+                # Über den Cloudflare-Proxy (orange Wolke) funktioniert Port 8080 nicht – die Konsole im Panel bliebe tot
+                gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${GD_DOMAIN} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) ist darüber nicht erreichbar.\n\nGib im nächsten Schritt eine eigene Subdomain für Wings an, die in Cloudflare auf 'DNS only' (graue Wolke) steht." 13 76
+                GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+            fi
+            while true; do
+                GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024). Du kannst später im Panel weitere Ports hinzufügen." "$GD_DEFAULT_PORT_RANGE" 14 74)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+                gd_valid_port_range "$GD_PORT_RANGE" && break
+                gd_msg "Ungültiger Portbereich" "Bitte gib einen Bereich wie 25565-25600 an (größer als 1024, höchstens 65535, maximal 1000 Ports)." 10 70
+            done
+        fi
+
+        gd_security_ask
+        gd_blueprint_ask
+    fi
 
     # Reste einer früheren Installation in der Datenbank?
     if command -v mariadb >/dev/null 2>&1 && gd_panel_db_has_tables; then
@@ -413,7 +462,7 @@ gd_fresh_install() {
 
     # --- Zusammenfassung ------------------------------------------------------
     local summary
-    summary="Panel:         https://${GD_DOMAIN}\nVersion:       v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(Deutsch, GermanDactyl)' || echo '(Englisch)')\nE-Mail:        ${GD_EMAIL}\nBenutzername:  ${GD_ADMIN_USER}\nTelemetrie:    $( $GD_TELEMETRY && echo an || echo aus)\n"
+    summary="Panel:         https://${GD_DOMAIN}\nVersion:       v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(Deutsch, GermanDactyl)' || echo '(Englisch)')\nE-Mail:        $( [ -n "$GD_EMAIL" ] && echo "$GD_EMAIL" || echo "keine (anonym), Konto: ${GD_ADMIN_EMAIL}")\nBenutzername:  ${GD_ADMIN_USER}\nTelemetrie:    $( $GD_TELEMETRY && echo an || echo aus)\n"
     summary+="Zertifikat:    $( [ "$GD_SSL_METHOD" = cloudflare ] && echo "Let's Encrypt über Cloudflare (DNS-01), Proxy bleibt an" || echo "Let's Encrypt (Webroot)")\n"
     if $with_wings; then
         summary+="Wings:         https://${GD_WINGS_FQDN}:8080 (automatisch verbunden)\nGameserver:    Ports ${GD_PORT_RANGE}\n"
@@ -421,6 +470,9 @@ gd_fresh_install() {
     summary+="Firewall:      $( [ "$GD_SEC_UFW" = true ] && echo an || echo aus)   fail2ban: $( [ "$GD_SEC_FAIL2BAN" = true ] && echo an || echo aus)   Auto-Updates: $( [ "$GD_SEC_UPDATES" = true ] && echo an || echo aus)\n"
     summary+="Backups:       $( [ "$GD_SEC_BACKUP" = true ] && echo 'täglich 04:00 Uhr, inkrementell' || echo aus)\n"
     summary+="Blueprint:     $( [ "${GD_BLUEPRINT:-false}" = true ] && echo 'wird installiert' || echo 'nein')"
+    if $express; then
+        summary="Modus:         Express (Standardwerte)\n${summary}"
+    fi
     if ! whiptail --title "☰ Zusammenfassung" --yesno "Bitte prüfe deine Angaben:\n\n${summary}\n\nDie Installation dauert je nach Server 5 bis 20 Minuten. Soll sie jetzt starten?" 22 80; then
         clear; echo "Die Installation wurde abgebrochen."; exit 0
     fi

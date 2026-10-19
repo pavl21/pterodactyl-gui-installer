@@ -496,8 +496,9 @@ gd_certbot_webroot() {
         # Reste eines gelöschten Zertifikats würden certbot blockieren
         certbot delete --cert-name "$domain" --non-interactive
     fi
+    gd_certbot_mail_args "$email"
     certbot certonly --webroot -w "$webroot" -d "$domain" --cert-name "$domain" "${extra[@]}" \
-        --email "$email" --agree-tos --no-eff-email --non-interactive
+        "${GD_CERTBOT_MAIL[@]}" --agree-tos --no-eff-email --non-interactive
 }
 
 # ---------------------------------------------------------------------------
@@ -603,8 +604,9 @@ gd_certbot_dns_cloudflare() {
     elif [ -e "$conf" ]; then
         certbot delete --cert-name "$domain" --non-interactive
     fi
+    gd_certbot_mail_args "$email"
     certbot certonly --dns-cloudflare --dns-cloudflare-credentials "$GD_CF_INI" --dns-cloudflare-propagation-seconds 30 \
-        -d "$domain" --cert-name "$domain" "${extra[@]}" -m "$email" --agree-tos --no-eff-email --non-interactive
+        -d "$domain" --cert-name "$domain" "${extra[@]}" "${GD_CERTBOT_MAIL[@]}" --agree-tos --no-eff-email --non-interactive
 }
 
 gd_ssl_method_ask() {
@@ -691,7 +693,7 @@ gd_panel_configure() {
         gd_env_set REDIS_PASSWORD "$rpass" || return 1
     fi
     php artisan p:environment:setup --no-interaction \
-        --author="$email" --url="https://${domain}" --timezone="$GD_TIMEZONE" \
+        --author="${email:-$(gd_admin_email "" "$domain")}" --url="https://${domain}" --timezone="$GD_TIMEZONE" \
         --cache=redis --session=redis --queue=redis \
         --redis-host=127.0.0.1 --redis-port=6379 \
         --settings-ui=true --telemetry="$telemetry" || return 1
@@ -811,10 +813,12 @@ gd_artisan_www() {
 # Komplette Installation (wird aus installer.sh aufgerufen)
 # ---------------------------------------------------------------------------
 gd_panel_install_steps() {
-    # Erwartet: GD_DOMAIN, GD_EMAIL, GD_ADMIN_USER, GD_ADMIN_PASSWORD, GD_DB_PASSWORD, GD_TELEMETRY,
+    # Erwartet: GD_DOMAIN, GD_EMAIL (darf leer sein = anonym), GD_ADMIN_USER, GD_ADMIN_PASSWORD, GD_DB_PASSWORD, GD_TELEMETRY,
     #           GD_PANEL_VERSION, GD_APPLY_PATCH (aus gd_choose_panel_version), optional GD_SSL_METHOD (webroot|cloudflare)
     # Markierung: Bricht die Installation ab, erkennt der nächste Start die unvollständige Installation
     gd_conf_set INSTALL_STATE laeuft
+    local admin_email
+    admin_email="${GD_ADMIN_EMAIL:-$(gd_admin_email "$GD_EMAIL" "$GD_DOMAIN")}"
     gd_step 2  "Paketquellen werden aktualisiert..." gd_apt_update
     gd_step 5  "PHP ${GD_PHP_VERSION}-Paketquelle wird eingerichtet..." gd_php_repo
     gd_step 10 "PHP ${GD_PHP_VERSION} wird installiert..." gd_php_packages
@@ -834,7 +838,7 @@ gd_panel_install_steps() {
     gd_step 39 "Datenbank für das Panel wird angelegt..." gd_panel_database "$GD_DB_PASSWORD"
     gd_step 42 "Composer-Abhängigkeiten werden installiert (dauert etwas)..." gd_panel_composer
     gd_step 52 "Panel wird konfiguriert und die Datenbank eingerichtet..." gd_panel_configure "$GD_DOMAIN" "$GD_EMAIL" "$GD_DB_PASSWORD" "$GD_TELEMETRY"
-    gd_step 58 "Administrator-Konto wird angelegt..." gd_panel_admin "$GD_EMAIL" "$GD_ADMIN_USER" "$GD_ADMIN_PASSWORD"
+    gd_step 58 "Administrator-Konto wird angelegt..." gd_panel_admin "$admin_email" "$GD_ADMIN_USER" "$GD_ADMIN_PASSWORD"
     gd_step 60 "Berechtigungen werden gesetzt..." gd_panel_permissions
     gd_step 62 "Cronjob und Hintergrunddienst (Queue) werden eingerichtet..." gd_panel_services
     # Reihenfolge wichtig: Blueprint ersetzt Dateien der Oberfläche, die Übersetzung kommt danach

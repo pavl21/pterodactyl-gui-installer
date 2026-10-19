@@ -61,22 +61,30 @@ gd_wings_manage() {
 }
 
 gd_swap_dialog() {
-    local size
-    if [ -e /swapfile ]; then
-        gd_msg "Swap vorhanden" "Es existiert bereits eine Swap-Datei. Du kannst sie in der Verwaltung unter 'Gameserver & Wings → Swap-Speicher verwalten' anpassen." 9 70
+    # Richtet den Swap-Speicher ohne Rückfrage ein (Name beibehalten, der Aufruf aus der Verwaltung bleibt gleich).
+    # Ist schon Swap aktiv, passiert nichts. Sonst entspricht die Größe dem RAM (mindestens 1024, höchstens 4096 MB);
+    # angelegt wird nur, wenn auf / danach noch 5 GB frei bleiben. Meldungen gehen ausschließlich ins Log: In einem
+    # Container ohne Swap-Unterstützung bricht die Einrichtung deshalb nicht ab.
+    local ram swap_total size free
+    swap_total="$(LC_ALL=C free -m | awk '/^Swap:/{print $2}')"
+    [[ "$swap_total" =~ ^[0-9]+$ ]] && [ "$swap_total" -gt 0 ] && return 0
+    ram="$(LC_ALL=C free -m | awk '/^Mem:/{print $2}')"
+    [[ "$ram" =~ ^[0-9]+$ ]] || ram=0
+    size=$(( ram ))
+    [ "$size" -gt 4096 ] && size=4096
+    [ "$size" -lt 1024 ] && size=1024
+    free="$(LC_ALL=C df -Pm / | awk 'NR==2{print $4}')"
+    [[ "$free" =~ ^[0-9]+$ ]] || free=0
+    if [ "$free" -lt $(( size + 5120 )) ]; then
+        gd_log "Kein Swap angelegt: zu wenig freier Speicherplatz (frei: ${free} MB, benötigt: $(( size + 5120 )) MB)."
         return 0
     fi
-    gd_yesno "Swap-Speicher" "Möchtest du Swap-Speicher einrichten? Er wird genutzt, wenn der Arbeitsspeicher knapp wird." 9 70 || return 0
-    while true; do
-        size="$(gd_input "Swap-Speicher erstellen" "Gib die gewünschte Swap-Größe in MB ein (z. B. 2048):" "2048" 10 60)" || return 0
-        [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -ge 256 ] && break
-        gd_msg "Ungültige Eingabe" "Bitte gib eine Zahl ab 256 ein." 8 50
-    done
     if gd_swap_create "$size" >> "$GD_LOG" 2>&1; then
-        gd_msg "Swap-Speicher erstellt" "Swap-Speicher mit ${size} MB wurde erstellt, aktiviert und bleibt auch nach einem Neustart erhalten." 9 70
+        gd_log "Swap-Speicher mit ${size} MB angelegt und aktiviert."
     else
-        gd_msg "Fehler" "Der Swap-Speicher konnte nicht erstellt werden. Details: $GD_LOG" 9 70
+        gd_log "Swap-Speicher konnte nicht angelegt werden (oft fehlt Swap-Unterstützung im Container). Details siehe oben."
     fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -87,8 +95,16 @@ gd_wings_install_local() {
     local domain email
     domain="$(gd_conf_get PANEL_DOMAIN)"
     [ -z "$domain" ] && domain="$(gd_panel_env APP_URL | sed 's#^https\?://##; s#/.*##')"
+    # Schlüssel PANEL_EMAIL vorhanden, aber leer = Panel wurde bewusst anonym installiert (keine Nachfrage)
+    local anon=false
     email="$(gd_conf_get PANEL_EMAIL)"
-    [ -z "$email" ] && email="$(gd_panel_env APP_SERVICE_AUTHOR)"
+    if [ -z "$email" ]; then
+        if gd_conf_has PANEL_EMAIL; then
+            anon=true
+        else
+            email="$(gd_panel_env APP_SERVICE_AUTHOR)"
+        fi
+    fi
 
     # Domain aus Konfiguration/.env nicht ungeprüft übernehmen
     gd_valid_domain "$domain" \
@@ -102,8 +118,8 @@ gd_wings_install_local() {
         gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${domain} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) ist darüber nicht erreichbar.\n\nGib im nächsten Schritt eine eigene Subdomain für Wings an, die in Cloudflare auf 'DNS only' (graue Wolke) steht." 13 76
         GD_WINGS_FQDN="$(gd_ask_wings_domain "$domain" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
     fi
-    if ! gd_valid_email "$email"; then
-        email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:")" || return 1
+    if ! $anon && ! gd_valid_email "$email"; then
+        email="$(gd_ask_email_optional "✉ E-Mail-Adresse (optional)" "Optional: Gib eine E-Mail-Adresse für das SSL-Zertifikat ein oder lass das Feld leer. Ohne Angabe wird das Zertifikat ohne Kontakt-Adresse ausgestellt (anonym).\n\nMit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu, ohne Eingabe ebenfalls:\nhttps://letsencrypt.org/repository/")" || return 1
     fi
     GD_EMAIL="$email"
 
@@ -137,7 +153,7 @@ gd_wings_install_local() {
 gd_wings_install_remote() {
     # Panel liegt auf einem anderen Server -> Installation + Verbindung per Token-Befehl aus dem Panel
     GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de.\n\nDer DNS-Eintrag muss auf diesen Server zeigen.")" || return 1
-    GD_EMAIL="$(gd_ask_email "✉ E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu. Das Zertifikat wird automatisch erneuert.")" || return 1
+    GD_EMAIL="$(gd_ask_email_optional "✉ E-Mail für Let's Encrypt (optional)" "Optional: Gib eine E-Mail-Adresse für das SSL-Zertifikat ein oder lass das Feld leer (anonym, ohne Kontakt-Adresse). Das Zertifikat wird in beiden Fällen automatisch erneuert.\n\nDu stimmst den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || return 1
 
     gd_gauge_open "⇄ Wings wird installiert" "Installation wird vorbereitet..."
     gd_wings_remote_steps 5

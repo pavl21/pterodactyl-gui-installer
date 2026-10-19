@@ -52,6 +52,7 @@ gd_cleanup() {
         done
         GD_APT_TIMERS_STOPPED=""
     fi
+    declare -F gd_step_creep_stop >/dev/null && gd_step_creep_stop
     declare -F gd_build_swap_off >/dev/null && gd_build_swap_off
     [ -n "${GD_TMP:-}" ] && rm -rf "$GD_TMP"
     [ -z "${GD_LOCAL_DIR:-}" ] && [ -n "${GD_LIB_DIR:-}" ] && rm -rf "$GD_LIB_DIR"
@@ -126,6 +127,31 @@ whiptail() {
         case "${args[i]}" in
             --msgbox|--yesno|--inputbox|--passwordbox|--textbox|--gauge|--menu|--checklist|--radiolist|--infobox)
                 local h="${args[i+2]:-0}" w="${args[i+3]:-0}"
+                # Menüs und Checklisten: alle Einträge ausgeklappt zeigen. Die Listenhöhe wird auf die Anzahl der
+                # Einträge gesetzt, die Dialoghöhe mindestens auf Textzeilen + Einträge + 7. Die Verkleinerung für
+                # kleine Terminals folgt danach und reduziert die Listenhöhe wieder mit.
+                if [[ "${args[i]}" =~ ^--(menu|checklist|radiolist)$ ]] && [[ "$w" =~ ^[0-9]+$ ]] \
+                    && [[ "${args[i+4]:-}" =~ ^[0-9]+$ ]]; then
+                    local step=2 cnt=0 j tl fw=$(( w - 4 )) need
+                    [ "${args[i]}" = --menu ] || step=3
+                    # Einträge ab Index i+5: bei --menu Paare (Tag Text), sonst Dreiergruppen (Tag Text Status).
+                    # Gezählt wird nur bis zu einem Argument, das mit "--" beginnt (z. B. --default-item).
+                    j=$((i + 5))
+                    while [ "$j" -lt "${#args[@]}" ] && [[ "${args[j]}" != --* ]]; do
+                        cnt=$((cnt + 1))
+                        j=$((j + step))
+                    done
+                    if [ "$cnt" -gt 0 ]; then
+                        [ "${args[i+4]}" -lt "$cnt" ] && args[i+4]=$cnt
+                        [ "$fw" -ge 1 ] || fw=66
+                        tl="$(printf '%b' "${args[i+1]:-}" | fold -s -w "$fw" | grep -c '')"
+                        need=$(( tl + cnt + 7 ))
+                        if [[ "$h" =~ ^[0-9]+$ ]] && [ "$need" -gt "$h" ]; then
+                            h=$need
+                            args[i+2]=$need
+                        fi
+                    fi
+                fi
                 if [[ "$h" =~ ^[0-9]+$ ]] && [ "$h" -gt $((rows - 1)) ]; then
                     args[i+2]=$((rows - 1))
                     case "${args[i]}" in --msgbox|--yesno) extra=(--scrolltext) ;; esac
@@ -158,10 +184,29 @@ gd_whip() {
     fi
 }
 
+gd_center_lines() {
+    # gd_center_lines "Text" – richtet jede Zeile des Textes mittig auf 74 Zeichen aus. Zeilen sind durch \n getrennt
+    # (wörtlich oder als Zeilenumbruch). Nachgestellte Leerzeichen werden entfernt. Ausgabe: zentrierter Text mit
+    # wörtlichen \n als Trenner (wie das Eingabeformat von GD_STATUS).
+    local line pad out="" first=true
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%"${line##*[![:space:]]}"}"
+        pad=$(( (74 - ${#line}) / 2 )); [ "$pad" -gt 0 ] && [ -n "$line" ] || pad=0
+        $first || out+='\n'
+        first=false
+        out+="$(printf '%*s%s' "$pad" '' "$line")"
+    done < <(printf '%b' "$1")
+    printf '%s' "$out"
+}
+
 gd_msg() {
     # gd_msg "Titel" "Text" [höhe] [breite]
     [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Meldung] $1: $(printf '%b' "$2" | tr '\n' ' ')"; return 0; }
-    gd_whip --title "$1" --msgbox "$2" "${3:-12}" "${4:-70}"
+    # Höhe für lange Texte schätzen: sonst schneidet whiptail unten ab
+    local h="${3:-12}" lines
+    lines=$(printf '%b' "$2" | fold -s -w $(( ${4:-70} - 4 )) | grep -c '')
+    [ $((lines + 6)) -gt "$h" ] && h=$((lines + 6))
+    gd_whip --title "$1" --msgbox "$2" "$h" "${4:-70}"
 }
 
 gd_msg_secret() {
@@ -183,7 +228,11 @@ gd_yesno() {
     # gd_yesno "Titel" "Text" [höhe] [breite]  -> Rückgabe 0 = Ja
     # Headless gibt es keine Rückfrage: immer "Nein"
     [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Rückfrage, automatisch Nein] $1"; return 1; }
-    gd_whip --title "$1" --yesno "$2" "${3:-12}" "${4:-70}"
+    # Höhe für lange Texte schätzen: sonst schneidet whiptail unten ab
+    local h="${3:-12}" lines
+    lines=$(printf '%b' "$2" | fold -s -w $(( ${4:-70} - 4 )) | grep -c '')
+    [ $((lines + 6)) -gt "$h" ] && h=$((lines + 6))
+    gd_whip --title "$1" --yesno "$2" "$h" "${4:-70}"
 }
 
 gd_input() {
@@ -216,11 +265,23 @@ gd_warn_colors_off() {
 # ---------------------------------------------------------------------------
 GD_GAUGE_OPEN=0
 
+gd_gauge_text() {
+    # gd_gauge_text "Text" – Text für den Fortschrittsbalken: bei mehr als 72 Zeichen umbrechen und jede Zeile
+    # mittig ausrichten (der Balken ist 78 Zeichen breit, innen 74). Leerzeilen davor rücken den Text in die Mitte.
+    local line pad out=""
+    while IFS= read -r line; do
+        pad=$(( (74 - ${#line}) / 2 )); [ "$pad" -gt 0 ] || pad=0
+        out+="$(printf '%*s%s' "$pad" '' "$line")"$'\n'
+    done < <(printf '%s' "$1" | fold -s -w 72)
+    printf '\n%s' "${out%$'\n'}"
+}
+
 gd_gauge_open() {
     # gd_gauge_open "Titel" "Starttext"
     [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "== $1: $2"; return 0; }
-    exec 7> >(whiptail --title "$1" --gauge "$2" 10 78 0)
+    exec 7> >(whiptail --title "$1" --gauge "$(gd_gauge_text "$2")" 10 78 0)
     GD_GAUGE_OPEN=1
+    GD_STEP_LAST_PCT=0; GD_STEP_LAST_GAP=5
 }
 
 gd_progress() {
@@ -232,7 +293,10 @@ gd_progress() {
     if [ "$GD_GAUGE_OPEN" = "1" ]; then
         # In einer Subshell schreiben: Ist whiptail beendet, trifft das SIGPIPE nur die Subshell
         # und nicht die laufende Installation. Danach wird ohne Balken weitergearbeitet.
-        if ! ( printf 'XXX\n%d\n%s\nXXX\n' "$1" "$2" >&7 ) 2>/dev/null; then
+        # Lange Texte umbrechen: Der Balken ist 78 Zeichen breit und schneidet sonst einfach ab
+        local text
+        text="$(gd_gauge_text "$2")"
+        if ! ( printf 'XXX\n%d\n%s\nXXX\n' "$1" "$text" >&7 ) 2>/dev/null; then
             GD_GAUGE_OPEN=0
             { exec 7>&-; } 2>/dev/null   # nur den Balken schließen, stderr des Skripts unverändert lassen
             echo "[$1%] $2"
@@ -244,6 +308,7 @@ gd_progress() {
 
 gd_gauge_close() {
     [ "${GD_HEADLESS:-}" = 1 ] && return 0
+    gd_step_creep_stop
     if [ "$GD_GAUGE_OPEN" = "1" ]; then
         exec 7>&-
         GD_GAUGE_OPEN=0
@@ -251,24 +316,80 @@ gd_gauge_close() {
     fi
 }
 
+# Der Balken soll auch während eines langen Schritts (Build, Composer, Download) sichtbar weiterlaufen und nicht
+# minutenlang bei einem Wert stehen. Dazu läuft im Hintergrund ein "Schleicher", der den Wert langsam Richtung
+# des nächsten Schritts bewegt (asymptotisch, erreicht ihn nie). Der Befehl selbst läuft weiter im Vordergrund,
+# damit Funktionen ihre globalen Variablen (z. B. GD_WARNINGS) setzen können.
+GD_STEP_LAST_PCT=0
+GD_STEP_LAST_GAP=5
+GD_CREEP_PID=""
+
+gd_step_creep_start() {
+    # gd_step_creep_start <prozent> "Text" – Hintergrundzähler starten (nur bei offenem Balken)
+    local pct="$1" text="$2" gap target
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
+    [ "$GD_GAUGE_OPEN" = "1" ] || return 0
+    [[ "$pct" =~ ^[0-9]+$ ]] || return 0
+    # Abstand zum nächsten Schritt ist unbekannt: der Abstand zum vorherigen Schritt ist die beste Schätzung
+    gap=$(( pct - GD_STEP_LAST_PCT ))
+    [ "$gap" -ge 2 ] || gap="$GD_STEP_LAST_GAP"
+    [ "$gap" -ge 2 ] || gap=5
+    GD_STEP_LAST_PCT="$pct"; GD_STEP_LAST_GAP="$gap"
+    target=$(( pct + gap - 1 )); [ "$target" -gt 99 ] && target=99
+    [ "$target" -gt "$pct" ] || return 0
+    text="$(gd_gauge_text "$text")"
+    (
+        # Rechnung in Hundertsteln: pro Sekunde ein Neunzigstel des Restwegs (nach 1 Minute etwa die Hälfte,
+        # nach 5 Minuten fast alles), zum Schluss mindestens ein Hundertstel pro Sekunde
+        val=$(( pct * 100 )); end=$(( target * 100 )); shown="$pct"
+        while sleep 1; do
+            step=$(( (end - val) / 90 )); [ "$step" -ge 1 ] || step=1
+            val=$(( val + step )); [ "$val" -gt "$end" ] && val="$end"
+            if [ $(( val / 100 )) -ne "$shown" ]; then
+                shown=$(( val / 100 ))
+                printf 'XXX\n%d\n%s\nXXX\n' "$shown" "$text" >&7 2>/dev/null || exit 0
+            fi
+            [ "$val" -ge "$end" ] && exit 0
+        done
+    ) &
+    GD_CREEP_PID=$!
+    return 0
+}
+
+gd_step_creep_stop() {
+    if [ -n "${GD_CREEP_PID:-}" ]; then
+        kill "$GD_CREEP_PID" 2>/dev/null
+        wait "$GD_CREEP_PID" 2>/dev/null
+        GD_CREEP_PID=""
+    fi
+    return 0
+}
+
 gd_step() {
     # gd_step <prozent> "Text" befehl [argumente...]
     # Führt den Befehl aus, Ausgabe landet im Log. Bei Fehler: Abbruch mit Log-Auszug.
-    local pct="$1" text="$2"
+    local pct="$1" text="$2" rc=0
     shift 2
+    gd_step_creep_stop
     gd_progress "$pct" "$text"
-    if ! "$@" >> "$GD_LOG" 2>&1; then
+    gd_step_creep_start "$pct" "$text"
+    "$@" >> "$GD_LOG" 2>&1 || rc=$?
+    gd_step_creep_stop
+    if [ "$rc" -ne 0 ]; then
         gd_fail "$text"
     fi
 }
-
 gd_step_optional() {
     # gd_step_optional <prozent> "Text" "Warnung bei Fehler" befehl [argumente...]
     # Wie gd_step, bricht aber nicht ab: der Fehler wird gesammelt (GD_WARNINGS) und am Ende angezeigt
-    local pct="$1" text="$2" warn="$3"
+    local pct="$1" text="$2" warn="$3" rc=0
     shift 3
+    gd_step_creep_stop
     gd_progress "$pct" "$text"
-    if ! "$@" >> "$GD_LOG" 2>&1; then
+    gd_step_creep_start "$pct" "$text"
+    "$@" >> "$GD_LOG" 2>&1 || rc=$?
+    gd_step_creep_stop
+    if [ "$rc" -ne 0 ]; then
         gd_log "WARNUNG: $warn"
         GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ $warn"
     fi
@@ -814,6 +935,48 @@ gd_ask_email() {
         fi
         gd_msg "E-Mail-Adresse ungültig" "Bitte prüfe die E-Mail-Adresse und versuche es erneut." 9 60
     done
+}
+
+gd_ask_email_optional() {
+    # gd_ask_email_optional "Titel" "Text" -> gibt eine geprüfte E-Mail ODER einen leeren String aus (Feld leer =
+    # anonym). Rückgabe 1 nur bei Abbruch.
+    local title="$1" text="$2" value=""
+    while true; do
+        value="$(gd_input "$title" "$text" "$value" 22 78)" || return 1
+        value="$(tr -d '[:space:]' <<< "$value")"
+        if [ -z "$value" ]; then
+            return 0
+        fi
+        if gd_valid_email "$value"; then
+            echo "$value"
+            return 0
+        fi
+        gd_msg "E-Mail-Adresse ungültig" "Bitte prüfe die E-Mail-Adresse und versuche es erneut oder lass das Feld leer." 9 60
+    done
+}
+
+gd_certbot_mail_args() {
+    # gd_certbot_mail_args <email> – setzt das Array GD_CERTBOT_MAIL für certbot (leere E-Mail = ohne Kontakt-Adresse).
+    # Verwendung: gd_certbot_mail_args "$email"; certbot ... "${GD_CERTBOT_MAIL[@]}" ...
+    if [ -z "${1:-}" ]; then
+        GD_CERTBOT_MAIL=(--register-unsafely-without-email)
+    else
+        GD_CERTBOT_MAIL=(--email "$1")
+    fi
+}
+
+gd_admin_email() {
+    # gd_admin_email <email> <domain> – Adresse des Administrator-Kontos: die E-Mail oder admin@<domain>
+    if [ -n "${1:-}" ]; then
+        printf '%s' "$1"
+    else
+        printf 'admin@%s' "${2:-}"
+    fi
+}
+
+gd_conf_has() {
+    # gd_conf_has KEY – Rückgabe 0, wenn der Schlüssel in der Konfiguration steht (auch mit leerem Wert)
+    [ -r "$GD_CONF_FILE" ] && grep -q "^$1=" "$GD_CONF_FILE"
 }
 
 # ---------------------------------------------------------------------------

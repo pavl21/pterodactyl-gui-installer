@@ -399,7 +399,7 @@ gd_update_check() {
 # Hauptmenü
 # ---------------------------------------------------------------------------
 gd_main_menu() {
-    local choice items
+    local choice items menu_text
     gd_shortcut_install >/dev/null 2>&1
     # Das Skript der geplanten Updates mit der aktuellen Vorlage erneuern (Branch, Repository)
     gd_autoupdate_enabled && gd_autoupdate_write_script >/dev/null 2>&1
@@ -421,7 +421,9 @@ gd_main_menu() {
         items+=("8" "✖ Deinstallieren")
         items+=("0" "⊗ Beenden")
 
-        choice=$(whiptail --title "GermanDactyl Verwaltung" --menu "$GD_STATUS" $(( ${#items[@]} / 2 + 8 + GD_STATUS_LINES )) 78 $(( ${#items[@]} / 2 )) "${items[@]}" 3>&1 1>&2 2>&3) || choice=0
+        # Statuszeilen mittig über dem Menü ausrichten
+        menu_text="$(gd_center_lines "$GD_STATUS")"
+        choice=$(whiptail --title "GermanDactyl Verwaltung" --menu "$menu_text" $(( ${#items[@]} / 2 + 8 + GD_STATUS_LINES )) 78 $(( ${#items[@]} / 2 )) "${items[@]}" 3>&1 1>&2 2>&3) || choice=0
         case "$choice" in
             "!") gd_run analyse.sh ;;
             U) gd_panel_update && gd_conf_set PANEL_LATEST_TS 0 ;;

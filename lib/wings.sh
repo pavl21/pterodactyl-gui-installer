@@ -199,7 +199,7 @@ gd_wings_certificate() {
     # wenn es noch mindestens 14 Tage gilt, zur Domain passt, nicht aus der Testumgebung stammt und das
     # Erneuerungsverfahren zum Server passt: Läuft nginx, scheitert "standalone" bei der Erneuerung (Port 80 belegt).
     # Dann wird nur die Erneuerung auf Webroot umgestellt (keine Neuausstellung, das zählt gegen das
-    # Let's-Encrypt-Limit von 5 Duplikaten pro Woche). Benötigt lib/panel.sh (Zertifikatshilfen, nginx).
+    # Let's-Encrypt-Limit von 5 Duplikaten pro Woche). <email> darf leer sein (ohne Kontakt-Adresse). Benötigt lib/panel.sh (Zertifikatshilfen, nginx).
     local fqdn="$1" email="$2" cert conf auth method nginx_on=false force=() rc
     cert="/etc/letsencrypt/live/${fqdn}/fullchain.pem"
     conf="/etc/letsencrypt/renewal/${fqdn}.conf"
@@ -235,17 +235,18 @@ gd_wings_certificate() {
         # Reste eines gelöschten Zertifikats würden certbot blockieren
         certbot delete --cert-name "$fqdn" --non-interactive
     fi
+    gd_certbot_mail_args "$email"
     if $nginx_on; then
         gd_acme_webroot_prepare "$fqdn"
         rc=$?
         if [ $rc -eq 0 ]; then
             certbot certonly --webroot -w "$GD_ACME_WEBROOT" -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
-                --email "$email" --agree-tos --no-eff-email --non-interactive
+                "${GD_CERTBOT_MAIL[@]}" --agree-tos --no-eff-email --non-interactive
         elif [ $rc -eq 2 ]; then
             # Fremder Server-Block für den FQDN: Certbot muss ihn selbst finden (nginx-Plugin)
             certbot plugins 2>/dev/null | grep -q '^\* nginx' || gd_apt_install python3-certbot-nginx || return 1
             certbot certonly --nginx -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
-                --email "$email" --agree-tos --no-eff-email --non-interactive
+                "${GD_CERTBOT_MAIL[@]}" --agree-tos --no-eff-email --non-interactive
         else
             echo "Der nginx-Server-Block für die Zertifikatsprüfung konnte nicht angelegt werden."
             return 1
@@ -259,7 +260,7 @@ gd_wings_certificate() {
             return 1
         fi
         certbot certonly --standalone -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
-            --email "$email" --agree-tos --no-eff-email --non-interactive
+            "${GD_CERTBOT_MAIL[@]}" --agree-tos --no-eff-email --non-interactive
     fi
 }
 
@@ -423,15 +424,23 @@ gd_wings_location() {
 }
 
 gd_wings_node_resources() {
-    # Setzt GD_NODE_MEMORY und GD_NODE_DISK (MB) anhand der Serverausstattung
-    local mem disk
+    # Setzt GD_NODE_MEMORY und GD_NODE_DISK (MB) anhand der Serverausstattung.
+    # Speicher: Gesamt-RAM minus Reserve. Liegt das Panel auf diesem Server, bleiben 1024 MB für Panel, Datenbank
+    # und System; ohne Panel genügen 512 MB. Mindestens 512 MB.
+    # Festplatte: freier Platz auf dem Volumes-Pfad minus 10 % als Puffer (Logs, Backups, Wachstum), mindestens 1024 MB.
+    # Die Overallocation ist in gd_wings_node_create auf 0 gesetzt, die Limits sind also harte Grenzen.
+    local mem disk reserve=1024 vol
     mem="$(LC_ALL=C free -m | awk '/^Mem:/{print $2}')"
-    [ -d "$PTERO_DIR" ] && mem=$((mem - 1024))   # Reserve für Panel, Datenbank und System
-    [ "$mem" -lt 1024 ] && mem=1024
-    mkdir -p /var/lib/pterodactyl
-    disk="$(df -Pm /var/lib/pterodactyl | awk 'NR==2{print $4}')"
-    disk=$((disk * 90 / 100))
-    [ "$disk" -lt 5120 ] && disk=5120
+    [[ "$mem" =~ ^[0-9]+$ ]] || mem=0
+    [ -f "$PTERO_DIR/artisan" ] || reserve=512
+    mem=$(( mem - reserve ))
+    [ "$mem" -lt 512 ] && mem=512
+    vol="${GD_VOLUMES_DIR:-/var/lib/pterodactyl}"
+    mkdir -p "$vol"
+    disk="$(LC_ALL=C df -Pm "$vol" | awk 'NR==2{print $4}')"
+    [[ "$disk" =~ ^[0-9]+$ ]] || disk=0
+    disk=$(( disk * 90 / 100 ))
+    [ "$disk" -lt 1024 ] && disk=1024
     GD_NODE_MEMORY="$mem"
     GD_NODE_DISK="$disk"
 }
@@ -447,6 +456,8 @@ gd_wings_node_create() {
     fi
     location="$(gd_wings_location)" || return 1
     gd_wings_node_resources
+    # Overallocation (--overallocateMemory/--overallocateDisk) bewusst auf 0: Das Panel soll keine Gameserver-Limits
+    # zusagen, die der Server real nicht hat (sonst können mehr Server gestartet werden, als RAM bzw. Platz vorhanden ist)
     out="$(gd_artisan_www p:node:make --no-interaction \
         --name="Node-$(hostname -s)" --description="Automatisch eingerichtet von GermanDactyl Setup" \
         --locationId="$location" --fqdn="$fqdn" --public=1 --scheme=https --proxy=0 --maintenance=0 \

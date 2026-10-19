@@ -148,13 +148,37 @@ gd_patch_verify() {
     return 0
 }
 
+gd_patch_fuzzy_file() {
+    # gd_patch_fuzzy_file <patch> <datei> <rej_dir> <vor-reject-dir> – wendet nur den Abschnitt dieser Datei aus dem
+    # Patch mit Unschärfe an (patch, --fuzz=3). Der Versuch startet vom Stand VOR "git apply --reject" (pre_dir): Hätte
+    # git schon einzelne Hunks dieser Datei angewendet, würde patch sie als "bereits angewendet" melden und den
+    # abgelehnten Hunk nicht mit ihnen zusammen anwenden. Der Stand nach dem Reject-Lauf wird vorher als
+    # <rej_dir>/original gesichert und bei Misserfolg wiederhergestellt.
+    # Rückgabe 0 = angewendet (.rej der Datei wird entfernt), 1 = nicht angewendet.
+    local patch="$1" f="$2" rej_dir="$3" pre_dir="$4"
+    [ -f "$f" ] && [ -f "$pre_dir/$f" ] || return 1
+    mkdir -p "$rej_dir/original/$(dirname "$f")" && cp -a "$f" "$rej_dir/original/$f" || return 1
+    cp -a "$pre_dir/$f" "$f" || return 1
+    awk -v f="$f" '/^diff --git /{p = ($0 == "diff --git a/" f " b/" f)} p' "$patch" > "$GD_TMP/einzel.patch"
+    if patch -p1 --forward --fuzz=3 --no-backup-if-mismatch -r /dev/null -s -i "$GD_TMP/einzel.patch" >> "$GD_LOG" 2>&1; then
+        rm -f "$rej_dir/$f.rej"
+        return 0
+    fi
+    # Misserfolg: Datei auf den Stand nach dem Reject-Lauf zurücksetzen, entstandene .orig/.rej entfernen
+    cp -a "$rej_dir/original/$f" "$f"
+    rm -f "$f.orig" "$f.rej"
+    return 1
+}
+
 gd_patch_apply() {
     # gd_patch_apply <version> [panel-pfad] – lädt den Patch, prüft die Prüfsumme und wendet ihn an.
     # Rückgabe: 0 = Patch (ggf. teilweise) angewendet oder bereits vorhanden, 1 = Download/Prüfung/Anwendung komplett fehlgeschlagen
     local version="$1" dir="${2:-$PTERO_DIR}"
     local patch="$GD_TMP/germandactyl.patch" backup_root="/var/backups/germandactyl"
-    local stamp created f old_dir rej_dir out rc rejected n list saved=false
+    local stamp created f old_dir rej_dir pre_dir out rc rejected n remaining saved=false
     local opts=(--ignore-whitespace --ignore-space-change)
+    GD_PATCH_FUZZY_FILES=""
+    GD_PATCH_REJ_DIR=""
     cd "$dir" || return 1
     gd_curl --proto '=https' --proto-redir '=https' "$GD_PATCH_SERVER/$version" -o "$patch" || return 1
     # Ungeprüfte Patches werden nie angewendet, eine Option zum Überspringen gibt es bewusst nicht
@@ -196,6 +220,13 @@ gd_patch_apply() {
 
     # Der Patch passt nicht komplett (Addon/Theme installiert oder Panel-Version weicht ab):
     # passende Teile anwenden, den Rest als .rej-Dateien ablegen
+    # Stand aller vom Patch berührten Dateien vor dem --reject-Lauf sichern (Ausgangsbasis für den unscharfen Versuch)
+    pre_dir="$GD_TMP/vor-reject"
+    rm -rf "$pre_dir"
+    mkdir -p "$pre_dir"
+    git apply --numstat "$patch" 2>/dev/null | cut -f3 | while IFS= read -r f; do
+        [ -f "$f" ] && mkdir -p "$pre_dir/$(dirname "$f")" && cp -a "$f" "$pre_dir/$f"
+    done
     out="$(git apply "${opts[@]}" --reject -v "$patch" 2>&1)"
     rc=$?
     echo "$out"
@@ -210,13 +241,36 @@ gd_patch_apply() {
             mkdir -p "$rej_dir/$(dirname "$f")" && mv -f "$f" "$rej_dir/$f"
         done <<< "$rejected"
         rejected="$(sed 's#\.rej$##' <<< "$rejected")"
-        n="$(wc -l <<< "$rejected")"
-        echo "Folgende Dateien konnten nicht (vollständig) übersetzt werden (Addon/Theme installiert?):"
+        GD_PATCH_REJ_DIR="$rej_dir"
+        echo "Folgende Dateien passen nicht (vollständig) zum Patch (Kontext weicht ab, z. B. durch den Blueprint-Lauf):"
         echo "$rejected"
         echo "Die nicht angewendeten Teile liegen in: $rej_dir"
-        list="$(head -n 5 <<< "$rejected" | paste -sd, - | sed 's/,/, /g')"
-        [ "$n" -gt 5 ] && list+=" und $((n - 5)) weitere"
-        GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Die deutsche Übersetzung ist unvollständig: $n Datei(en) konnten nicht übersetzt werden ($list). Sie bleiben teilweise englisch (Details: $rej_dir und Log)."
+
+        # Zweiter Versuch für jede abgelehnte Datei mit "patch" und Unschärfe. Dabei wird nur der Abschnitt dieser
+        # Datei aus dem Patch verwendet. Vorher wird der Stand vor dem Versuch gesichert (GD_PATCH_REJ_DIR/original).
+        command -v patch >/dev/null 2>&1 || gd_apt_install patch >> "$GD_LOG" 2>&1
+        mkdir -p "$rej_dir/original"
+        remaining=""
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if gd_patch_fuzzy_file "$patch" "$f" "$rej_dir" "$pre_dir"; then
+                GD_PATCH_FUZZY_FILES+="$f"$'\n'
+                gd_log "Mit Unschärfe angewendet: $f"
+            else
+                remaining+="$f"$'\n'
+                gd_log "Nicht angewendet: $f"
+            fi
+        done <<< "$rejected"
+
+        n="$(printf '%s\n' "$remaining" | grep -c .)"
+        if [ "$n" -gt 0 ]; then
+            printf '%s\n' "$remaining" | grep . > "$rej_dir/LISTE.txt"
+            echo "Weiterhin nicht übersetzt ($n Datei(en), Liste: $rej_dir/LISTE.txt):"
+            grep . "$rej_dir/LISTE.txt"
+            GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Die deutsche Übersetzung ist unvollständig: $n Datei(en) konnten nicht übersetzt werden und bleiben teilweise englisch (Liste: $rej_dir/LISTE.txt)."
+        else
+            echo "Alle abgelehnten Dateien wurden mit Unschärfe angewendet."
+        fi
         return 0
     fi
     if [ $rc -ne 0 ]; then
@@ -250,11 +304,32 @@ gd_panel_build() {
     chown -R www-data:www-data "$dir"
 }
 
+gd_panel_build_retry() {
+    # Wie gd_panel_build. Schlägt der Build fehl und wurden Dateien nur mit Unschärfe gepatcht, werden genau diese
+    # auf den Stand vor dem unscharfen Patch zurückgesetzt und der Build wird einmal wiederholt.
+    local f names="" reverted=0
+    gd_panel_build && return 0
+    [ -n "${GD_PATCH_FUZZY_FILES:-}" ] || return 1
+    gd_log "Build fehlgeschlagen – unscharf gepatchte Dateien zurückgesetzt, Build wird wiederholt"
+    cd "$PTERO_DIR" || return 1
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        cp -a "$GD_PATCH_REJ_DIR/original/$f" "$f" || return 1
+        names+="$f"$'\n'
+        reverted=$((reverted + 1))
+    done <<< "$GD_PATCH_FUZZY_FILES"
+    printf '%s' "$names" >> "$GD_PATCH_REJ_DIR/LISTE.txt"
+    gd_log "Zurückgesetzte Dateien (auch in $GD_PATCH_REJ_DIR/LISTE.txt): $(tr '\n' ' ' <<< "$names")"
+    GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Nach einem fehlgeschlagenen Build wurden $reverted weitere Datei(en) auf ihren Stand ohne Unschärfe zurückgesetzt und bleiben englisch (Liste: $GD_PATCH_REJ_DIR/LISTE.txt)."
+    GD_PATCH_FUZZY_FILES=""
+    gd_panel_build
+}
+
 gd_germandactyl_steps() {
     # gd_germandactyl_steps <start-prozent> – Patch-Schritte innerhalb eines offenen Fortschrittsbalkens
     local p="${1:-85}"
     gd_step "$p" "GermanDactyl: Node.js ${GD_NODE_MAJOR} und yarn werden vorbereitet..." gd_install_node
     gd_step $((p + 2)) "GermanDactyl: Deutsche Übersetzung (v$GD_PANEL_VERSION) wird angewendet..." gd_patch_apply "$GD_PANEL_VERSION"
-    gd_step $((p + 4)) "GermanDactyl: Oberfläche wird neu gebaut, das dauert einige Minuten..." gd_panel_build
+    gd_step $((p + 4)) "GermanDactyl: Oberfläche wird neu gebaut, das dauert einige Minuten..." gd_panel_build_retry
     gd_conf_set GD_GERMANDACTYL "$GD_PANEL_VERSION"
 }
