@@ -84,6 +84,38 @@ check_updates() {
     if [ "$sec" -gt 0 ]; then warn "Offene Updates: $count $pk, davon $sec mit Sicherheitsupdates (apt upgrade)"
     elif [ "$count" -gt 0 ]; then warn "Offene Updates: $count $pk (apt upgrade)"
     else ok "Alle Pakete sind aktuell"; fi
+    check_auto_update
+}
+
+check_auto_update() {
+    # Geplante Updates von Panel und Wings (Timer germandactyl-update.timer, standardmäßig aus) und das Ergebnis des
+    # letzten Laufs (setup.conf: LAST_UPDATE_* für das Panel, LAST_WINGS_UPDATE_* für Wings)
+    local on=false p name res when note backup
+    if systemctl cat germandactyl-update.timer >/dev/null 2>&1 && systemctl is-enabled --quiet germandactyl-update.timer 2>/dev/null; then
+        on=true
+        ok "Automatische Updates für Panel/Wings sind eingerichtet"
+    elif systemctl cat germandactyl-update.timer >/dev/null 2>&1; then
+        warn "Automatische Updates für Panel/Wings sind eingerichtet, aber deaktiviert"
+    else
+        ok "Automatische Updates für Panel/Wings sind aus (Standard, Verwaltung → Aktualisieren → Automatische Updates)"
+    fi
+    for p in "LAST_UPDATE:Panel" "LAST_WINGS_UPDATE:Wings"; do
+        name="${p#*:}"
+        res="$(gd_conf_get "${p%%:*}_RESULT")"
+        when="$(gd_conf_get "${p%%:*}_TIME")"
+        note="$(gd_conf_get "${p%%:*}_NOTE")"
+        case "$res" in
+            fehler)
+                backup=""
+                [ "$name" = "Panel" ] && backup="$(gd_conf_get LAST_UPDATE_BACKUP)"
+                fail "Letztes Update ($name) ist fehlgeschlagen${when:+ ($when)}${note:+: $note} – ${backup:+Sicherung: $backup, }Log: $GD_LOG_DIR/auto-update.log" ;;
+            uebersprungen)
+                warn "Letztes Update ($name) wurde übersprungen${when:+ ($when)}${note:+: $note}" ;;
+            ok)
+                $on && ok "Letztes automatisches Update ($name): ${when:-unbekannt}${note:+ ($note)}" ;;
+        esac
+    done
+    return 0
 }
 
 pkg_status() {
@@ -812,7 +844,7 @@ check_backups() {
             warn "Automatische Backups sind eingerichtet, aber deaktiviert"
         fi
     elif [ -d "$PTERO_DIR" ]; then
-        warn "Es sind keine automatischen Backups eingerichtet (Backup-Verwaltung → Automatische Backups)"
+        warn "Es sind keine automatischen Backups eingerichtet (Backups → Automatische Backups)"
     fi
 }
 

@@ -12,6 +12,15 @@
 # common.sh gebraucht). "scripts/sign-release.sh --check" prüft, dass beide Stellen übereinstimmen.
 GD_SIGNING_PUBKEY=""
 
+# Geplantes Update (--auto-update, gestartet vom systemd-Timer über /usr/local/sbin/germandactyl-update):
+# Headless-Modus ohne Terminal und ohne Dialoge. Bei jedem anderen Start gilt er nie (auch nicht aus der Umgebung).
+if [ "${1:-}" = "--auto-update" ]; then
+    GD_HEADLESS=1
+    export GD_HEADLESS
+else
+    unset GD_HEADLESS
+fi
+
 # Das Skript ist nur für Systeme mit apt vorgesehen
 if ! command -v apt-get >/dev/null 2>&1; then
     echo "Abbruch: Für dein System ist dieses Skript nicht vorgesehen. Unterstützt werden Debian und Ubuntu."
@@ -30,10 +39,23 @@ fi
 # Aus dem Repository geladene Dateien werden gegen eine signierte Prüfsummenliste (SHA256SUMS) geprüft, sobald
 # GD_SIGNING_PUBKEY gesetzt ist und der Branch "main" ist. Test-Branches sind nicht signiert, lokale Checkouts
 # werden nicht geprüft; beides vermerkt gd_signature_notice später im Log.
+_gd_headless_report() {
+    # _gd_headless_report <ergebnis> <hinweis> – nur im Headless-Modus: Fehler, die vor dem Laden der Bibliotheken
+    # auftreten, landen in setup.conf (Statuszeile und Login-Hinweis) und im Log, weil niemand zuschaut
+    [ "${GD_HEADLESS:-}" = 1 ] || return 0
+    local log="/var/log/germandactyl-setup/auto-update.log" state="/etc/germandactyl/setup.conf"
+    mkdir -p "$(dirname "$log")" /etc/germandactyl
+    echo "[$(date '+%F %T')] $2" >> "$log"
+    touch "$state"; chmod 600 "$state"
+    sed -i -e '/^LAST_UPDATE_RESULT=/d' -e '/^LAST_UPDATE_TIME=/d' -e '/^LAST_UPDATE_NOTE=/d' -e '/^LAST_UPDATE_BACKUP=/d' "$state" 2>/dev/null
+    printf 'LAST_UPDATE_RESULT=%q\nLAST_UPDATE_TIME=%q\nLAST_UPDATE_NOTE=%q\n' "$1" "$(date '+%F %T')" "$2" >> "$state"
+}
+
 _gd_sig_abort() {
     echo ""
     echo "Abbruch: $*"
     echo "Aus Sicherheitsgründen werden die Skripte nicht ausgeführt."
+    _gd_headless_report fehler "Abbruch: $*"
     exit 1
 }
 
@@ -69,7 +91,7 @@ _gd_verify_sums() {
     export GD_SUMS
 }
 
-GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup uninstall manage)
+GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup autoupdate uninstall manage)
 GD_BRANCH="${GD_BRANCH:-main}"
 _gd_self="${BASH_SOURCE[0]:-}"
 unset GD_SUMS   # gilt erst nach erfolgreicher Signaturprüfung (aus der Umgebung wird nichts übernommen)
@@ -94,6 +116,7 @@ else
     for _gd_lib in "${GD_LIBS[@]}"; do
         if ! curl -fsSL "$_gd_raw/lib/${_gd_lib}.sh" -o "$GD_LIB_DIR/${_gd_lib}.sh"; then
             echo "Abbruch: Die Datei lib/${_gd_lib}.sh konnte nicht geladen werden. Prüfe die Internetverbindung."
+            _gd_headless_report uebersprungen "Die Datei lib/${_gd_lib}.sh konnte nicht geladen werden (Internetverbindung?)"
             exit 1
         fi
         if [ -n "${GD_SUMS:-}" ] && ! _gd_sum_ok "lib/${_gd_lib}.sh" "$GD_LIB_DIR/${_gd_lib}.sh"; then
@@ -389,7 +412,7 @@ gd_fresh_install() {
     fi
     [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
     [ "$GD_SSL_METHOD" = "cloudflare" ] && done_text+="\n\nCloudflare: Stelle unter 'SSL/TLS' den Verschlüsselungsmodus auf 'Vollständig (streng)', sonst kann es zu Weiterleitungsschleifen kommen."
-    gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
+    gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports für Gameserver freigeben' frei."
     done_text+="\n\nDie Verwaltung startest du künftig einfach mit dem Befehl: $(gd_shortcut_hint)"
     gd_msg "✔ Installation erfolgreich" "$done_text" 22 78
     clear
@@ -422,6 +445,17 @@ gd_install_menu() {
         5) gd_run wings-pelican.sh ;;
     esac
 }
+
+# ---------------------------------------------------------------------------
+# Geplantes Update (--auto-update): kein Banner, keine Vorbereitung mit whiptail, keine Dialoge
+# ---------------------------------------------------------------------------
+# Die Bibliotheken sind oben bereits (mit Signaturprüfung) geladen. Dieser Zweig steht bewusst vor dem Startblock.
+if [ "${GD_HEADLESS:-}" = 1 ]; then
+    gd_log "Automatisches Update gestartet (Branch: $GD_BRANCH, lokal: ${GD_LOCAL_DIR:-nein})"
+    gd_signature_notice
+    gd_autoupdate_run
+    exit $?
+fi
 
 # ---------------------------------------------------------------------------
 # Start

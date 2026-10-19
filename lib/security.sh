@@ -163,8 +163,12 @@ gd_autoupdates_enabled() {
 }
 
 gd_autoupdates_set() {
-    # gd_autoupdates_set 1|0 – eigene Datei mit hoher Priorität, vorhandene Einstellungen bleiben unangetastet
-    printf '// Angelegt von GermanDactyl Setup\nAPT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "%s";\n' "$1" \
+    # gd_autoupdates_set 1|0 – eigene Datei mit hoher Priorität, vorhandene Einstellungen bleiben unangetastet.
+    # Zusätzlich zu den Sicherheitsupdates der Distribution werden Updates aus der PHP-Quelle des Panels erlaubt
+    # (sury: "Origin: deb.sury.org", das Ubuntu-PPA von ondrej: "Origin: LP-PPA-ondrej-php"), sonst bleibt PHP auf dem
+    # Stand der Installation stehen. Die Liste wird an die Origins-Pattern der Distribution angehängt, nicht ersetzt.
+    # Das Docker-Repository bleibt bewusst außen vor: Ein Docker-Update startet alle Gameserver neu.
+    printf '// Angelegt von GermanDactyl Setup\nAPT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "%s";\nUnattended-Upgrade::Origins-Pattern { "origin=deb.sury.org"; "origin=LP-PPA-ondrej-php"; };\n' "$1" \
         > /etc/apt/apt.conf.d/99germandactyl-auto-upgrades
 }
 
@@ -184,7 +188,7 @@ gd_security_ask() {
     sel=$(whiptail --title "✚ Absicherung des Servers" --checklist "Welche Schutzmaßnahmen sollen eingerichtet werden? (Leertaste = an/aus)\n\nDie Firewall gibt automatisch deinen SSH-Port frei, damit du dich nicht aussperrst." 19 80 4 \
         "UFW" "Firewall aktivieren und benötigte Ports freigeben" ON \
         "FAIL2BAN" "Angriffe auf SSH automatisch sperren" ON \
-        "UPDATES" "Sicherheitsupdates automatisch installieren" ON \
+        "UPDATES" "Sicherheits- und PHP-Updates automatisch (Docker nicht)" ON \
         "BACKUP" "Tägliche Backups (inkrementell, inkl. Datenbanken)" ON 3>&1 1>&2 2>&3) || sel=""
     GD_SEC_UFW=false; GD_SEC_FAIL2BAN=false; GD_SEC_UPDATES=false; GD_SEC_BACKUP=false
     [[ "$sel" == *'"UFW"'* ]] && GD_SEC_UFW=true

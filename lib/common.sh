@@ -28,6 +28,8 @@ GD_PHP_VERSION="8.3"
 GD_TIMEZONE="Europe/Berlin"
 # Pterodactyl 2.x hat einen anderen Stack und Update-Ablauf als 1.x – erst nach Anpassung der TUI freigeben
 GD_PANEL_MAJOR="1"
+# Headless-Modus (GD_HEADLESS=1, z. B. geplante Updates per systemd-Timer): Es gibt kein Terminal und keine Dialoge.
+# Alle Dialog-, Fortschritts- und Fehlerfunktionen unten schreiben dann nur noch ins Log; Rückfragen gelten als "Nein".
 
 # whiptail benötigt eine UTF-8-Locale, damit Umlaute und Emojis korrekt dargestellt werden
 case "${LC_ALL:-${LANG:-}}" in
@@ -65,7 +67,12 @@ fi
 if [ -z "${GD_LOG:-}" ]; then
     mkdir -p "$GD_LOG_DIR" 2>/dev/null
     chmod 700 "$GD_LOG_DIR" 2>/dev/null
-    GD_LOG="${GD_LOG_DIR}/setup-$(date +%Y%m%d-%H%M%S).log"
+    if [ "${GD_HEADLESS:-}" = 1 ]; then
+        # Geplante Läufe (systemd-Timer) schreiben in ein gemeinsames Log statt jede Nacht eine neue Datei anzulegen
+        GD_LOG="${GD_LOG_DIR}/auto-update.log"
+    else
+        GD_LOG="${GD_LOG_DIR}/setup-$(date +%Y%m%d-%H%M%S).log"
+    fi
     export GD_LOG
 fi
 touch "$GD_LOG" 2>/dev/null && chmod 600 "$GD_LOG" 2>/dev/null
@@ -88,6 +95,7 @@ gd_status() {
 
 gd_die() {
     gd_log "ABBRUCH: $*"
+    [ "${GD_HEADLESS:-}" = 1 ] && { echo "FEHLER: $*" >&2; exit 1; }
     echo ""
     echo "FEHLER - - - - - - - - - - - - - - -"
     echo "$*"
@@ -104,6 +112,7 @@ whiptail() {
     # Aufrufers (z. B. --ok-button) stehen danach und haben Vorrang.
     # Größe an das Terminal anpassen: Zu große Dialoge schneidet whiptail sonst einfach ab
     # (z. B. in kleinen SSH-Fenstern mit 80x24). Wird gekürzt, wird der Text scrollbar.
+    [ "${GD_HEADLESS:-}" = 1 ] && return 1
     local args=("$@") i rows=24 cols=80 size extra=()
     size="$(stty size < /dev/tty 2>/dev/null)" && read -r rows cols <<< "$size"
     # Unbekannte Größe -> 80x24 annehmen; sehr kleine Fenster nicht vergrößern, sondern auf ein Minimum begrenzen
@@ -135,6 +144,8 @@ whiptail() {
 }
 
 gd_whip() {
+    # Headless: kein Dialog (Rückgabe 1 = Abbruch/Nein)
+    [ "${GD_HEADLESS:-}" = 1 ] && return 1
     # whiptail zeichnet auf die Standardausgabe. Wird ein Dialog innerhalb von $(...) aufgerufen
     # (z. B. in gd_ask_domain), wäre er unsichtbar und das Skript würde hängen – daher dann direkt aufs Terminal.
     if [ -t 1 ] || [ ! -w /dev/tty ]; then
@@ -146,6 +157,7 @@ gd_whip() {
 
 gd_msg() {
     # gd_msg "Titel" "Text" [höhe] [breite]
+    [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Meldung] $1: $(printf '%b' "$2" | tr '\n' ' ')"; return 0; }
     gd_whip --title "$1" --msgbox "$2" "${3:-12}" "${4:-70}"
 }
 
@@ -153,6 +165,8 @@ gd_msg_secret() {
     # gd_msg_secret "Titel" "Text" [höhe] [breite] – wie gd_msg, aber für Passwörter und Token.
     # Der Text wird NICHT als Prozessargument übergeben (das sähe jeder lokale Benutzer per "ps" bzw. /proc),
     # sondern über eine nur für root lesbare Datei angezeigt, die danach sofort gelöscht wird.
+    # Headless: Geheimnisse gehören nicht ins Log – nur der Titel wird vermerkt
+    [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Meldung] $1 (Inhalt nicht protokolliert)"; return 0; }
     local file rc
     file="$(umask 077; mktemp "${GD_TMP:-/tmp}/secret.XXXXXX")" || return 1
     printf '%b' "$2" > "$file"
@@ -164,6 +178,8 @@ gd_msg_secret() {
 
 gd_yesno() {
     # gd_yesno "Titel" "Text" [höhe] [breite]  -> Rückgabe 0 = Ja
+    # Headless gibt es keine Rückfrage: immer "Nein"
+    [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Rückfrage, automatisch Nein] $1"; return 1; }
     gd_whip --title "$1" --yesno "$2" "${3:-12}" "${4:-70}"
 }
 
@@ -173,6 +189,7 @@ gd_input() {
 }
 
 gd_warn_colors_on() {
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
     GD_OLD_NEWT_COLORS="${NEWT_COLORS:-}"
     export NEWT_COLORS='
     root=,red
@@ -187,6 +204,7 @@ gd_warn_colors_on() {
 }
 
 gd_warn_colors_off() {
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
     export NEWT_COLORS="${GD_OLD_NEWT_COLORS:-}"
 }
 
@@ -197,6 +215,7 @@ GD_GAUGE_OPEN=0
 
 gd_gauge_open() {
     # gd_gauge_open "Titel" "Starttext"
+    [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "== $1: $2"; return 0; }
     exec 7> >(whiptail --title "$1" --gauge "$2" 10 78 0)
     GD_GAUGE_OPEN=1
 }
@@ -204,6 +223,8 @@ gd_gauge_open() {
 gd_progress() {
     # gd_progress <prozent> "Text"
     gd_log "== [$1%] $2"
+    # Headless: Das Log ist das Ziel (kein Balken); die Konsole bekommt die Zeile für "Jetzt ausführen" mit
+    [ "${GD_HEADLESS:-}" = 1 ] && { echo "[$1%] $2"; return 0; }
     if [ "$GD_GAUGE_OPEN" = "1" ]; then
         # In einer Subshell schreiben: Ist whiptail beendet, trifft das SIGPIPE nur die Subshell
         # und nicht die laufende Installation. Danach wird ohne Balken weitergearbeitet.
@@ -218,6 +239,7 @@ gd_progress() {
 }
 
 gd_gauge_close() {
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
     if [ "$GD_GAUGE_OPEN" = "1" ]; then
         exec 7>&-
         GD_GAUGE_OPEN=0
@@ -254,6 +276,15 @@ gd_fail() {
     # Optionaler Aufräum-Hook (z. B. Wartungsmodus beenden), gesetzt vom laufenden Ablauf
     if [ -n "${GD_FAIL_CLEANUP:-}" ] && declare -F "$GD_FAIL_CLEANUP" >/dev/null; then
         "$GD_FAIL_CLEANUP"
+    fi
+    if [ "${GD_HEADLESS:-}" = 1 ]; then
+        local last_lines
+        last_lines="$(tail -n 12 "$GD_LOG" 2>/dev/null | tr -d '\r' | cut -c1-200 | sed 's/^/    /')"
+        gd_log "FEHLGESCHLAGEN: $1"
+        gd_log "Letzte Log-Einträge vor dem Fehler:"
+        [ -n "$last_lines" ] && printf '%s\n' "$last_lines" >> "$GD_LOG"
+        echo "FEHLGESCHLAGEN: $1 (Details im Log: $GD_LOG)" >&2
+        exit 1
     fi
     local tail_text
     tail_text="$(tail -n "$( [ -n "${GD_FAIL_HINT:-}" ] && echo 8 || echo 12)" "$GD_LOG" 2>/dev/null | tr -d '\r' | cut -c1-110)"
