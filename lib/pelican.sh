@@ -14,6 +14,7 @@ gd_pelican_packages() {
     gd_apt_install_nostart "php${v}" "php${v}-cli" "php${v}-common" "php${v}-gd" "php${v}-mysql" "php${v}-mbstring" \
         "php${v}-bcmath" "php${v}-xml" "php${v}-fpm" "php${v}-curl" "php${v}-zip" "php${v}-intl" "php${v}-sqlite3" \
         nginx sqlite3 tar unzip git cron certbot python3-certbot-nginx || return 1
+    gd_certbot_timer_enable
     update-alternatives --set php "/usr/bin/php${v}" 2>/dev/null
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
     gd_nginx_disable_default

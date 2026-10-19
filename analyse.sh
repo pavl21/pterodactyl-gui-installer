@@ -199,15 +199,24 @@ check_certificates() {
         [ "$f" = "$(gd_conf_get WINGS_FQDN)" ] && continue
         check_cert_file "$files" "Zertifikat $f"
     done
-    # Automatische Erneuerung
-    if systemctl is-enabled --quiet certbot.timer 2>/dev/null || [ -f /etc/cron.d/certbot ] || snap list certbot >/dev/null 2>&1; then
+    # Automatische Erneuerung: Der Timer muss tatsächlich laufen (nur "enabled" reicht nicht – das Debian-Paket
+    # startet ihn nicht, wenn es unter policy-rc.d installiert wurde). Ohne systemd genügt der Cronjob des Pakets.
+    if systemctl is-active --quiet certbot.timer 2>/dev/null || systemctl is-active --quiet snap.certbot.renew.timer 2>/dev/null \
+        || { [ ! -d /run/systemd/system ] && [ -f /etc/cron.d/certbot ]; }; then
         renew=true
     fi
     if compgen -G "/etc/letsencrypt/live/*" >/dev/null; then
-        $renew && ok "Automatische Zertifikatserneuerung ist aktiv" \
-               || fail "Keine automatische Zertifikatserneuerung gefunden (certbot.timer) – Zertifikate laufen nach 90 Tagen ab"
-        if [ -f "$WINGS_CONFIG" ] && [ ! -x /etc/letsencrypt/renewal-hooks/deploy/germandactyl.sh ]; then
-            warn "Nach einer Zertifikatserneuerung wird Wings nicht automatisch neu gestartet"; add_fix "Deploy-Hook für Zertifikatserneuerung anlegen" "fix_deploy_hook"
+        if $renew; then
+            ok "Automatische Zertifikatserneuerung ist aktiv"
+        elif systemctl is-enabled --quiet certbot.timer 2>/dev/null; then
+            fail "Die automatische Zertifikatserneuerung (certbot.timer) ist eingerichtet, aber nicht gestartet – Zertifikate laufen nach 90 Tagen ab"
+            add_fix "Automatische Zertifikatserneuerung starten" "fix_certbot_timer"
+        else
+            fail "Keine automatische Zertifikatserneuerung gefunden (certbot.timer) – Zertifikate laufen nach 90 Tagen ab"
+            add_fix "Automatische Zertifikatserneuerung starten" "fix_certbot_timer"
+        fi
+        if { [ -f "$WINGS_CONFIG" ] || [ -d "$PTERO_DIR" ]; } && [ ! -x /etc/letsencrypt/renewal-hooks/deploy/germandactyl.sh ]; then
+            warn "Nach einer Zertifikatserneuerung werden nginx bzw. Wings nicht automatisch neu geladen"; add_fix "Deploy-Hook für Zertifikatserneuerung anlegen" "fix_deploy_hook"
         fi
     fi
 }
@@ -346,6 +355,7 @@ fix_cron() {
     { crontab -l 2>/dev/null | grep -vF "$PTERO_DIR/artisan schedule:run"; echo "* * * * * php $PTERO_DIR/artisan schedule:run >> /dev/null 2>&1"; } | crontab -
 }
 fix_deploy_hook() { gd_source_lib security; gd_certbot_hook; }
+fix_certbot_timer() { command -v certbot >/dev/null 2>&1 || gd_apt_install certbot; systemctl enable --now certbot.timer; }
 fix_php_socket() {
     # Vorhandene PHP-FPM-Version (>= 8.2) verwenden, sonst PHP 8.3 installieren. Danach nginx umstellen.
     local sock ver

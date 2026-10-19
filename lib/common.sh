@@ -20,6 +20,8 @@ GD_LOG_DIR="/var/log/germandactyl-setup"
 PTERO_DIR="/var/www/pterodactyl"
 GD_PHP_VERSION="8.3"
 GD_TIMEZONE="Europe/Berlin"
+# Pterodactyl 2.x hat einen anderen Stack und Update-Ablauf als 1.x – erst nach Anpassung der TUI freigeben
+GD_PANEL_MAJOR="1"
 
 # whiptail benötigt eine UTF-8-Locale, damit Umlaute und Emojis korrekt dargestellt werden
 case "${LC_ALL:-${LANG:-}}" in
@@ -32,11 +34,25 @@ case "${TERM:-}" in ""|dumb|unknown) export TERM=xterm ;; esac
 # Nach "su" (ohne "-") fehlen unter Debian die sbin-Verzeichnisse – dann wären nginx, sshd, ufw usw. nicht auffindbar
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
+gd_cleanup() {
+    # Aufräumen beim Beenden, auch bei Strg+C oder Abbruch der SSH-Verbindung (Trap in installer.sh)
+    # Eine von uns angelegte policy-rc.d blockiert sonst systemweit jeden Dienststart durch apt.
+    # Der Marker erkennt auch eine Datei, die ein Unterskript angelegt hat (GD_OWN_POLICY gilt nur dort).
+    if [ "${GD_OWN_POLICY:-}" = true ] || grep -qs 'germandactyl-setup' /usr/sbin/policy-rc.d 2>/dev/null; then
+        rm -f /usr/sbin/policy-rc.d
+    fi
+    declare -F gd_build_swap_off >/dev/null && gd_build_swap_off
+    [ -n "${GD_TMP:-}" ] && rm -rf "$GD_TMP"
+    [ -z "${GD_LOCAL_DIR:-}" ] && [ -n "${GD_LIB_DIR:-}" ] && rm -rf "$GD_LIB_DIR"
+    return 0
+}
+
 # Temporäres Arbeitsverzeichnis, wird beim Beenden automatisch entfernt
 if [ -z "${GD_TMP:-}" ]; then
     GD_TMP="$(mktemp -d /tmp/germandactyl.XXXXXX)"
     export GD_TMP
-    trap 'rm -rf "$GD_TMP"' EXIT
+    trap gd_cleanup EXIT
+    trap 'gd_cleanup; exit 130' INT HUP TERM
 fi
 
 # Log-Datei (nur für root lesbar, da Zugangsdaten auftauchen könnten)
@@ -300,7 +316,7 @@ gd_os_detect() {
 gd_os_supported() {
     gd_os_detect
     case "$GD_OS_ID:$GD_OS_VERSION" in
-        debian:11|debian:12|debian:13) return 0 ;;
+        debian:12|debian:13|debian:1[3-9]|debian:[2-9][0-9]) return 0 ;;
         ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) return 0 ;;
     esac
     return 1
@@ -378,10 +394,18 @@ gd_latest_tag() {
 
 gd_latest_release() {
     # gd_latest_release <owner/repo> -> Versionsnummer ohne "v", z. B. "1.15.1"
+    # Für das Panel (pterodactyl/panel) werden nur Versionen der Major-Version GD_PANEL_MAJOR zurückgegeben
     local tag
     tag="$(gd_latest_tag "$1")" || return 1
     tag="${tag#v}"
     [[ "$tag" =~ ^[0-9]+(\.[0-9]+)+(-[0-9A-Za-z.]+)?$ ]] || return 1
+    if [ "$1" = "pterodactyl/panel" ] && [ "${tag%%.*}" != "$GD_PANEL_MAJOR" ]; then
+        # Neuestes Release hat eine andere Major-Version (z. B. 2.x): höchste Version der freigegebenen Major suchen
+        tag="$(curl -fsSL --max-time 20 "https://api.github.com/repos/pterodactyl/panel/releases?per_page=50" 2>/dev/null \
+            | grep -oE '"tag_name": *"[^"]+"' | cut -d'"' -f4 \
+            | grep -E "^v${GD_PANEL_MAJOR}\.[0-9]+\.[0-9]+$" | sed 's/^v//' | sort -V | tail -n1)"
+        [ -n "$tag" ] || return 1
+    fi
     echo "$tag"
 }
 

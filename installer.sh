@@ -43,8 +43,10 @@ for _gd_lib in "${GD_LIBS[@]}"; do
     # shellcheck disable=SC1090
     . "$GD_LIB_DIR/${_gd_lib}.sh"
 done
-# Temporäre Dateien und heruntergeladene Bibliotheken beim Beenden entfernen
-trap 'rm -rf "$GD_TMP"; [ -z "$GD_LOCAL_DIR" ] && rm -rf "$GD_LIB_DIR"' EXIT
+# Aufräumen beim Beenden und bei Abbruch (Strg+C, SSH-Verbindung getrennt): temporäre Dateien, heruntergeladene
+# Bibliotheken, eine ggf. angelegte policy-rc.d und die temporäre Swap-Datei
+trap gd_cleanup EXIT
+trap 'gd_cleanup; exit 130' INT HUP TERM
 
 # ---------------------------------------------------------------------------
 # Vorbereitung
@@ -81,7 +83,7 @@ gd_check_environment() {
     # Betriebssystem
     if ! gd_os_supported; then
         gd_warn_colors_on
-        if ! gd_yesno "Nicht getestetes Betriebssystem" "Dein System ($GD_OS_NAME) wurde mit diesem Skript nicht getestet.\n\nGetestet sind: Debian 11, 12, 13 und Ubuntu 22.04, 24.04, 26.04.\n\nMöchtest du trotzdem fortfahren?" 14 70; then
+        if ! gd_yesno "Nicht getestetes Betriebssystem" "Dein System ($GD_OS_NAME) wurde mit diesem Skript nicht getestet.\n\nGetestet sind: Debian 12, 13 und Ubuntu 22.04, 24.04, 26.04.\n\nMöchtest du trotzdem fortfahren?" 14 70; then
             gd_warn_colors_off
             clear; echo "Die Installation wurde abgebrochen."; exit 0
         fi

@@ -5,7 +5,7 @@
 
 GD_PATCH_SERVER="https://patch.germandactyl.de"
 GD_PATCH_REPO="pavl21/GermanDactyl"
-GD_PATCH_FALLBACK="1.12.2"   # Wird nur genutzt, wenn die Patch-Liste nicht abgerufen werden kann
+GD_PATCH_FALLBACK="1.15.1"   # Neueste bekannte Patch-Version – nur Rückfallwert, falls die Patch-Liste nicht abgerufen werden kann
 GD_NODE_MAJOR="22"
 
 gd_patch_exists() {
@@ -115,16 +115,78 @@ gd_build_swap_off() {
 }
 
 gd_patch_apply() {
-    # gd_patch_apply <version> [panel-pfad] – lädt den Patch und wendet ihn an
-    local version="$1" dir="${2:-$PTERO_DIR}" rejected
+    # gd_patch_apply <version> [panel-pfad] – lädt den Patch und wendet ihn an.
+    # Rückgabe: 0 = Patch (ggf. teilweise) angewendet oder bereits vorhanden, 1 = Download/Anwendung komplett fehlgeschlagen
+    local version="$1" dir="${2:-$PTERO_DIR}"
+    local patch="$GD_TMP/germandactyl.patch" backup_root="/var/backups/germandactyl"
+    local stamp created f old_dir rej_dir out rc rejected n list saved=false
+    local opts=(--ignore-whitespace --ignore-space-change)
     cd "$dir" || return 1
-    curl -fsSL "$GD_PATCH_SERVER/$version" -o "$GD_TMP/germandactyl.patch" || return 1
-    git apply --ignore-whitespace --ignore-space-change -C1 --reject "$GD_TMP/germandactyl.patch"
-    rejected="$(find . -path ./node_modules -prune -o \( -name '*.rej' -o -name '*.orig' \) -print)"
+    curl -fsSL "$GD_PATCH_SERVER/$version" -o "$patch" || return 1
+    stamp="$(date +%Y%m%d-%H%M%S)"
+
+    # Ist der Patch bereits vollständig angewendet (z. B. Reparatur ohne Panel-Update), gibt es nichts zu tun
+    if git apply "${opts[@]}" --reverse --check "$patch" >/dev/null 2>&1; then
+        echo "Die Übersetzung v$version ist bereits angewendet, nichts zu tun."
+        return 0
+    fi
+
+    # Vom Patch neu angelegte Dateien (v. a. resources/lang/de/* und resources/lang/de.json) können noch von
+    # einer früheren Übersetzung stammen. git apply bricht dann mit "already exists in working directory" ab,
+    # ohne eine .rej-Datei anzulegen – die Übersetzung bliebe stillschweigend veraltet. Sie werden daher vorher gesichert.
+    created="$(git apply --summary "$patch" 2>/dev/null | sed -n 's/^ create mode [0-7]* //p')"
+    old_dir="$backup_root/alte-uebersetzung-${version}-${stamp}"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ -e "$f" ] || [ -L "$f" ]; then
+            mkdir -p "$old_dir" && cp -a --parents "$f" "$old_dir/" && rm -f "$f" && saved=true
+            echo "Alte Übersetzungsdatei gesichert und entfernt: $f"
+        fi
+    done <<< "$created"
+    if $saved; then
+        chmod 700 "$backup_root" "$old_dir" 2>/dev/null
+        echo "Sicherung der alten Übersetzung: $old_dir"
+    fi
+
+    # Normaler Fall: Der Patch passt komplett
+    if git apply "${opts[@]}" --check "$patch" >/dev/null 2>&1; then
+        git apply "${opts[@]}" "$patch" || return 1
+        return 0
+    fi
+
+    # Der Patch passt nicht komplett (Addon/Theme installiert oder Panel-Version weicht ab):
+    # passende Teile anwenden, den Rest als .rej-Dateien ablegen
+    out="$(git apply "${opts[@]}" --reject -v "$patch" 2>&1)"
+    rc=$?
+    echo "$out"
+    find . -path ./node_modules -prune -o -name '*.orig' -exec rm -f {} +
+    rejected="$(find . -path ./node_modules -prune -o -name '*.rej' -print | sed 's#^\./##' | sort)"
     if [ -n "$rejected" ]; then
-        echo "Folgende Dateien konnten nicht übersetzt werden (Addon/Theme installiert?):"
-        sed 's#^\./##; s#\.rej$##; s#\.orig$##' <<< "$rejected" | sort -u
-        find . -path ./node_modules -prune -o \( -name '*.rej' -o -name '*.orig' \) -exec rm -f {} +
+        # Rejects nicht löschen, sondern mit Verzeichnisstruktur sichern (zur manuellen Nacharbeit)
+        rej_dir="$backup_root/rejects-${version}-${stamp}"
+        mkdir -p "$rej_dir" && chmod 700 "$backup_root" "$rej_dir" 2>/dev/null
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            mkdir -p "$rej_dir/$(dirname "$f")" && mv -f "$f" "$rej_dir/$f"
+        done <<< "$rejected"
+        rejected="$(sed 's#\.rej$##' <<< "$rejected")"
+        n="$(wc -l <<< "$rejected")"
+        echo "Folgende Dateien konnten nicht (vollständig) übersetzt werden (Addon/Theme installiert?):"
+        echo "$rejected"
+        echo "Die nicht angewendeten Teile liegen in: $rej_dir"
+        list="$(head -n 5 <<< "$rejected" | paste -sd, - | sed 's/,/, /g')"
+        [ "$n" -gt 5 ] && list+=" und $((n - 5)) weitere"
+        GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Die deutsche Übersetzung ist unvollständig: $n Datei(en) konnten nicht übersetzt werden ($list). Sie bleiben teilweise englisch (Details: $rej_dir und Log)."
+        return 0
+    fi
+    if [ $rc -ne 0 ]; then
+        if grep -qE '^Appl(ied|ying) patch' <<< "$out"; then
+            # Teilweise angewendet, ohne dass .rej-Dateien entstanden sind (z. B. Dateien fehlen)
+            GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Die deutsche Übersetzung ist unvollständig: Einige Dateien konnten nicht übersetzt werden (Details im Log)."
+            return 0
+        fi
+        echo "Die Übersetzung v$version konnte nicht angewendet werden."
+        return 1
     fi
     return 0
 }

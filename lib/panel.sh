@@ -52,19 +52,35 @@ gd_nginx_disable_default() {
 gd_apt_install_nostart() {
     # Pakete installieren, ohne dass deren Dienste automatisch starten: nginx scheitert sonst auf Servern
     # ohne IPv6 an der Standardseite ([::]:80) und dpkg bricht ab. Gestartet wird danach gezielt.
-    local own_policy=false rc
+    # GD_OWN_POLICY ist global, damit gd_cleanup (Trap bei Strg+C/SSH-Abbruch) die Datei ebenfalls entfernen kann.
+    local rc
+    GD_OWN_POLICY=false
+    export GD_OWN_POLICY
     if [ ! -e /usr/sbin/policy-rc.d ]; then
-        printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d && own_policy=true
+        # Die Kommentarzeile dient gd_cleanup als Erkennungsmerkmal
+        printf '#!/bin/sh\n# germandactyl-setup\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d && GD_OWN_POLICY=true
     fi
     gd_apt_install "$@"
     rc=$?
-    $own_policy && rm -f /usr/sbin/policy-rc.d
+    [ "$GD_OWN_POLICY" = true ] && rm -f /usr/sbin/policy-rc.d
+    GD_OWN_POLICY=false
     return $rc
+}
+
+gd_certbot_timer_enable() {
+    # Wird certbot unter policy-rc.d installiert (gd_apt_install_nostart), aktiviert das Debian-Paket seinen
+    # certbot.timer nur, startet ihn aber nicht – die automatische Zertifikatserneuerung liefe dann nie.
+    # Ein Fehler ist nicht fatal (z. B. Systeme ohne systemd oder Certbot per Snap).
+    if systemctl cat certbot.timer >/dev/null 2>&1; then
+        systemctl enable --now certbot.timer || echo "Hinweis: certbot.timer konnte nicht gestartet werden."
+    fi
+    return 0
 }
 
 gd_panel_packages() {
     gd_apt_install_nostart mariadb-server mariadb-client nginx redis-server tar unzip git cron \
         certbot python3-certbot-nginx || return 1
+    gd_certbot_timer_enable
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
     gd_nginx_disable_default
     systemctl enable --now mariadb redis-server cron || return 1
@@ -503,11 +519,18 @@ gd_panel_update() {
     # Interaktive Aktualisierung/Reparatur inklusive GermanDactyl
     local installed
     installed="$(gd_panel_installed_version)"
+    GD_WARNINGS=""
     gd_choose_panel_version || return 1
+    # Downgrade-Schutz: Eine ältere Version würde die Datenbank-Struktur nicht zurückführen und das Panel beschädigen.
+    # Dieselbe Version ist erlaubt (Reparatur).
+    if [ -n "$installed" ] && [ "$installed" != "$GD_PANEL_VERSION" ] && gd_version_ge "$installed" "$GD_PANEL_VERSION"; then
+        gd_msg "Downgrade nicht möglich" "Installiert ist v${installed}, ausgewählt wurde die ältere Version v${GD_PANEL_VERSION}.\n\nEin Wechsel auf eine ältere Panel-Version wird nicht unterstützt, da die Datenbank nicht zurückgeführt werden kann und das Panel dadurch beschädigt würde.\n\nWähle die installierte oder eine neuere Version." 15 74
+        return 1
+    fi
     gd_yesno "↑ Panel aktualisieren" "Installiert: v${installed:-unbekannt}\nZiel: v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(mit deutscher Übersetzung)' || echo '(Englisch)')\n\nDas Panel ist während der Aktualisierung einige Minuten nicht erreichbar. Änderungen an Dateien des Panels (Themes/Addons) werden dabei überschrieben.\n\nEmpfehlung: Erstelle vorher ein Backup über die Backup-Verwaltung.\n\nMöchtest du fortfahren?" 18 78 || return 1
     gd_gauge_open "↑ Panel wird aktualisiert" "Aktualisierung wird vorbereitet..."
     gd_panel_update_steps
     gd_progress 100 "Aktualisierung abgeschlossen."
     gd_gauge_close
-    gd_msg "✔ Aktualisierung abgeschlossen" "Das Panel wurde auf v${GD_PANEL_VERSION} aktualisiert$(gd_blueprint_installed && echo ', Blueprint wurde erneut angewendet').\n\nFalls dein Browser noch die alte Oberfläche anzeigt, lade die Seite mit Strg + F5 neu." 12 70
+    gd_msg "✔ Aktualisierung abgeschlossen" "Das Panel wurde auf v${GD_PANEL_VERSION} aktualisiert$(gd_blueprint_installed && echo ', Blueprint wurde erneut angewendet').\n\nFalls dein Browser noch die alte Oberfläche anzeigt, lade die Seite mit Strg + F5 neu.${GD_WARNINGS:+\n\n$GD_WARNINGS}" "$([ -n "${GD_WARNINGS:-}" ] && echo 20 || echo 12)" 70
 }

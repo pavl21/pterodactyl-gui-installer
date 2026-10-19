@@ -16,7 +16,7 @@ Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germa
 
 ## Voraussetzungen
 
-- Debian 11, 12 oder 13 bzw. Ubuntu 22.04, 24.04 oder 26.04 (amd64 oder arm64)
+- Debian 12 oder 13 bzw. Ubuntu 22.04, 24.04 oder 26.04 (amd64 oder arm64)
 - Root-Rechte
 - Eine Domain bzw. Subdomain, deren A-Eintrag auf den Server zeigt. Bei Cloudflare muss der Proxy dafür deaktiviert sein.
 
