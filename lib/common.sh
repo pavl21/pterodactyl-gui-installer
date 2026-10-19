@@ -127,6 +127,31 @@ whiptail() {
         case "${args[i]}" in
             --msgbox|--yesno|--inputbox|--passwordbox|--textbox|--gauge|--menu|--checklist|--radiolist|--infobox)
                 local h="${args[i+2]:-0}" w="${args[i+3]:-0}"
+                # Menüs und Checklisten: alle Einträge ausgeklappt zeigen. Die Listenhöhe wird auf die Anzahl der
+                # Einträge gesetzt, die Dialoghöhe mindestens auf Textzeilen + Einträge + 7. Die Verkleinerung für
+                # kleine Terminals folgt danach und reduziert die Listenhöhe wieder mit.
+                if [[ "${args[i]}" =~ ^--(menu|checklist|radiolist)$ ]] && [[ "$w" =~ ^[0-9]+$ ]] \
+                    && [[ "${args[i+4]:-}" =~ ^[0-9]+$ ]]; then
+                    local step=2 cnt=0 j tl fw=$(( w - 4 )) need
+                    [ "${args[i]}" = --menu ] || step=3
+                    # Einträge ab Index i+5: bei --menu Paare (Tag Text), sonst Dreiergruppen (Tag Text Status).
+                    # Gezählt wird nur bis zu einem Argument, das mit "--" beginnt (z. B. --default-item).
+                    j=$((i + 5))
+                    while [ "$j" -lt "${#args[@]}" ] && [[ "${args[j]}" != --* ]]; do
+                        cnt=$((cnt + 1))
+                        j=$((j + step))
+                    done
+                    if [ "$cnt" -gt 0 ]; then
+                        [ "${args[i+4]}" -lt "$cnt" ] && args[i+4]=$cnt
+                        [ "$fw" -ge 1 ] || fw=66
+                        tl="$(printf '%b' "${args[i+1]:-}" | fold -s -w "$fw" | grep -c '')"
+                        need=$(( tl + cnt + 7 ))
+                        if [[ "$h" =~ ^[0-9]+$ ]] && [ "$need" -gt "$h" ]; then
+                            h=$need
+                            args[i+2]=$need
+                        fi
+                    fi
+                fi
                 if [[ "$h" =~ ^[0-9]+$ ]] && [ "$h" -gt $((rows - 1)) ]; then
                     args[i+2]=$((rows - 1))
                     case "${args[i]}" in --msgbox|--yesno) extra=(--scrolltext) ;; esac
@@ -159,10 +184,29 @@ gd_whip() {
     fi
 }
 
+gd_center_lines() {
+    # gd_center_lines "Text" – richtet jede Zeile des Textes mittig auf 74 Zeichen aus. Zeilen sind durch \n getrennt
+    # (wörtlich oder als Zeilenumbruch). Nachgestellte Leerzeichen werden entfernt. Ausgabe: zentrierter Text mit
+    # wörtlichen \n als Trenner (wie das Eingabeformat von GD_STATUS).
+    local line pad out="" first=true
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%"${line##*[![:space:]]}"}"
+        pad=$(( (74 - ${#line}) / 2 )); [ "$pad" -gt 0 ] && [ -n "$line" ] || pad=0
+        $first || out+='\n'
+        first=false
+        out+="$(printf '%*s%s' "$pad" '' "$line")"
+    done < <(printf '%b' "$1")
+    printf '%s' "$out"
+}
+
 gd_msg() {
     # gd_msg "Titel" "Text" [höhe] [breite]
     [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Meldung] $1: $(printf '%b' "$2" | tr '\n' ' ')"; return 0; }
-    gd_whip --title "$1" --msgbox "$2" "${3:-12}" "${4:-70}"
+    # Höhe für lange Texte schätzen: sonst schneidet whiptail unten ab
+    local h="${3:-12}" lines
+    lines=$(printf '%b' "$2" | fold -s -w $(( ${4:-70} - 4 )) | grep -c '')
+    [ $((lines + 6)) -gt "$h" ] && h=$((lines + 6))
+    gd_whip --title "$1" --msgbox "$2" "$h" "${4:-70}"
 }
 
 gd_msg_secret() {
@@ -184,7 +228,11 @@ gd_yesno() {
     # gd_yesno "Titel" "Text" [höhe] [breite]  -> Rückgabe 0 = Ja
     # Headless gibt es keine Rückfrage: immer "Nein"
     [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Rückfrage, automatisch Nein] $1"; return 1; }
-    gd_whip --title "$1" --yesno "$2" "${3:-12}" "${4:-70}"
+    # Höhe für lange Texte schätzen: sonst schneidet whiptail unten ab
+    local h="${3:-12}" lines
+    lines=$(printf '%b' "$2" | fold -s -w $(( ${4:-70} - 4 )) | grep -c '')
+    [ $((lines + 6)) -gt "$h" ] && h=$((lines + 6))
+    gd_whip --title "$1" --yesno "$2" "$h" "${4:-70}"
 }
 
 gd_input() {
