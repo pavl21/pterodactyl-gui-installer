@@ -77,15 +77,62 @@ gd_redis_check() {
 }
 
 gd_certbot_hook() {
-    # Nach jeder Zertifikatserneuerung nginx neu laden und Wings neu starten (Wings liest das Zertifikat beim Start)
+    # Nach jeder Zertifikatserneuerung nginx neu laden (nur mit gültiger Konfiguration) und Wings neu starten, wenn
+    # es das erneuerte Zertifikat nutzt (Wings liest das Zertifikat nur beim Start). Das Ergebnis steht im Log
+    # /var/log/germandactyl-setup/certbot-hook.log. Der Hook liegt in renewal-hooks/deploy, certbot ruft ihn dort mit
+    # RENEWED_LINEAGE (Pfad unter /etc/letsencrypt/live) und RENEWED_DOMAINS auf – auch bei "certbot renew --dry-run".
     mkdir -p /etc/letsencrypt/renewal-hooks/deploy
     cat > /etc/letsencrypt/renewal-hooks/deploy/germandactyl.sh <<'EOF'
 #!/bin/sh
 # Angelegt von GermanDactyl Setup: Dienste nach Zertifikatserneuerung neu laden
-systemctl reload nginx 2>/dev/null || true
-if systemctl is-enabled --quiet wings 2>/dev/null; then
-    systemctl restart wings
+LOG_DIR=/var/log/germandactyl-setup
+LOG="$LOG_DIR/certbot-hook.log"
+mkdir -p "$LOG_DIR" 2>/dev/null && chmod 700 "$LOG_DIR" 2>/dev/null
+log() { echo "[$(date '+%F %T')] $*" >> "$LOG" 2>/dev/null; }
+log "Zertifikat erneuert: ${RENEWED_LINEAGE:-unbekannt} (${RENEWED_DOMAINS:-keine Angabe})"
+
+# nginx nur mit gültiger Konfiguration neu laden: Bei einem Fehler bleibt die laufende Konfiguration aktiv
+if command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null; then
+    if out="$(nginx -t 2>&1)"; then
+        if systemctl reload nginx >> "$LOG" 2>&1; then
+            log "nginx neu geladen"
+        else
+            log "FEHLER: nginx konnte nicht neu geladen werden"
+        fi
+    else
+        log "FEHLER: Die nginx-Konfiguration ist ungültig, nginx wird NICHT neu geladen. Ausgabe von nginx -t:"
+        echo "$out" >> "$LOG" 2>/dev/null
+    fi
 fi
+
+# Wings (Pterodactyl bzw. Pelican) nur neu starten, wenn sein Zertifikat erneuert wurde. Ist unklar, welches
+# Zertifikat erneuert wurde (RENEWED_LINEAGE leer, z. B. beim manuellen Aufruf), wird sicherheitshalber neu gestartet.
+wings_cert() {
+    awk '/^api:/{a=1;next} a && /^[^[:space:]]/{a=0} a && /^[[:space:]]+ssl:/{s=1;next} s && $1=="cert:"{print $2; exit}' "$1" 2>/dev/null | tr -d "'\""
+}
+restart=0
+for cfg in /etc/pterodactyl/config.yml /etc/pelican/config.yml; do
+    [ -f "$cfg" ] || continue
+    if [ -z "${RENEWED_LINEAGE:-}" ]; then
+        restart=1
+        continue
+    fi
+    case "$(wings_cert "$cfg")" in
+        "$RENEWED_LINEAGE"/*) restart=1 ;;
+    esac
+done
+if systemctl is-enabled --quiet wings 2>/dev/null; then
+    if [ "$restart" = 1 ]; then
+        if systemctl restart wings >> "$LOG" 2>&1; then
+            log "Wings neu gestartet"
+        else
+            log "FEHLER: Wings konnte nicht neu gestartet werden"
+        fi
+    else
+        log "Wings nutzt dieses Zertifikat nicht, kein Neustart nötig"
+    fi
+fi
+exit 0
 EOF
     chmod 755 /etc/letsencrypt/renewal-hooks/deploy/germandactyl.sh
 }

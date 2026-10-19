@@ -593,11 +593,41 @@ gd_resolve_aaaa() {
     dig +short AAAA "$1" @1.1.1.1 2>/dev/null | grep -E '^[0-9a-fA-F:]+$'
 }
 
+gd_ip_to_int() {
+    # gd_ip_to_int <ipv4> -> 32-Bit-Zahl, Rückgabe 1 bei ungültiger Adresse
+    local a b c d
+    [[ "$1" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+    IFS=. read -r a b c d <<< "$1"
+    # 10# verhindert, dass führende Nullen als Oktalzahl gelten
+    [ $((10#$a)) -le 255 ] && [ $((10#$b)) -le 255 ] && [ $((10#$c)) -le 255 ] && [ $((10#$d)) -le 255 ] || return 1
+    echo $(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))
+}
+
+gd_ip_in_cidr() {
+    # gd_ip_in_cidr <ipv4> <netz/länge> – wahr, wenn die Adresse im Netz liegt
+    local ip net bits mask
+    ip="$(gd_ip_to_int "$1")" || return 1
+    net="$(gd_ip_to_int "${2%/*}")" || return 1
+    bits="${2#*/}"
+    [[ "$bits" =~ ^[0-9]+$ ]] && [ "$bits" -le 32 ] || return 1
+    mask=$(( bits == 0 ? 0 : (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))
+    [ $(( ip & mask )) -eq $(( net & mask )) ]
+}
+
+# Offizielle IPv4-Netze des Cloudflare-Proxys, Quelle: https://www.cloudflare.com/ips-v4 (Stand: 19.10.2026).
+# Bewusst fest hinterlegt, damit keine Netzabfrage nötig ist. Die Liste ändert sich selten.
+GD_CLOUDFLARE_NETS=(
+    173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18
+    108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17
+    162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22
+)
+
 gd_is_cloudflare_ip() {
-    # Grobe Prüfung auf die bekanntesten Cloudflare-Proxy-Netze
-    case "$1" in
-        104.1[6-9].*|104.2[0-9].*|104.3[01].*|172.6[4-9].*|172.7[01].*|162.15[89].*|188.114.9[6-9].*|190.93.2[4-5][0-9].*|141.101.*|108.162.*|173.245.*|103.21.24[4-7].*|103.22.20[0-3].*|103.31.[4-7].*|197.234.24[0-3].*|198.41.1[2-9][0-9].*|198.41.2[0-5][0-9].*) return 0 ;;
-    esac
+    # Liegt die IPv4-Adresse in einem Cloudflare-Proxy-Netz?
+    local net
+    for net in "${GD_CLOUDFLARE_NETS[@]}"; do
+        gd_ip_in_cidr "$1" "$net" && return 0
+    done
     return 1
 }
 
