@@ -1,0 +1,87 @@
+# .github/workflows/ci.yml
+# Prüft bei jedem Pull Request und bei jedem Push auf main:
+#   1. Syntax:      bash -n über alle Skripte (Wurzelverzeichnis, lib/, scripts/, tests/)
+#   2. shellcheck:  Fehler (-S error) lassen den Lauf scheitern. Warnungen (-S warning) erscheinen nur als Bericht.
+#                   Der bestehende Stand enthält noch einige Warnungen (vor allem SC2034 "Variable ungenutzt" und
+#                   SC1090 "Quelle nicht verfolgbar", weil die Bibliotheken zur Laufzeit per source geladen werden).
+#                   Sie werden schrittweise abgebaut; sobald der Bericht leer ist, kann continue-on-error entfallen
+#                   und der Schwellwert auf -S warning angehoben werden.
+#   3. Prüfsummen:  scripts/sign-release.sh --check (SHA256SUMS vollständig und Signatur gültig – siehe auch
+#                   verify-signature.yml). Nach jeder Änderung an einem Skript lokal: scripts/sign-release.sh --sign
+#   4. Tests:       bash tests/run.sh (reine Funktionen aus lib/ und analyse.sh; ohne root, Netz und whiptail)
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    name: Syntax (bash -n)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Alle Skripte mit bash -n prüfen
+        run: |
+          set -euo pipefail
+          # *.sh im Wurzelverzeichnis, lib/*.sh, scripts/*.sh und tests/*.sh (alles, was git kennt)
+          mapfile -t files < <(git ls-files '*.sh')
+          echo "Prüfe ${#files[@]} Skripte"
+          status=0
+          for f in "${files[@]}"; do
+            if ! bash -n "$f"; then
+              echo "::error file=$f::Syntaxfehler in $f"
+              status=1
+            fi
+          done
+          exit "$status"
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: shellcheck installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck --version
+
+      - name: Fehler (blockiert den Lauf)
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.sh')
+          shellcheck -S error "${files[@]}"
+
+      # Nur ein Bericht: Der bestehende Stand enthält noch Warnungen (SC2034, SC1090). Sie werden schrittweise
+      # abgebaut und blockieren den Lauf deshalb (noch) nicht.
+      - name: Warnungen (nur Bericht)
+        continue-on-error: true
+        run: |
+          mapfile -t files < <(git ls-files '*.sh')
+          shellcheck -S warning "${files[@]}"
+
+  signatur:
+    name: Prüfsummen und Signatur
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: SHA256SUMS prüfen
+        run: bash scripts/sign-release.sh --check
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tests ausführen
+        run: bash tests/run.sh
