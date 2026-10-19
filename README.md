@@ -61,7 +61,7 @@ Für häufige Aufgaben musst du das Menü nicht öffnen. Alle Befehle funktionie
   - fail2ban
   - Automatische Sicherheitsupdates
   - Absicherung der MariaDB
-- **Automatische Backups (optional):** täglich, inkrementell und verschlüsselt mit restic – Panel, alle Datenbanken (auch die der Gameserver), Konfigurationen und auf Wunsch die Gameserver-Daten. Das Passwort des Backup-Archivs wird am Ende angezeigt; bewahre es sicher auf, ohne es lassen sich die Backups nicht wiederherstellen.
+- **Automatische Backups (optional):** täglich, inkrementell und verschlüsselt mit restic – Panel, alle Datenbanken (auch die der Gameserver), Konfigurationen und auf Wunsch die Gameserver-Daten. Als Ziel eignen sich ein lokaler Pfad, eine Hetzner Storage Box (wird automatisch eingerichtet, SSH-Schlüssel inklusive), ein anderer SFTP-Server, S3 oder ein rest-server. Das Passwort des Backup-Archivs wird am Ende angezeigt; bewahre es sicher auf, ohne es lassen sich die Backups nicht wiederherstellen.
 - **Database-Host:** Liegt das Panel auf diesem Server, legt das Setup den Database-Host automatisch im Panel an. Die Firewall für Port 3306 wird danach mit den Nodes abgeglichen, auch jede Nacht um 04:30 Uhr.
 - **Blueprint (optional):** Das Framework für Erweiterungen und Themes ([blueprint.zip](https://blueprint.zip)). Es wird bei Panel-Updates automatisch erneut angewendet.
 
