@@ -292,6 +292,7 @@ $($h2 && echo "    http2 on;")
     root ${PTERO_DIR}/public;
     index index.php;
 $( [ -f /etc/nginx/snippets/germandactyl-phpmyadmin.conf ] && echo "    include snippets/germandactyl-phpmyadmin.conf;" )
+$( [ -f /etc/nginx/snippets/germandactyl-download.conf ] && echo "    include snippets/germandactyl-download.conf;" )
 
     access_log /var/log/nginx/pterodactyl.app-access.log;
     error_log  /var/log/nginx/pterodactyl.app-error.log error;

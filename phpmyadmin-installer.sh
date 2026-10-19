@@ -16,6 +16,7 @@ else
 fi
 gd_require_root
 gd_source_lib panel
+gd_source_lib download
 
 PMA_DIR="/usr/share/phpmyadmin"
 PMA_SNIPPET="/etc/nginx/snippets/germandactyl-phpmyadmin.conf"
@@ -153,10 +154,17 @@ if ! create_database_user >> "$GD_LOG" 2>&1; then
     exit 1
 fi
 
+creds="$(printf 'Adresse:       https://%s/phpmyadmin\nBenutzername:  %s\nPasswort:      %s' \
+    "$(gd_conf_get PANEL_DOMAIN)" "$PMA_USER" "$PMA_PASSWORD")"
+offered=false
 while true; do
     # Passwort nicht als Argument übergeben (wäre in der Prozessliste sichtbar) – gd_msg_secret nutzt eine 600-Datei
-    gd_msg_secret "✱ Zugangsdaten für phpMyAdmin" "$(printf 'Adresse:       https://%s/phpmyadmin\nBenutzername:  %s\nPasswort:      %s\n\nSpeichere dir diese Daten jetzt ab, sie werden nicht noch einmal angezeigt.' \
-        "$(gd_conf_get PANEL_DOMAIN)" "$PMA_USER" "$PMA_PASSWORD")" 14 78
+    gd_msg_secret "✱ Zugangsdaten für phpMyAdmin" "$creds\n\nSpeichere dir diese Daten jetzt ab, sie werden nicht noch einmal angezeigt." 14 78
+    # Download-Angebot nur einmal, auch wenn die Schleife wegen einer nicht bestätigten Speicherung erneut läuft
+    if ! $offered; then
+        gd_download_offer "phpMyAdmin-Zugangsdaten" "$creds"
+        offered=true
+    fi
     gd_yesno "Zugangsdaten gespeichert?" "Hast du die Zugangsdaten gespeichert und funktionieren sie?" 8 60 && break
 done
 gd_msg "★ Einrichtung abgeschlossen" "Du kannst phpMyAdmin jetzt nutzen." 8 50

@@ -17,6 +17,7 @@ fi
 gd_require_root
 gd_source_lib backup
 gd_source_lib autobackup
+gd_source_lib download
 
 gd_backup_prepare
 
@@ -406,6 +407,7 @@ ab_setup_dialog() {
     gd_conf_set AUTO_BACKUP_SETUP "$(date '+%F %T')"
 
     gd_msg_secret "✱ Wichtig: Passwort des Backup-Archivs" "Die Backups sind verschlüsselt. Ohne dieses Passwort können sie NICHT wiederhergestellt werden, falls dieser Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es an einem sicheren Ort (z. B. Passwortmanager). Auf dem Server liegt es in $GD_AB_PASS." 16 78
+    gd_download_offer "Backup-Passwort" "Passwort des Backup-Archivs (restic):\n\n$(cat "$GD_AB_PASS")\n\nOhne dieses Passwort können die Backups nicht wiederhergestellt werden."
     if gd_yesno "Erstes Backup" "Die automatischen Backups sind eingerichtet (täglich um $time Uhr).\n\nSoll das erste Backup jetzt sofort erstellt werden?" 10 70; then
         ab_run_now
     fi
