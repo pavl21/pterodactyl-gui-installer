@@ -483,6 +483,7 @@ gd_fresh_install() {
 
     # --- Installation ---------------------------------------------------------
     GD_ADMIN_PASSWORD="$(gd_gen_password 24)"
+    # shellcheck disable=SC2034  # wird von gd_panel_install_steps gelesen
     GD_DB_PASSWORD="$(gd_gen_password 48)"
     gd_log "Installation gestartet: mode=$mode domain=$GD_DOMAIN version=$GD_PANEL_VERSION patch=$GD_APPLY_PATCH ssl=$GD_SSL_METHOD"
     gd_conf_set SSL_METHOD "$GD_SSL_METHOD"
@@ -506,6 +507,7 @@ gd_fresh_install() {
     gd_security_steps 91 "$with_wings" "${GD_PORT_RANGE:-}"
     gd_progress 100 "Installation abgeschlossen."
     gd_gauge_close
+    # shellcheck disable=SC2034  # wird von gd_fail gelesen
     GD_FAIL_HINT=""
     gd_conf_set INSTALL_STATE fertig
     gd_install_opts_clear
@@ -530,14 +532,16 @@ gd_fresh_install() {
     [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
     [ "$GD_SSL_METHOD" = "cloudflare" ] && done_text+="\n\nCloudflare: Stelle unter 'SSL/TLS' den Verschlüsselungsmodus auf 'Vollständig (streng)', sonst kann es zu Weiterleitungsschleifen kommen."
     gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports für Gameserver freigeben' frei."
-    done_text+="\n\nDie Verwaltung startest du künftig einfach mit dem Befehl: $(gd_shortcut_hint)"
     gd_msg "✔ Installation erfolgreich" "$done_text" 22 78
+    # Befehl für die Verwaltung, wichtigste Kurzbefehle, Login-Hinweis und Log-Verzeichnis
+    gd_shortcut_help_text dialog
     clear
     echo ""
     echo "FERTIG - - - - - - - - - - - - - - -"
     echo "Panel: https://${GD_DOMAIN}"
     echo "Log:   $GD_LOG"
     echo "Verwaltung: $(gd_shortcut_hint)"
+    echo "Kurzbefehle: $(gd_shortcut_name) hilfe"
     echo ""
 }
 
@@ -571,6 +575,16 @@ if [ "${GD_HEADLESS:-}" = 1 ]; then
     gd_log "Automatisches Update gestartet (Branch: $GD_BRANCH, lokal: ${GD_LOCAL_DIR:-nein})"
     gd_signature_notice
     gd_autoupdate_run
+    exit $?
+fi
+
+# ---------------------------------------------------------------------------
+# Kurzbefehl mit Unterbefehl (germandactyl|gd|gmd <befehl>, z. B. "gmd backup" oder "gmd status")
+# ---------------------------------------------------------------------------
+# Kein Banner und keine Vorbereitung: gd_dispatch prüft Befehl und Installation, "hilfe" und "status" laufen ohne
+# whiptail. Danach ist das Skript beendet (nicht zurück ins Hauptmenü). Unbekannte Befehle: Hilfe und Rückgabewert 2.
+if [ $# -gt 0 ]; then
+    gd_dispatch "$@"
     exit $?
 fi
 

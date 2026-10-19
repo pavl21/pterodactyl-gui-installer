@@ -1,11 +1,12 @@
 #!/bin/bash
 # Pfad: lib/manage.sh
-# Verwaltung: Hauptmenü mit Statuszeile und Themen-Gruppen, Kurzbefehle (germandactyl/gmd),
+# Verwaltung: Hauptmenü mit Statuszeile und Themen-Gruppen, Kurzbefehle (germandactyl/gmd/gd) mit Unterbefehlen,
 # Ports freigeben, System-Updates, Firewall, fail2ban, automatische Sicherheitsupdates, Logs und Support-Paket.
 # Benötigt: common, security, panel, wings, blueprint, backup, autobackup, autoupdate, uninstall
 
 GD_SHORTCUT="/usr/local/bin/germandactyl"
 GD_SHORTCUT_SHORT="/usr/local/bin/gmd"
+GD_SHORTCUT_GD="/usr/local/bin/gd"
 
 # ---------------------------------------------------------------------------
 # Kurzbefehle
@@ -25,6 +26,8 @@ gd_shortcut_body() {
     # eingebettet und der Branch "main", prüft das Skript die Signatur der Prüfsummenliste und den Hash von installer.sh,
     # bevor es ihn startet. Das Update-Skript setzt zusätzlich GD_HEADLESS=1, übergibt --auto-update und meldet
     # Fehler (ohne Terminal) in setup.conf, damit sie in der Statuszeile und im Login-Hinweis erscheinen.
+    # Argumente des Aufrufs (z. B. "gmd backup") gehen unverändert an installer.sh (dort: gd_dispatch); beim
+    # Update-Skript steht --auto-update davor.
     local path="$1" kind="$2" q_branch q_pubkey q_repo
     q_branch="$(printf '%q' "${GD_BRANCH}")"
     q_pubkey="$(printf '%q' "${GD_SIGNING_PUBKEY:-}")"
@@ -92,7 +95,7 @@ if [ -n "$pubkey" ] && [ "$branch" = "main" ]; then
     have="$(sha256sum "$tmp/installer.sh" | awk '{ print $1 }')"
     [ -n "$want" ] && [ "$want" = "$have" ] || abort "installer.sh passt nicht zur signierten Prüfsummenliste."
     # installer.sh prüft anschließend die Bibliotheken (neben der Datei liegt kein lib/, also kein "lokaler Checkout")
-    GD_BRANCH="$branch" bash "$tmp/installer.sh" "${args[@]}"
+    GD_BRANCH="$branch" bash "$tmp/installer.sh" "${args[@]}" "$@"
     exit $?
 fi
 
@@ -102,34 +105,180 @@ script="$(curl -fsSL "https://raw.githubusercontent.com/$repo/$branch/installer.
     branch="main"
     script="$(curl -fsSL "https://raw.githubusercontent.com/$repo/main/installer.sh")"
 } || { echo "GermanDactyl Setup konnte nicht geladen werden. Prüfe die Internetverbindung."; report uebersprungen "GermanDactyl Setup konnte nicht geladen werden (Internetverbindung?)"; exit 1; }
-GD_BRANCH="$branch" exec bash -c "$script" germandactyl "${args[@]}"
+# (bash -c: das erste Argument nach dem Skript ist $0, danach folgen --auto-update und die Argumente des Aufrufs)
+GD_BRANCH="$branch" exec bash -c "$script" germandactyl "${args[@]}" "$@"
 EOF
 }
 
 gd_shortcut_install() {
-    # "germandactyl" startet immer die aktuelle Version; "gmd" nur, wenn es den Befehl noch nicht gibt.
+    # "germandactyl" startet immer die aktuelle Version; "gmd" und "gd" nur, wenn es den Befehl noch nicht gibt.
+    # Ein angelegter Link wird in setup.conf vermerkt (SHORTCUT_GMD / SHORTCUT_GD).
     gd_shortcut_body "$GD_SHORTCUT" kurzbefehl > "$GD_SHORTCUT"
     chmod 755 "$GD_SHORTCUT"
     if [ ! -e "$GD_SHORTCUT_SHORT" ] && ! command -v gmd >/dev/null 2>&1; then
         ln -s "$GD_SHORTCUT" "$GD_SHORTCUT_SHORT"
         gd_conf_set SHORTCUT_GMD 1
     fi
+    if [ ! -e "$GD_SHORTCUT_GD" ] && ! command -v gd >/dev/null 2>&1; then
+        ln -s "$GD_SHORTCUT" "$GD_SHORTCUT_GD"
+        gd_conf_set SHORTCUT_GD 1
+    fi
     return 0
 }
 
 gd_shortcut_remove() {
-    # "gmd" nur entfernen, wenn es unser Link ist (die setup.conf ist nach der Deinstallation schon gelöscht)
-    if [ -L "$GD_SHORTCUT_SHORT" ] && [ "$(readlink "$GD_SHORTCUT_SHORT")" = "$GD_SHORTCUT" ]; then
-        rm -f "$GD_SHORTCUT_SHORT"
-    fi
+    # "gmd" und "gd" nur entfernen, wenn es unser Link ist (die setup.conf ist nach der Deinstallation schon gelöscht)
+    local link
+    for link in "$GD_SHORTCUT_SHORT" "$GD_SHORTCUT_GD"; do
+        if [ -L "$link" ] && [ "$(readlink "$link")" = "$GD_SHORTCUT" ]; then
+            rm -f "$link"
+        fi
+    done
     rm -f "$GD_SHORTCUT"
     return 0
 }
 
+gd_shortcut_name() {
+    # Kürzester verfügbarer Name unseres Kurzbefehls: gd, sonst gmd, sonst germandactyl
+    if [ "$(readlink "$GD_SHORTCUT_GD" 2>/dev/null)" = "$GD_SHORTCUT" ]; then echo "gd"
+    elif [ "$(readlink "$GD_SHORTCUT_SHORT" 2>/dev/null)" = "$GD_SHORTCUT" ]; then echo "gmd"
+    else echo "germandactyl"; fi
+}
+
 gd_shortcut_hint() {
-    local hint="germandactyl"
-    [ "$(readlink "$GD_SHORTCUT_SHORT" 2>/dev/null)" = "$GD_SHORTCUT" ] && hint="gmd (oder germandactyl)"
-    echo "$hint"
+    local name
+    name="$(gd_shortcut_name)"
+    if [ "$name" = "germandactyl" ]; then echo "germandactyl"; else echo "$name (oder germandactyl)"; fi
+}
+
+gd_shortcut_help_text() {
+    # gd_shortcut_help_text <text|dialog> – Übersicht über Verwaltung und Kurzbefehle.
+    # "text": alle Kurzbefehle auf der Standardausgabe (gmd hilfe). "dialog": kompakte Liste mit Hinweisen als
+    # Dialog "So geht es weiter" (Abschluss der Installation).
+    local mode="${1:-text}" n domain text="" w lines i
+    local cmds=() descs=()
+    n="$(gd_shortcut_name)"
+    domain="${GD_DOMAIN:-$(gd_conf_get PANEL_DOMAIN)}"
+    if [ "$mode" = dialog ]; then
+        cmds=("status" "analyse" "backup" "update" "ssl" "hilfe")
+        descs=("Zustand von Panel, Wings, Backups und Zertifikat" "Analyse (--text: ohne Dialoge, --fix: beheben)" "Backup-Verwaltung" "Updates (panel, wings oder system direkt)" "SSL-Zertifikate prüfen und erneuern" "Alle Kurzbefehle anzeigen")
+    else
+        cmds=("" "analyse" "analyse --text" "analyse --text --fix" "backup" "update" "update panel|wings|system" "ssl" "wings" "firewall" "logs" "status" "hilfe")
+        descs=("Verwaltung öffnen" "Analyse mit Dialogen" "Analyse als Text, ohne Dialoge" "Analyse als Text und behebt Probleme automatisch" "Backup-Verwaltung" "Update-Menü" "Panel, Wings oder System-Pakete direkt aktualisieren" "SSL-Zertifikate" "Wings-Verwaltung" "Firewall" "Logs anzeigen" "Statuszeile als Text ausgeben" "Diese Übersicht")
+    fi
+    [ "$mode" = dialog ] || text+="GermanDactyl Setup – Kurzbefehle"$'\n\n'
+    [ -n "$domain" ] && text+="Panel:       https://${domain}"$'\n'
+    text+="Verwaltung:  $(gd_shortcut_hint)"$'\n\n'
+    if [ "$n" = germandactyl ]; then text+="Kurzbefehle:"$'\n'
+    else text+="Kurzbefehle (statt \"$n\" geht auch germandactyl):"$'\n'; fi
+    w=$(( ${#n} + 28 ))
+    [ "$mode" = dialog ] && w=$(( ${#n} + 9 ))
+    for i in "${!cmds[@]}"; do
+        text+="$(printf '  %-*s %s' "$w" "$n${cmds[$i]:+ ${cmds[$i]}}" "${descs[$i]}")"$'\n'
+    done
+    if [ "$mode" = dialog ]; then
+        text+=$'\n'
+        if [ -x /usr/local/bin/germandactyl-motd ]; then
+            text+="Beim SSH-Login zeigt dir der Login-Hinweis (MOTD), ob ein Backup oder Update fehlgeschlagen ist."$'\n'
+        else
+            text+="Mit der SSH-Loginseite (Verwaltung → Server & Sicherheit) siehst du nach dem Login, ob ein Backup oder Update fehlgeschlagen ist."$'\n'
+        fi
+        text+="Protokolle der Installation und aller Aktionen: ${GD_LOG_DIR}/"
+        lines=$(( $(printf '%s' "$text" | fold -s -w 72 | wc -l) + 7 ))
+        gd_msg "☰ So geht es weiter" "$text" "$lines" 78
+    else
+        printf '%s' "$text"
+    fi
+}
+
+gd_run_plain() {
+    # gd_run_plain <skript.sh> [argumente] – wie gd_run, aber die Eingabe bleibt unverändert (kein /dev/tty): für Aufrufe
+    # ohne Terminal und Dialoge, z. B. "gmd analyse --text" per cron oder "ssh -T"
+    local script="$1" target="$GD_TMP/run-$1"
+    shift
+    if ! gd_fetch "$script" "$target"; then
+        echo "Das Skript $script konnte nicht geladen werden. Prüfe die Internetverbindung – oder die Datei ist nicht signiert (Details im Log: $GD_LOG)." >&2
+        return 1
+    fi
+    GD_LIB_DIR="${GD_LIB_DIR:-}" GD_LOCAL_DIR="${GD_LOCAL_DIR:-}" GD_BRANCH="$GD_BRANCH" \
+        GD_LOG="$GD_LOG" GD_TMP="$GD_TMP" bash "$target" "$@"
+}
+
+gd_dispatch() {
+    # gd_dispatch <befehl> [argumente] – Kurzbefehl mit Unterbefehl (germandactyl|gd|gmd <befehl>, siehe "hilfe"):
+    # springt direkt in einen Bereich der Verwaltung. Danach beendet sich das Skript (der Aufrufer macht "exit"),
+    # es geht nicht ins Hauptmenü zurück. "hilfe" und "status" laufen als reiner Text ohne whiptail; alle anderen
+    # Befehle brauchen eine vorhandene Installation.
+    # Rückgabe: 0 ok, 1 Fehler oder keine (fertige) Installation, 2 unbekannter Befehl oder ungültige Argumente.
+    local cmd="${1:-}" interactive=true installed=false rc=0
+    [ $# -gt 0 ] && shift
+    case "$cmd${*:+ $*}" in
+        hilfe|help|-h|--help) gd_shortcut_help_text text; return 0 ;;
+        status) interactive=false ;;
+        "analyse --text"|"analyse --text --fix") interactive=false ;;
+        analyse|backup|update|ssl|wings|firewall|logs) ;;
+        "update panel"|"update wings"|"update system") ;;
+        *)
+            { echo "Unbekannter Befehl oder ungültige Argumente: $cmd${*:+ $*}"; echo; gd_shortcut_help_text text; } >&2
+            return 2 ;;
+    esac
+
+    { [ -d "$PTERO_DIR" ] || [ -f /etc/pterodactyl/config.yml ]; } && installed=true
+    if [ "$cmd" != status ]; then
+        if ! $installed; then
+            echo "Pterodactyl ist auf diesem Server nicht installiert. Starte 'germandactyl' ohne Argumente für die Installation." >&2
+            return 1
+        fi
+        case "$(gd_conf_get INSTALL_STATE)" in
+            laeuft|panel_fertig)
+                echo "Die Installation ist nicht abgeschlossen. Starte 'germandactyl' ohne Argumente, um sie fortzusetzen." >&2
+                return 1 ;;
+        esac
+    fi
+
+    if $interactive; then
+        # Dialoge brauchen whiptail (fehlt es, richtet gd_prepare_system aus installer.sh die Grundpakete ein)
+        if ! command -v whiptail >/dev/null 2>&1 && declare -F gd_prepare_system >/dev/null; then
+            gd_prepare_system
+        fi
+        command -v whiptail >/dev/null 2>&1 || { echo "whiptail wurde nicht gefunden (apt-get install whiptail)." >&2; return 1; }
+        gd_signature_notice
+    fi
+    gd_log "Kurzbefehl: $cmd${*:+ $*}"
+    # Wie im Hauptmenü: Kurzbefehl erneuern, damit auch gd bzw. gmd nachgezogen werden
+    $installed && gd_shortcut_install >/dev/null 2>&1
+
+    case "$cmd" in
+        status)
+            gd_collect_status
+            printf '%b\n' "$GD_STATUS" | grep -v '^[[:space:]]*$'   # ohne Panel/Wings bleibt Zeile 1 leer
+            return 0 ;;
+        analyse)
+            if [ "${1:-}" = "--text" ]; then
+                gd_run_plain analyse.sh "$@"; return $?
+            fi
+            gd_run analyse.sh ;;
+        backup) gd_run backup-verwaltung.sh ;;
+        update)
+            case "${1:-}" in
+                panel)
+                    gd_has_panel || { echo "Das Panel ist auf diesem Server nicht installiert." >&2; return 1; }
+                    gd_panel_update && gd_conf_set PANEL_LATEST_TS 0
+                    rc=$? ;;
+                wings)
+                    gd_has_wings || { echo "Wings ist auf diesem Server nicht installiert." >&2; return 1; }
+                    gd_wings_update && gd_conf_set WINGS_LATEST_TS 0
+                    rc=$? ;;
+                system) gd_system_update; rc=$? ;;
+                *) gd_menu_update ;;
+            esac ;;
+        ssl) gd_run certbot-renew-verwaltung.sh ;;
+        wings) gd_run wings-installer.sh ;;
+        firewall) gd_firewall_menu ;;
+        logs) gd_logs_menu ;;
+    esac
+    clear
+    return "$rc"
 }
 
 # ---------------------------------------------------------------------------
@@ -556,7 +705,7 @@ gd_firewall_open_dialog() {
 }
 
 gd_firewall_menu() {
-    local c active rules items=() num rule
+    local c active items=() num rule
     command -v ufw >/dev/null 2>&1 || gd_apt_install ufw >> "$GD_LOG" 2>&1
     while true; do
         active=false; gd_ufw_active && active=true

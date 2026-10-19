@@ -100,12 +100,18 @@ conf_get() { ( . "$GD_CONF" 2>/dev/null; eval "printf '%s' \"\${$1:-}\"" ); }
 fmt_time() { date -d "$1" '+%d.%m.%Y %H:%M' 2>/dev/null || echo "$1"; }
 if [ -r "$GD_CONF" ]; then
     AUTO_TEXT=""
-    # Backup (AUTO_BACKUP_LAST_RESULT = ok|fehler, AUTO_BACKUP_LAST_RUN = Zeitpunkt des letzten Laufs, AUTO_BACKUP_LAST_OK = letzter Erfolg)
+    # Backup (AUTO_BACKUP_LAST_RESULT = laufend|ok|fehler, AUTO_BACKUP_LAST_RUN = Beginn/Ende des letzten Laufs,
+    # AUTO_BACKUP_LAST_OK = letzter Erfolg). "laufend" länger als 6 Stunden gilt als hängend oder abgebrochen.
     if systemctl cat germandactyl-backup.timer >/dev/null 2>&1; then
         BK_RESULT="$(conf_get AUTO_BACKUP_LAST_RESULT)"; BK_RUN="$(conf_get AUTO_BACKUP_LAST_RUN)"; BK_OK="$(conf_get AUTO_BACKUP_LAST_OK)"
-        BK_AGE=0
+        BK_AGE=0; BK_RUN_AGE=0
         [ -n "$BK_OK" ] && BK_AGE=$(( ($(date +%s) - $(date -d "$BK_OK" +%s 2>/dev/null || date +%s)) / 3600 ))
-        if [ "$BK_RESULT" = "fehler" ]; then
+        [ "$BK_RESULT" = "laufend" ] && [ -n "$BK_RUN" ] && BK_RUN_AGE=$(( $(date +%s) - $(date -d "$BK_RUN" +%s 2>/dev/null || date +%s) ))
+        if [ "$BK_RESULT" = "laufend" ] && [ "$BK_RUN_AGE" -gt 21600 ]; then
+            AUTO_TEXT+="✖ Backup hängt oder wurde abgebrochen${BK_RUN:+ (gestartet: $(fmt_time "$BK_RUN"))}${BK_OK:+, letzter Erfolg: $(fmt_time "$BK_OK")}. Log: /var/log/germandactyl-setup/auto-backup.log"$'\n'
+        elif [ "$BK_RESULT" = "laufend" ]; then
+            AUTO_TEXT+="◷ Backup läuft${BK_RUN:+ (gestartet: $(fmt_time "$BK_RUN"))}${BK_OK:+, letzter Erfolg: $(fmt_time "$BK_OK")}"$'\n'
+        elif [ "$BK_RESULT" = "fehler" ]; then
             AUTO_TEXT+="✖ Das letzte automatische Backup ist fehlgeschlagen${BK_RUN:+ ($(fmt_time "$BK_RUN"))}${BK_OK:+, letzter Erfolg: $(fmt_time "$BK_OK")}. Log: /var/log/germandactyl-setup/auto-backup.log"$'\n'
         elif [ -z "$BK_OK" ]; then
             AUTO_TEXT+="⚠ Automatische Backups sind eingerichtet, es gibt aber noch kein erfolgreiches Backup."$'\n'
@@ -136,12 +142,16 @@ if [ -r "$GD_CONF" ]; then
     [ -n "$AUTO_TEXT" ] && printf '\n◷ Automatik:\n%s\n' "${AUTO_TEXT%$'\n'}" | $LOLCAT
 fi
 
-# Hinweis auf die Verwaltung (Kurzbefehl)
-if [ -L /usr/local/bin/gmd ] || [ -x /usr/local/bin/gmd ]; then
-    echo -e "\n▸ Verwaltung: gmd" | $LOLCAT
+# Hinweis auf die Verwaltung (Kurzbefehl): der kürzeste vorhandene Name, gd nur als unser Link auf germandactyl
+GD_CMD=""
+if [ "$(readlink /usr/local/bin/gd 2>/dev/null)" = "/usr/local/bin/germandactyl" ]; then
+    GD_CMD="gd"
+elif [ -L /usr/local/bin/gmd ] || [ -x /usr/local/bin/gmd ]; then
+    GD_CMD="gmd"
 elif [ -x /usr/local/bin/germandactyl ]; then
-    echo -e "\n▸ Verwaltung: germandactyl" | $LOLCAT
+    GD_CMD="germandactyl"
 fi
+[ -n "$GD_CMD" ] && echo -e "\n▸ Verwaltung: $GD_CMD\n▸ Kurzbefehle: $GD_CMD hilfe" | $LOLCAT
 
 # Letzter erfolgreicher Login (vor der aktuellen Sitzung)
 LAST_LOGIN="$(last -i -n 2 -w 2>/dev/null | sed -n '2p')"

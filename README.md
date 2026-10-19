@@ -12,7 +12,27 @@ sudo bash -c "$(curl -sSL https://setup.germandactyl.de/)"
 
 Ist Pterodactyl bereits installiert, öffnet sich stattdessen die Verwaltung. Dort findest du Hilfe & Analyse, Updates, Backups, Wings und Ports, Blueprint, phpMyAdmin, Database-Host, Firewall, fail2ban, SSH-Loginseite, Swap und die Deinstallation.
 
-Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germandactyl` bzw. kurz `gmd` (nur, wenn es auf dem Server noch keinen Befehl `gmd` gibt).
+Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germandactyl` bzw. kurz `gmd` oder `gd` (`gmd` und `gd` nur, wenn es auf dem Server noch keinen gleichnamigen Befehl gibt).
+
+## Kurzbefehle
+
+Für häufige Aufgaben musst du das Menü nicht öffnen. Alle Befehle funktionieren auch mit `germandactyl` und `gd`, etwa `germandactyl update panel`.
+
+| Befehl | Was passiert |
+| --- | --- |
+| `gmd` | Öffnet die Verwaltung |
+| `gmd analyse` | Startet die Analyse mit Dialogen |
+| `gmd analyse --text` | Analyse als reiner Text, ohne Dialoge |
+| `gmd analyse --text --fix` | Analyse als Text und behebt alle automatisch behebbaren Probleme |
+| `gmd backup` | Öffnet die Backup-Verwaltung |
+| `gmd update` | Öffnet das Update-Menü |
+| `gmd update panel` / `wings` / `system` | Aktualisiert direkt das Panel, Wings oder die System-Pakete |
+| `gmd ssl` | Öffnet die SSL-Zertifikatsverwaltung |
+| `gmd wings` | Öffnet die Wings-Verwaltung |
+| `gmd firewall` | Öffnet die Firewall-Verwaltung |
+| `gmd logs` | Zeigt die Logs |
+| `gmd status` | Zeigt die Statuszeile |
+| `gmd hilfe` | Zeigt alle Kurzbefehle |
 
 ## Voraussetzungen
 
@@ -29,7 +49,7 @@ Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germa
   - Sonst kannst du wählen: die neueste Version auf Englisch oder die neueste übersetzte Version.
 - **Wings (optional):**
   - Docker, Wings, eine automatisch angelegte Node, die Konfiguration und ein Portbereich für Gameserver.
-  - Läuft Wings auf einem anderen Server, fügst du nur den Befehl aus dem Panel ein ("Generate Token").
+  - Läuft Wings auf einem anderen Server, fügst du nur den Befehl aus dem Panel ein („Generate Token“).
 - **Absicherung (optional):**
   - UFW-Firewall; dein SSH-Port wird automatisch freigegeben.
   - fail2ban
