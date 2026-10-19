@@ -44,6 +44,13 @@
 - Vor der Installation prüft das Setup die IPv4-Verbindung, die Systemzeit, den freien Speicherplatz und warnt, wenn du über SSH ohne tmux oder screen installierst.
 - Eine abgebrochene Installation lässt sich fortsetzen: Ist das Panel schon fertig und Wings fehlt noch, führt das Setup die Installation beim nächsten Start mit den gespeicherten Optionen weiter. Bricht die Installation mitten im Panel ab, bietet das Setup einen Neustart an; bereits installierte Pakete bleiben dabei erhalten.
 - Der Anmeldehinweis (MOTD) zeigt das letzte Backup, das letzte automatische Update und hängende Backups mit dem kürzesten Befehl zur Behebung.
+- Der Database-Host wird nach der Einrichtung automatisch im Panel angelegt, wenn das Panel auf diesem Server läuft. Schlägt das fehl, bleibt die manuelle Einrichtung mit allen Daten im Dialog.
+- Der Kurzbefehl startet sofort aus einer lokalen Kopie des Setups; Updates werden im Hintergrund geprüft, statt bei jedem Aufruf von GitHub zu laden.
+- Die Verwaltung kann optional direkt nach dem SSH-Login starten (Menü „Server & Sicherheit“).
+- Die Admin-Zugangsdaten, das Backup-Passwort und die Daten des Database-Hosts kannst du als Textdatei über einen Link herunterladen. Der Link ist 90 Sekunden gültig, danach wird die Datei gelöscht.
+- Die Firewall des Database-Hosts wird mit den Nodes abgeglichen: Die Analyse meldet fehlende Freigaben und behebt sie auf Wunsch, die Verwaltung gleicht sie beim Start ab, und ein nächtlicher Timer (04:30 Uhr) hält sie aktuell. Neue Nodes bekommen so automatisch Zugang zur Datenbank.
+- Die Vorbereitung vor der Installation zeigt eine Ladeanimation und eine Schrittliste: Paketstatus, Paketquellen und Grundpakete werden einzeln als erledigt markiert.
+- `gmd support` erstellt zusätzlich zum Archiv eine Textdatei für Support-Anfragen. Du kannst sie nach einer Vorschau und einer zweiten Bestätigung zu mclo.gs hochladen und den Link im Support-Kanal des GermanDactyl-Discords teilen.
 
 ### Sicherheit
 
@@ -55,6 +62,7 @@
 - Das phpMyAdmin-Paket wird nur installiert, wenn seine Prüfsumme stimmt; der Download kommt ausschließlich von files.phpmyadmin.net.
 - Die deutsche Übersetzung (Patch) wird nur angewendet, wenn ihre Prüfsumme mit der Liste im GermanDactyl-Repository übereinstimmt.
 - Der Cronjob des Panels läuft als Benutzer www-data und nicht mehr als root.
+- Das Support-Paket entfernt jetzt auch E-Mail-Adressen, lange Hex-Werte (Tokens und Hashes), Cloudflare-Tokens, Zugangsdaten von restic und S3 sowie Passwörter in URLs. Die Zeilen bleiben erhalten, nur die geheimen Werte werden ersetzt.
 
 ### Verbesserungen und Texte
 

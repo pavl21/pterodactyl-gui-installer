@@ -137,6 +137,10 @@ if $HAS_PANEL; then
 fi
 
 if $PANEL_OK; then
+    # Firewall-Freigaben für alle Nodes setzen und den nächtlichen Abgleich einrichten (Timer germandactyl-dbhost)
+    gd_source_lib dbhost
+    gd_dbhost_sync_firewall
+    gd_dbhost_timer_install >> "$GD_LOG" 2>&1
     gd_msg "★ Database-Host angelegt" "Der Database-Host wurde im Panel eingetragen (Name: Hauptdatenbank, Host: ${IP_ADDRESS}, Node: ${NODE_ID:-keine}). Deine Gameserver können jetzt im Reiter 'Databases' eigene Datenbanken anlegen." 12 78
     exit 0
 fi
@@ -148,6 +152,11 @@ if $HAS_PANEL; then
 fi
 gd_msg "Database-Host von Hand anlegen" "Öffne in deinem Panel: Admin → Databases → Create New.\n\nIm nächsten Fenster siehst du die Daten, die du dort eintragen musst." 10 78
 gd_msg_secret "✱ Zugangsdaten des Database-Hosts" "Name:          frei wählbar, z. B. Hauptdatenbank\nHost:          ${IP_ADDRESS}\nPort:          3306\nBenutzername:  ${USERNAME}\nPasswort:      ${PASSWORD}\nLinked Node:   deine Node auswählen" 16 78
+# Download-Link nur mit Panel: Die Datei wird über die Domain des Panels ausgeliefert
+if $HAS_PANEL; then
+    gd_source_lib download
+    gd_download_offer "Database-Host-Zugangsdaten" "Name: Hauptdatenbank (frei wählbar)\nHost: ${IP_ADDRESS}\nPort: 3306\nBenutzername: ${USERNAME}\nPasswort: ${PASSWORD}\nLinked Node: deine Node auswählen"
+fi
 
 clear
 echo ""
@@ -161,6 +170,11 @@ echo "Trage es im Panel ein und drücke ERST DANN die Taste Enter."
 read -r _ < /dev/tty
 
 if gd_yesno "✔ Einrichtung prüfen" "Konnte der Database-Host im Panel erfolgreich angelegt werden?" 9 70; then
+    if $HAS_PANEL; then
+        gd_source_lib dbhost
+        gd_dbhost_sync_firewall
+        gd_dbhost_timer_install >> "$GD_LOG" 2>&1
+    fi
     gd_msg "★ Erfolg" "Super! Der Database-Host ist eingerichtet. Deine Gameserver können jetzt im Reiter 'Databases' eigene Datenbanken anlegen." 10 70
 else
     gd_mysql -e "DROP USER IF EXISTS '${USERNAME}'@'${IP_ADDRESS}'; FLUSH PRIVILEGES;" >> "$GD_LOG" 2>&1

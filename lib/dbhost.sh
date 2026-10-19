@@ -102,3 +102,45 @@ gd_dbhost_sync_firewall() {
     done <<< "$valid"
     return 0
 }
+
+gd_dbhost_timer_install() {
+    # Nächtlicher Abgleich der Firewall mit den Nodes: Timer germandactyl-dbhost.timer (04:30 Uhr, bis zu 15 Minuten
+    # Zufallsverzögerung, nachholen wenn der Server aus war). Der Dienst ruft "germandactyl dbhost-sync" auf (gd_dispatch).
+    # Die Units liegen unter /etc/systemd/system und werden von gd_dbhost_timer_remove wieder entfernt.
+    cat > /etc/systemd/system/germandactyl-dbhost.service <<'EOF_UNIT'
+[Unit]
+Description=GermanDactyl Setup – Firewall des Database-Hosts an die Nodes anpassen
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# HOME, damit der Kurzbefehl und die Zugangsdaten des Panels wie bei den anderen Diensten gefunden werden
+Environment=HOME=/root
+ExecStart=/usr/local/bin/germandactyl dbhost-sync
+Nice=10
+EOF_UNIT
+    cat > /etc/systemd/system/germandactyl-dbhost.timer <<'EOF_UNIT'
+[Unit]
+Description=GermanDactyl Setup – nächtlicher Abgleich der Database-Host-Firewall
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF_UNIT
+    systemctl daemon-reload || return 1
+    systemctl enable --now germandactyl-dbhost.timer
+}
+
+gd_dbhost_timer_remove() {
+    # Timer und Dienst entfernen (Deinstallation des Panels und Aufräumen nach der Deinstallation). Ohne Wirkung, wenn es
+    # den Timer nicht gibt.
+    systemctl disable --now germandactyl-dbhost.timer >/dev/null 2>&1
+    rm -f /etc/systemd/system/germandactyl-dbhost.service /etc/systemd/system/germandactyl-dbhost.timer
+    systemctl daemon-reload >/dev/null 2>&1
+    return 0
+}

@@ -829,6 +829,36 @@ check_firewall() {
     done
 }
 
+check_dbhost() {
+    # Database-Host auf diesem Server: Jede Node im Panel braucht eine Freigabe für Port 3306, sonst können ihre
+    # Gameserver keine Datenbanken erreichen. Geprüft wird nur, wenn UFW aktiv ist und der Host eingerichtet wurde (Regel
+    # '# MariaDB (Panel)' bzw. '# MariaDB (Gameserver-Container)'). Nodes auf diesem Server brauchen keine eigene Regel.
+    gd_ufw_active || return 0
+    local rules nodes fqdn ip ips own foreign
+    rules="$(LC_ALL=C ufw status numbered 2>/dev/null)"
+    grep -qE '# MariaDB \((Panel|Gameserver-Container)\)' <<< "$rules" || return 0
+    declare -F gd_panel_sql >/dev/null || gd_source_lib wings
+    nodes="$(gd_panel_sql "SELECT fqdn FROM nodes;" 2>>"$GD_LOG")" || return 0
+    own="$( { gd_local_ips; gd_public_ip; } 2>/dev/null)"
+    while IFS= read -r fqdn; do
+        fqdn="${fqdn//[[:space:]]/}"
+        [[ "$fqdn" =~ ^[A-Za-z0-9.-]{1,253}$ ]] || continue
+        grep -qF "# MariaDB (Node $fqdn)" <<< "$rules" && continue
+        if [[ "$fqdn" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then ips="$fqdn"; else ips="$(gd_resolve_a "$fqdn")"; fi
+        # Eine Regel kann nur für eine fremde Adresse entstehen: Eigene Adressen und Cloudflare zählen nicht
+        foreign=false
+        while IFS= read -r ip; do
+            [ -n "$ip" ] || continue
+            gd_is_cloudflare_ip "$ip" && continue
+            grep -qxF "$ip" <<< "$own" && continue
+            foreign=true
+        done <<< "$ips"
+        $foreign || continue
+        warn "Node $fqdn hat keine Freigabe am Database-Host (Port 3306)"
+        add_fix "Database-Host-Firewall mit den Nodes abgleichen" "fix_dbhost_firewall"
+    done <<< "$nodes"
+}
+
 check_backups() {
     # Automatische Backups: Ergebnis des letzten Laufs (AUTO_BACKUP_LAST_RESULT = laufend|ok|fehler, AUTO_BACKUP_LAST_RUN),
     # letzter Erfolg, Speicherort (gleiche Platte wie /?) und letzte Integritätsprüfung (restic check)
@@ -973,6 +1003,7 @@ fix_php_socket() {
     nginx -t && systemctl reload nginx
 }
 
+fix_dbhost_firewall() { gd_source_lib dbhost; gd_dbhost_sync_firewall; }
 run_fixes() {
     local items=() i sel
     for i in "${!FIX_DESC[@]}"; do items+=("$i" "${FIX_DESC[$i]}" ON); done
@@ -1013,6 +1044,7 @@ step 60 "Dienste werden geprüft..."; check_services
 step 70 "Panel wird geprüft..."; check_panel
 step 80 "Wings wird geprüft..."; check_wings
 step 88 "Netzwerk und DNS werden geprüft..."; check_network
+step 91 "Database-Host wird geprüft..."; check_dbhost
 step 94 "Backups werden geprüft..."; check_backups
 if $SPEEDTEST; then
     step 96 "Geschwindigkeit wird gemessen..."

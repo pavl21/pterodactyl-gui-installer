@@ -177,6 +177,8 @@ gd_shortcut_remove() {
     # Lokale Kopie und die Option "nach dem SSH-Login starten" mit entfernen
     rm -rf "$GD_LOCAL_COPY"
     rm -f "$GD_AUTOSTART_FILE"
+    # Nächtlicher Abgleich der Database-Host-Firewall (lib/dbhost.sh) ohne Panel überflüssig
+    gd_dbhost_timer_remove
     return 0
 }
 
@@ -202,11 +204,11 @@ gd_shortcut_help_text() {
     n="$(gd_shortcut_name)"
     domain="${GD_DOMAIN:-$(gd_conf_get PANEL_DOMAIN)}"
     if [ "$mode" = dialog ]; then
-        cmds=("status" "analyse" "backup" "update" "ssl" "hilfe")
-        descs=("Zustand von Panel, Wings, Backups und Zertifikat" "Analyse (--text: ohne Dialoge, --fix: beheben)" "Backup-Verwaltung" "Updates (panel, wings oder system direkt)" "SSL-Zertifikate prüfen und erneuern" "Alle Kurzbefehle anzeigen")
+        cmds=("status" "analyse" "backup" "update" "ssl" "support" "hilfe")
+        descs=("Zustand von Panel, Wings, Backups und Zertifikat" "Analyse (--text: ohne Dialoge, --fix: beheben)" "Backup-Verwaltung" "Updates (panel, wings oder system direkt)" "SSL-Zertifikate prüfen und erneuern" "Support-Paket erstellen (optional Upload)" "Alle Kurzbefehle anzeigen")
     else
-        cmds=("" "analyse" "analyse --text" "analyse --text --fix" "backup" "update" "update panel|wings|system" "ssl" "wings" "firewall" "logs" "status" "hilfe")
-        descs=("Verwaltung öffnen" "Analyse mit Dialogen" "Analyse als Text, ohne Dialoge" "Analyse als Text und behebt Probleme automatisch" "Backup-Verwaltung" "Update-Menü" "Panel, Wings oder System-Pakete direkt aktualisieren" "SSL-Zertifikate" "Wings-Verwaltung" "Firewall" "Logs anzeigen" "Statuszeile als Text ausgeben" "Diese Übersicht")
+        cmds=("" "analyse" "analyse --text" "analyse --text --fix" "backup" "update" "update panel|wings|system" "ssl" "wings" "firewall" "logs" "status" "support" "dbhost-sync" "hilfe")
+        descs=("Verwaltung öffnen" "Analyse mit Dialogen" "Analyse als Text, ohne Dialoge" "Analyse als Text und behebt Probleme automatisch" "Backup-Verwaltung" "Update-Menü" "Panel, Wings oder System-Pakete direkt aktualisieren" "SSL-Zertifikate" "Wings-Verwaltung" "Firewall" "Logs anzeigen" "Statuszeile als Text ausgeben" "Support-Paket erstellen (optional Upload zu mclo.gs)" "Database-Host-Firewall mit den Nodes abgleichen" "Diese Übersicht")
     fi
     [ "$mode" = dialog ] || text+="GermanDactyl Setup – Kurzbefehle"$'\n\n'
     [ -n "$domain" ] && text+="Panel:       https://${domain}"$'\n'
@@ -256,9 +258,9 @@ gd_dispatch() {
     [ $# -gt 0 ] && shift
     case "$cmd${*:+ $*}" in
         hilfe|help|-h|--help) gd_shortcut_help_text text; return 0 ;;
-        status) interactive=false ;;
+        status|dbhost-sync) interactive=false ;;
         "analyse --text"|"analyse --text --fix") interactive=false ;;
-        analyse|backup|update|ssl|wings|firewall|logs) ;;
+        analyse|backup|update|ssl|wings|firewall|logs|support) ;;
         "update panel"|"update wings"|"update system") ;;
         *)
             { echo "Unbekannter Befehl oder ungültige Argumente: $cmd${*:+ $*}"; echo; gd_shortcut_help_text text; } >&2
@@ -294,6 +296,12 @@ gd_dispatch() {
             gd_collect_status
             printf '%b\n' "$GD_STATUS" | grep -v '^[[:space:]]*$'   # ohne Panel/Wings bleibt Zeile 1 leer
             return 0 ;;
+        dbhost-sync)
+            # Für den nächtlichen Timer (germandactyl-dbhost.timer): ohne Dialog, die Einzelheiten stehen im Log
+            gd_source_lib dbhost
+            gd_dbhost_sync_firewall
+            echo "Die Firewall des Database-Hosts wurde mit den Nodes abgeglichen (Details im Log: $GD_LOG)."
+            return 0 ;;
         analyse)
             if [ "${1:-}" = "--text" ]; then
                 gd_run_plain analyse.sh "$@"; return $?
@@ -317,6 +325,7 @@ gd_dispatch() {
         wings) gd_run wings-installer.sh ;;
         firewall) gd_firewall_menu ;;
         logs) gd_logs_menu ;;
+        support) gd_support_package ;;
     esac
     clear
     return "$rc"
@@ -492,6 +501,10 @@ gd_main_menu() {
         ( gd_local_copy_update >> "$GD_LOG" 2>&1 ) </dev/null &
     fi
     ( gd_update_check >> "$GD_LOG" 2>&1 ) </dev/null &
+    # Database-Host-Firewall im Hintergrund an die Nodes anpassen (wie der nächtliche Timer; ohne Panel passiert nichts)
+    if [ "${GD_HEADLESS:-}" != 1 ] && gd_has_panel; then
+        ( gd_source_lib dbhost; gd_dbhost_sync_firewall ) >>"$GD_LOG" 2>&1 </dev/null &
+    fi
     while true; do
         gd_collect_status
         gd_update_evaluate
@@ -888,27 +901,90 @@ gd_logs_menu() {
 }
 
 gd_sanitize() {
-    # Entfernt Passwörter, Schlüssel und Tokens aus Textdateien (für das Support-Paket)
+    # Entfernt Passwörter, Schlüssel, Tokens und E-Mail-Adressen aus Textdateien (für das Support-Paket). Die Zeilen bleiben
+    # erhalten, nur die geheimen Werte werden durch *** ersetzt.
     sed -E -i \
         -e 's/((PASSWORD|PASS|SECRET|KEY|TOKEN|SALT)[A-Z_]*=).*/\1***/I' \
         -e 's/("?(password|passwd|token|token_id|secret|api_key)"?\s*[:=]\s*)"?[^",} ]+"?/\1***/Ig' \
         -e 's/(Bearer )[A-Za-z0-9._-]+/\1***/g' \
         -e 's/\b(ptl[acr]_)[A-Za-z0-9]+/\1***/g' \
         -e 's/base64:[A-Za-z0-9+\/=]+/base64:***/g' \
+        -e 's/(dns_cloudflare_api_token[[:space:]]*=[[:space:]]*).*/\1***/Ig' \
+        -e 's/((RESTIC_PASSWORD|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|SFTP_PASS[A-Z_]*)[[:space:]]*=[[:space:]]*).*/\1***/Ig' \
+        -e 's/(sshpass[[:space:]]+-p[[:space:]]*)[^[:space:]]+/\1***/g' \
+        -e 's#(://[^:/@[:space:]]+:)[^@[:space:]/]+@#\1***@#g' \
+        -e 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/***@***/g' \
+        -e 's/\b[A-Fa-f0-9]{32,}\b/***/g' \
         "$@"
 }
 
+gd_support_section() {
+    # gd_support_section "Titel" <datei> [zeilen] – ein Abschnitt der Textfassung: Überschrift und Inhalt der Datei, bei
+    # "zeilen" nur die letzten Zeilen (Logs). Fehlt die Datei oder ist sie leer, steht das im Abschnitt.
+    local title="$1" file="$2" max="${3:-0}"
+    printf '\n===== %s =====\n' "$title"
+    if [ -s "$file" ]; then
+        if [ "$max" -gt 0 ]; then tail -n "$max" "$file"; else cat "$file"; fi | cut -c1-1000
+    else
+        echo "(keine Angaben)"
+    fi
+}
+
+gd_support_text() {
+    # gd_support_text <verzeichnis> <datei> [zeilen je Log] – Textfassung des Support-Pakets für mclo.gs. Die Dateien im
+    # Verzeichnis sind schon bereinigt; jeder Log-Abschnitt zeigt nur die letzten "zeilen" Zeilen.
+    local dir="$1" out="$2" n="${3:-200}" f
+    {
+        echo "GermanDactyl Setup – Support-Paket vom $(date '+%d.%m.%Y %H:%M')"
+        echo "Passwörter, Schlüssel, Tokens und E-Mail-Adressen wurden entfernt."
+        gd_support_section "Versionen" "$dir/versionen.txt"
+        gd_support_section "Dienst-Status" "$dir/dienste.txt"
+        gd_support_section "Ressourcen" "$dir/ressourcen.txt"
+        gd_support_section "Analyse-Ergebnis" "$dir/analyse.txt"
+        gd_support_section "Konfiguration ohne Secrets" "$dir/setup.conf.txt"
+        [ -s "$dir/wings-config.yml" ] && gd_support_section "Wings-Konfiguration ohne Secrets" "$dir/wings-config.yml"
+        for f in panel.log wings.log pteroq.log nginx-error.log setup.log; do
+            gd_support_section "Log: $f (letzte $n Zeilen)" "$dir/$f" "$n"
+        done
+    } > "$out"
+}
+
+gd_support_upload() {
+    # gd_support_upload <datei> – lädt die Textfassung zu mclo.gs hoch. Die Seite ist öffentlich abrufbar (jeder mit dem
+    # Link). Rückgabe 0 = hochgeladen (Link in GD_SUPPORT_URL), 1 = Fehler (Grund in GD_SUPPORT_ERROR).
+    local file="$1" resp success
+    GD_SUPPORT_URL=""; GD_SUPPORT_RAW=""; GD_SUPPORT_ERROR=""
+    resp="$(gd_curl -X POST https://api.mclo.gs/1/log --data-urlencode "content@$file" 2>>"$GD_LOG")" || {
+        GD_SUPPORT_ERROR="mclo.gs ist nicht erreichbar oder hat den Upload abgelehnt."
+        gd_log "Support-Paket: Upload zu mclo.gs fehlgeschlagen (keine Antwort)"
+        return 1
+    }
+    success="$(jq -r '.success // false' <<< "$resp" 2>/dev/null)"
+    if [ "$success" = "true" ]; then
+        GD_SUPPORT_URL="$(jq -r '.url // empty' <<< "$resp" 2>/dev/null)"
+        GD_SUPPORT_RAW="$(jq -r '.raw // empty' <<< "$resp" 2>/dev/null)"
+        gd_log "Support-Paket zu mclo.gs hochgeladen: $GD_SUPPORT_URL"
+        return 0
+    fi
+    GD_SUPPORT_ERROR="$(jq -r '.error // empty' <<< "$resp" 2>/dev/null)"
+    GD_SUPPORT_ERROR="${GD_SUPPORT_ERROR:-unerwartete Antwort von mclo.gs}"
+    gd_log "Support-Paket: Upload zu mclo.gs fehlgeschlagen: $GD_SUPPORT_ERROR"
+    return 1
+}
+
 gd_support_package() {
-    local dir="$GD_TMP/support" out stamp analyse_script
-    gd_yesno "▣ Support-Paket" "Es wird ein Archiv mit Informationen für eine Support-Anfrage erstellt: Versionen, Dienst-Status, Analyse-Ergebnis, Konfiguration und die letzten Log-Einträge.\n\nPasswörter, Schlüssel und Tokens werden automatisch entfernt. Es wird nichts hochgeladen – du entscheidest selbst, wem du die Datei gibst.\n\nErstellen?" 15 76 || return
+    local dir="$GD_TMP/support" out txt stamp analyse_script
+    gd_yesno "▣ Support-Paket" "Es werden ein Archiv und eine Textdatei mit Informationen für eine Support-Anfrage erstellt: Versionen, Dienst-Status, Analyse-Ergebnis, Konfiguration und die letzten Log-Einträge.\n\nPasswörter, Schlüssel, Tokens und E-Mail-Adressen werden automatisch entfernt. Hochgeladen wird nur, wenn du das danach ausdrücklich bestätigst.\n\nErstellen?" 16 76 || return
     stamp="$(date +%Y-%m-%d_%H-%M)"
     out="/root/germandactyl-support-${stamp}.tar.gz"
+    txt="/root/germandactyl-support-${stamp}.txt"
     rm -rf "$dir"; mkdir -p "$dir"
     gd_gauge_open "▣ Support-Paket" "Informationen werden gesammelt..."
     gd_progress 10 "System und Versionen..."
+    . /etc/os-release 2>/dev/null
     {
         echo "Erstellt: $(date)"; echo
-        . /etc/os-release 2>/dev/null; echo "System:    $PRETTY_NAME ($(uname -r), $(uname -m))"
+        echo "System:    ${PRETTY_NAME:-unbekannt} ($(uname -r), $(uname -m))"
         echo "Panel:     $(gd_panel_installed_version)"
         echo "Wings:     $("$WINGS_BIN" version 2>/dev/null | head -n1)"
         echo "PHP:       $(php -v 2>/dev/null | head -n1)"
@@ -916,13 +992,14 @@ gd_support_package() {
         echo "MariaDB:   $(mariadb --version 2>/dev/null)"
         echo "Docker:    $(docker --version 2>/dev/null)"
         echo "Blueprint: $(blueprint -v 2>/dev/null | tail -n1)"
-        echo; echo "== setup.conf (ohne Geheimnisse)"; grep -vE 'PASS|KEY|TOKEN' "$GD_CONF_FILE" 2>/dev/null
-        echo; echo "== Dienste"
-        for s in nginx "$(gd_panel_php_fpm)" mariadb redis-server pteroq wings docker fail2ban germandactyl-backup.timer; do
+    } > "$dir/versionen.txt" 2>&1
+    {
+        for s in nginx "$(gd_panel_php_fpm)" mariadb redis-server pteroq wings docker fail2ban germandactyl-backup.timer germandactyl-dbhost.timer; do
             printf '%-28s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null)"
         done
-        echo; echo "== Ressourcen"; LC_ALL=C free -m; df -h /
-    } > "$dir/system.txt" 2>&1
+    } > "$dir/dienste.txt" 2>&1
+    { LC_ALL=C free -m; df -h /; } > "$dir/ressourcen.txt" 2>&1
+    grep -vE 'PASS|KEY|TOKEN' "$GD_CONF_FILE" > "$dir/setup.conf.txt" 2>/dev/null
     gd_progress 35 "Analyse wird ausgeführt..."
     analyse_script="$GD_TMP/analyse-support.sh"
     gd_fetch analyse.sh "$analyse_script" && GD_LIB_DIR="${GD_LIB_DIR:-}" timeout 300 bash "$analyse_script" --text > "$dir/analyse.txt" 2>&1
@@ -938,7 +1015,25 @@ gd_support_package() {
     gd_progress 85 "Passwörter und Schlüssel werden entfernt..."
     gd_sanitize "$dir"/*
     ( umask 077; tar -czf "$out" -C "$GD_TMP" support ) && chmod 600 "$out"
+    # Textfassung für mclo.gs (höchstens 25.000 Zeilen und 10 MiB); sind es mehr, werden die Logs stärker gekürzt
+    ( umask 077; gd_support_text "$dir" "$txt" 200 )
+    if [ "$(wc -l < "$txt")" -ge 25000 ] || [ "$(wc -c < "$txt")" -ge 10485760 ]; then
+        gd_support_text "$dir" "$txt" 50
+    fi
+    gd_sanitize "$txt"
+    chmod 600 "$txt"
     gd_progress 100 "Fertig."
     gd_gauge_close
-    gd_msg "✔ Support-Paket erstellt" "Das Support-Paket liegt hier:\n\n$out ($(du -h "$out" | cut -f1))\n\nPasswörter, Schlüssel und Tokens wurden entfernt. Prüfe den Inhalt trotzdem kurz, bevor du die Datei weitergibst (z. B. mit: tar -tzf $out)." 14 78
+    gd_msg "✔ Support-Paket erstellt" "Das Support-Paket liegt hier:\n\n$out ($(du -h "$out" | cut -f1))\n\nDie Textfassung (für einen Upload geeignet):\n\n$txt\n\nPasswörter, Schlüssel, Tokens und E-Mail-Adressen wurden entfernt. Prüfe den Inhalt trotzdem kurz, bevor du die Dateien weitergibst." 18 78
+
+    gd_yesno "▣ Support-Paket hochladen?" "Die Textfassung kann zu mclo.gs hochgeladen werden. Du bekommst dann einen Link, den du im GermanDactyl-Discord im Support-Kanal teilen kannst.\n\nAchtung: Der Upload ist ÖFFENTLICH abrufbar für jeden, der den Link kennt. Passwörter, Tokens und E-Mail-Adressen wurden entfernt, trotzdem solltest du vorher die Vorschau prüfen.\n\nVorschau anzeigen?" 16 76 || return 0
+    gd_whip --title "▣ Vorschau: Support-Paket" --scrolltext --textbox "$txt" 30 110
+    gd_yesno "Jetzt hochladen?" "Die Textfassung wird zu mclo.gs hochgeladen und ist danach öffentlich abrufbar (für jeden mit dem Link). Jetzt hochladen?" 10 70 || return 0
+
+    clear; echo "Support-Paket wird hochgeladen..."
+    if gd_support_upload "$txt"; then
+        gd_msg "✔ Hochgeladen" "Dein Support-Paket ist hochgeladen:\n\n${GD_SUPPORT_URL}\n\nReiner Text (zum Ansehen im Browser oder per Befehl): ${GD_SUPPORT_RAW:-nicht angegeben}\n\nTeile den Link im GermanDactyl-Discord im Support-Kanal." 15 78
+    else
+        gd_msg "✖ Upload fehlgeschlagen" "Der Upload zu mclo.gs hat nicht geklappt: ${GD_SUPPORT_ERROR}\n\nTeile stattdessen die Datei von Hand:\n$txt\n\nPasswörter, Tokens und E-Mail-Adressen wurden darin entfernt." 14 78
+    fi
 }
