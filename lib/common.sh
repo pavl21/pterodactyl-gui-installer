@@ -52,6 +52,7 @@ gd_cleanup() {
         done
         GD_APT_TIMERS_STOPPED=""
     fi
+    declare -F gd_step_creep_stop >/dev/null && gd_step_creep_stop
     declare -F gd_build_swap_off >/dev/null && gd_build_swap_off
     [ -n "${GD_TMP:-}" ] && rm -rf "$GD_TMP"
     [ -z "${GD_LOCAL_DIR:-}" ] && [ -n "${GD_LIB_DIR:-}" ] && rm -rf "$GD_LIB_DIR"
@@ -216,11 +217,23 @@ gd_warn_colors_off() {
 # ---------------------------------------------------------------------------
 GD_GAUGE_OPEN=0
 
+gd_gauge_text() {
+    # gd_gauge_text "Text" – Text für den Fortschrittsbalken: bei mehr als 72 Zeichen umbrechen und jede Zeile
+    # mittig ausrichten (der Balken ist 78 Zeichen breit, innen 74). Leerzeilen davor rücken den Text in die Mitte.
+    local line pad out=""
+    while IFS= read -r line; do
+        pad=$(( (74 - ${#line}) / 2 )); [ "$pad" -gt 0 ] || pad=0
+        out+="$(printf '%*s%s' "$pad" '' "$line")"$'\n'
+    done < <(printf '%s' "$1" | fold -s -w 72)
+    printf '\n%s' "${out%$'\n'}"
+}
+
 gd_gauge_open() {
     # gd_gauge_open "Titel" "Starttext"
     [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "== $1: $2"; return 0; }
-    exec 7> >(whiptail --title "$1" --gauge "$2" 10 78 0)
+    exec 7> >(whiptail --title "$1" --gauge "$(gd_gauge_text "$2")" 10 78 0)
     GD_GAUGE_OPEN=1
+    GD_STEP_LAST_PCT=0; GD_STEP_LAST_GAP=5
 }
 
 gd_progress() {
@@ -234,7 +247,7 @@ gd_progress() {
         # und nicht die laufende Installation. Danach wird ohne Balken weitergearbeitet.
         # Lange Texte umbrechen: Der Balken ist 78 Zeichen breit und schneidet sonst einfach ab
         local text
-        text="$(printf '%s' "$2" | fold -s -w 72)"
+        text="$(gd_gauge_text "$2")"
         if ! ( printf 'XXX\n%d\n%s\nXXX\n' "$1" "$text" >&7 ) 2>/dev/null; then
             GD_GAUGE_OPEN=0
             { exec 7>&-; } 2>/dev/null   # nur den Balken schließen, stderr des Skripts unverändert lassen
@@ -247,6 +260,7 @@ gd_progress() {
 
 gd_gauge_close() {
     [ "${GD_HEADLESS:-}" = 1 ] && return 0
+    gd_step_creep_stop
     if [ "$GD_GAUGE_OPEN" = "1" ]; then
         exec 7>&-
         GD_GAUGE_OPEN=0
@@ -254,24 +268,80 @@ gd_gauge_close() {
     fi
 }
 
+# Der Balken soll auch während eines langen Schritts (Build, Composer, Download) sichtbar weiterlaufen und nicht
+# minutenlang bei einem Wert stehen. Dazu läuft im Hintergrund ein "Schleicher", der den Wert langsam Richtung
+# des nächsten Schritts bewegt (asymptotisch, erreicht ihn nie). Der Befehl selbst läuft weiter im Vordergrund,
+# damit Funktionen ihre globalen Variablen (z. B. GD_WARNINGS) setzen können.
+GD_STEP_LAST_PCT=0
+GD_STEP_LAST_GAP=5
+GD_CREEP_PID=""
+
+gd_step_creep_start() {
+    # gd_step_creep_start <prozent> "Text" – Hintergrundzähler starten (nur bei offenem Balken)
+    local pct="$1" text="$2" gap target
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
+    [ "$GD_GAUGE_OPEN" = "1" ] || return 0
+    [[ "$pct" =~ ^[0-9]+$ ]] || return 0
+    # Abstand zum nächsten Schritt ist unbekannt: der Abstand zum vorherigen Schritt ist die beste Schätzung
+    gap=$(( pct - GD_STEP_LAST_PCT ))
+    [ "$gap" -ge 2 ] || gap="$GD_STEP_LAST_GAP"
+    [ "$gap" -ge 2 ] || gap=5
+    GD_STEP_LAST_PCT="$pct"; GD_STEP_LAST_GAP="$gap"
+    target=$(( pct + gap - 1 )); [ "$target" -gt 99 ] && target=99
+    [ "$target" -gt "$pct" ] || return 0
+    text="$(gd_gauge_text "$text")"
+    (
+        # Rechnung in Hundertsteln: pro Sekunde ein Neunzigstel des Restwegs (nach 1 Minute etwa die Hälfte,
+        # nach 5 Minuten fast alles), zum Schluss mindestens ein Hundertstel pro Sekunde
+        val=$(( pct * 100 )); end=$(( target * 100 )); shown="$pct"
+        while sleep 1; do
+            step=$(( (end - val) / 90 )); [ "$step" -ge 1 ] || step=1
+            val=$(( val + step )); [ "$val" -gt "$end" ] && val="$end"
+            if [ $(( val / 100 )) -ne "$shown" ]; then
+                shown=$(( val / 100 ))
+                printf 'XXX\n%d\n%s\nXXX\n' "$shown" "$text" >&7 2>/dev/null || exit 0
+            fi
+            [ "$val" -ge "$end" ] && exit 0
+        done
+    ) &
+    GD_CREEP_PID=$!
+    return 0
+}
+
+gd_step_creep_stop() {
+    if [ -n "${GD_CREEP_PID:-}" ]; then
+        kill "$GD_CREEP_PID" 2>/dev/null
+        wait "$GD_CREEP_PID" 2>/dev/null
+        GD_CREEP_PID=""
+    fi
+    return 0
+}
+
 gd_step() {
     # gd_step <prozent> "Text" befehl [argumente...]
     # Führt den Befehl aus, Ausgabe landet im Log. Bei Fehler: Abbruch mit Log-Auszug.
-    local pct="$1" text="$2"
+    local pct="$1" text="$2" rc=0
     shift 2
+    gd_step_creep_stop
     gd_progress "$pct" "$text"
-    if ! "$@" >> "$GD_LOG" 2>&1; then
+    gd_step_creep_start "$pct" "$text"
+    "$@" >> "$GD_LOG" 2>&1 || rc=$?
+    gd_step_creep_stop
+    if [ "$rc" -ne 0 ]; then
         gd_fail "$text"
     fi
 }
-
 gd_step_optional() {
     # gd_step_optional <prozent> "Text" "Warnung bei Fehler" befehl [argumente...]
     # Wie gd_step, bricht aber nicht ab: der Fehler wird gesammelt (GD_WARNINGS) und am Ende angezeigt
-    local pct="$1" text="$2" warn="$3"
+    local pct="$1" text="$2" warn="$3" rc=0
     shift 3
+    gd_step_creep_stop
     gd_progress "$pct" "$text"
-    if ! "$@" >> "$GD_LOG" 2>&1; then
+    gd_step_creep_start "$pct" "$text"
+    "$@" >> "$GD_LOG" 2>&1 || rc=$?
+    gd_step_creep_stop
+    if [ "$rc" -ne 0 ]; then
         gd_log "WARNUNG: $warn"
         GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ $warn"
     fi
