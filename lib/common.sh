@@ -270,14 +270,29 @@ gd_warn_colors_off() {
 GD_GAUGE_OPEN=0
 
 gd_gauge_text() {
-    # gd_gauge_text "Text" – Text für den Fortschrittsbalken: bei mehr als 72 Zeichen umbrechen und jede Zeile
-    # mittig ausrichten (der Balken ist 78 Zeichen breit, innen 74). Leerzeilen davor rücken den Text in die Mitte.
-    local line pad out=""
+    # gd_gauge_text "Text" – Text für den Fortschrittsbalken: bei mehr als 72 Zeichen umbrechen, jede Zeile mittig
+    # ausrichten (der Balken ist 78 Zeichen breit, innen 74) und den Block senkrecht in den 6 Textzeilen zentrieren.
+    # Es werden immer genau 6 Zeilen ausgegeben (Leerzeilen als einzelnes Leerzeichen): whiptail legt die Höhe des
+    # Textfelds beim Öffnen anhand des Starttexts fest, spätere Texte mit mehr Zeilen würden sonst abgeschnitten.
+    local line pad n top i
+    local -a lines=()
+    # printf mit abschließendem Zeilenumbruch, sonst verliert read die letzte Zeile
     while IFS= read -r line; do
+        line="${line%" "}"
         pad=$(( (74 - ${#line}) / 2 )); [ "$pad" -gt 0 ] || pad=0
-        out+="$(printf '%*s%s' "$pad" '' "$line")"$'\n'
-    done < <(printf '%s' "$1" | fold -s -w 72)
-    printf '\n%s' "${out%$'\n'}"
+        lines+=("$(printf '%*s%s' "$pad" '' "$line")")
+    done < <(printf '%s\n' "$1" | fold -s -w 72)
+    n=${#lines[@]}; [ "$n" -gt 6 ] && n=6
+    top=$(( (6 - n) / 2 ))
+    for (( i = 0; i < 6; i++ )); do
+        if [ "$i" -ge "$top" ] && [ $(( i - top )) -lt "$n" ]; then
+            printf '%s' "${lines[i - top]}"
+        else
+            printf ' '
+        fi
+        [ "$i" -lt 5 ] && printf '\n'
+    done
+    return 0
 }
 
 gd_gauge_open() {
@@ -339,7 +354,13 @@ gd_step_creep_start() {
     [ "$gap" -ge 2 ] || gap="$GD_STEP_LAST_GAP"
     [ "$gap" -ge 2 ] || gap=5
     GD_STEP_LAST_PCT="$pct"; GD_STEP_LAST_GAP="$gap"
-    target=$(( pct + gap - 1 )); [ "$target" -gt 99 ] && target=99
+    target=$(( pct + gap - 1 ))
+    # Kennt der Aufrufer den nächsten Schritt (GD_STEP_NEXT, z. B. Blueprint 10 -> 60), ist das Ziel genauer
+    if [[ "${GD_STEP_NEXT:-}" =~ ^[0-9]+$ ]] && [ "$GD_STEP_NEXT" -gt "$pct" ]; then
+        target=$(( GD_STEP_NEXT - 1 )); GD_STEP_LAST_GAP=$(( GD_STEP_NEXT - pct ))
+    fi
+    GD_STEP_NEXT=""
+    [ "$target" -gt 99 ] && target=99
     [ "$target" -gt "$pct" ] || return 0
     text="$(gd_gauge_text "$text")"
     (

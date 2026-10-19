@@ -177,6 +177,8 @@ gd_blueprint_reapply_dialog() {
     fi
     gd_version="$(gd_conf_get GD_GERMANDACTYL)"
     gd_gauge_open "❖ Blueprint" "Blueprint wird vorbereitet..."
+    # Der nächste Schritt ist 60 (Übersetzung) bzw. 100: Der Balken läuft während des Builds bis dahin weiter
+    if [ -n "$gd_version" ] && [ "$gd_version" = "$panel_version" ]; then GD_STEP_NEXT=60; else GD_STEP_NEXT=100; fi
     gd_step 10 "Blueprint ${tag} wird installiert, Oberfläche wird gebaut (einige Minuten)..." gd_blueprint_apply "$tag"
     if [ -n "$gd_version" ] && [ "$gd_version" = "$panel_version" ]; then
         GD_PANEL_VERSION="$panel_version"
