@@ -830,16 +830,65 @@ check_firewall() {
 }
 
 check_backups() {
-    local last age
+    # Automatische Backups: Ergebnis des letzten Laufs (AUTO_BACKUP_LAST_RESULT = laufend|ok|fehler, AUTO_BACKUP_LAST_RUN),
+    # letzter Erfolg, Speicherort (gleiche Platte wie /?) und letzte Integritätsprüfung (restic check)
+    local last age res run run_age repo kind p mnt chk chk_time chk_age blog="$GD_LOG_DIR/auto-backup.log"
     if systemctl cat germandactyl-backup.timer >/dev/null 2>&1; then
         if systemctl is-active --quiet germandactyl-backup.timer; then
+            res="$(gd_conf_get AUTO_BACKUP_LAST_RESULT)"
+            run="$(gd_conf_get AUTO_BACKUP_LAST_RUN)"
             last="$(gd_conf_get AUTO_BACKUP_LAST_OK)"
-            if [ -z "$last" ]; then warn "Automatische Backups sind aktiv, aber noch nie erfolgreich gelaufen"
-            else
-                age=$(( ($(date +%s) - $(date -d "$last" +%s)) / 3600 ))
-                if [ "$age" -gt 48 ]; then fail "Letztes erfolgreiches automatisches Backup ist $age Stunden alt ($last)"
-                else ok "Letztes automatisches Backup: $last"; fi
+            case "$res" in
+                fehler)
+                    fail "Das letzte automatische Backup ist fehlgeschlagen${run:+ ($run)}${last:+, letzter Erfolg: $last} – Details: $blog"
+                    add_fix "Automatisches Backup jetzt neu starten" "fix_backup_restart" ;;
+                laufend)
+                    run_age=0
+                    [ -n "$run" ] && run_age=$(( $(date +%s) - $(date -d "$run" +%s 2>/dev/null || date +%s) ))
+                    if [ "$run_age" -gt 21600 ]; then
+                        fail "Backup hängt oder wurde abgebrochen (gestartet $run, seit $(( run_age / 3600 )) Stunden ohne Ergebnis) – Details: $blog"
+                        add_fix "Automatisches Backup jetzt neu starten" "fix_backup_restart"
+                    else
+                        ok "Ein automatisches Backup läuft gerade (gestartet ${run:-unbekannt})"
+                    fi ;;
+            esac
+            if [ "$res" != "fehler" ] && { [ "$res" != "laufend" ] || [ -n "$last" ]; }; then
+                if [ -z "$last" ]; then warn "Automatische Backups sind aktiv, aber noch nie erfolgreich gelaufen"
+                else
+                    age=$(( ($(date +%s) - $(date -d "$last" +%s)) / 3600 ))
+                    if [ "$age" -gt 48 ]; then fail "Letztes erfolgreiches automatisches Backup ist $age Stunden alt ($last)"
+                    else ok "Letztes automatisches Backup: $last"; fi
+                fi
             fi
+
+            # Speicherort: Ein Archiv auf derselben Platte wie / schützt nicht vor einem Festplattenausfall
+            repo="$( . "$GD_CONF_DIR/auto-backup.conf" 2>/dev/null; printf '%s' "${REPO:-}")"
+            if [[ "$repo" == /* ]]; then
+                p="$repo"
+                while [ ! -e "$p" ] && [ "$p" != "/" ]; do p="$(dirname "$p")"; done
+                mnt="$(df -P "$p" 2>/dev/null | awk 'NR==2{print $6}')"
+                if [ "$mnt" = "/" ]; then
+                    warn "Das Backup-Archiv liegt auf derselben Platte wie / ($repo) – bei einem Festplattenausfall sind Backup und Daten zugleich verloren (besser: externes Laufwerk oder Netzwerkziel, Backups → Automatische Backups)"
+                fi
+            fi
+
+            # Letzte Integritätsprüfung (wöchentlich, sonntags): setup.conf, ersatzweise das Log
+            chk="$(gd_conf_get AUTO_BACKUP_LAST_CHECK)"
+            chk_time="$(gd_conf_get AUTO_BACKUP_LAST_CHECK_TIME)"
+            if [ -z "$chk" ] && [ -f "$blog" ]; then
+                case "$(grep -E 'Integritätsprüfung erfolgreich|FEHLER: Integritätsprüfung' "$blog" | tail -n1)" in
+                    *erfolgreich*) chk=ok ;;
+                    *FEHLER*) chk=fehler ;;
+                esac
+            fi
+            case "$chk" in
+                fehler) fail "Die letzte Integritätsprüfung des Backup-Archivs (restic check) ist fehlgeschlagen${chk_time:+ ($chk_time)} – das Archiv ist möglicherweise beschädigt (Details: $blog)" ;;
+                ok)
+                    chk_age=0
+                    [ -n "$chk_time" ] && chk_age=$(( ( $(date +%s) - $(date -d "$chk_time" +%s 2>/dev/null || date +%s) ) / 86400 ))
+                    if [ "$chk_age" -gt 14 ]; then warn "Die letzte erfolgreiche Integritätsprüfung des Backup-Archivs liegt $chk_age Tage zurück ($chk_time) – sie läuft sonst jeden Sonntag"
+                    else ok "Integritätsprüfung des Backup-Archivs erfolgreich${chk_time:+ ($chk_time)}"; fi ;;
+            esac
         else
             warn "Automatische Backups sind eingerichtet, aber deaktiviert"
         fi
@@ -852,6 +901,8 @@ check_backups() {
 # Automatische Behebung
 # ---------------------------------------------------------------------------
 fix_restart() { systemctl restart "$1"; }
+# Backup neu anstoßen, ohne auf das Ende zu warten (läuft als Systemdienst; ein hängender Lauf wird dabei beendet)
+fix_backup_restart() { systemctl restart --no-block germandactyl-backup.service; }
 fix_permissions() { chown -R www-data:www-data "$PTERO_DIR" && chmod 640 "$PTERO_DIR/.env"; }
 fix_app_debug() { sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/' "$PTERO_DIR/.env" && (cd "$PTERO_DIR" && php artisan config:clear); }
 fix_ntp() { timedatectl set-ntp true; }

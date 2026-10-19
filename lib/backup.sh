@@ -5,6 +5,8 @@
 # Server-Backup = Wings-Volumes aller Gameserver
 # Jeder Schritt wird geprüft: Ein Backup gilt nur als erfolgreich, wenn tar, gzip UND der Datenbank-Dump fehlerfrei waren.
 
+# GD_RESTORE_INFO, GD_BACKUP_SPACE_MSG und GD_AB_ERROR werden von den aufrufenden Skripten gelesen
+# shellcheck disable=SC2034
 GD_BACKUP_ROOT="/opt/pterodactyl/backups"
 GD_BACKUP_PANEL="$GD_BACKUP_ROOT/panel"
 GD_BACKUP_SERVER="$GD_BACKUP_ROOT/server"
@@ -91,6 +93,26 @@ gd_backup_tar() {
     [ "${tar_rc:-2}" -le 1 ] && [ "${pv_rc:-1}" -eq 0 ] && [ "${gz_rc:-1}" -eq 0 ] && gzip -t "$target" 2>>"$GD_LOG"
 }
 
+gd_backup_panel_space_check() {
+    # Reicht der Platz in $GD_BACKUP_ROOT für ein Panel-Backup? Rechnet vorsichtig mit der unkomprimierten Größe der
+    # Panel-Dateien (ohne node_modules) plus Datenbankgröße plus 1 GB Reserve. Bei Mangel: Rückgabe 1 und
+    # GD_BACKUP_SPACE_MSG mit einer verständlichen Meldung.
+    local size dbsize free need
+    GD_BACKUP_SPACE_MSG=""
+    size="$(du -sb --exclude=node_modules "$PTERO_DIR" 2>/dev/null | cut -f1)"
+    dbsize="$(gd_mysql -N -e "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema='$(gd_backup_panel_db)';" 2>/dev/null)"
+    [[ "$size" =~ ^[0-9]+$ ]] || size=0
+    [[ "$dbsize" =~ ^[0-9]+$ ]] || dbsize=0
+    free="$(df -PB1 "$GD_BACKUP_ROOT" 2>/dev/null | awk 'NR==2{print $4}')"
+    [[ "$free" =~ ^[0-9]+$ ]] || return 0
+    need=$(( size + dbsize + 1073741824 ))
+    if [ "$free" -lt "$need" ]; then
+        GD_BACKUP_SPACE_MSG="Panel-Dateien ($(numfmt --to=iec "$size")) und Datenbank ($(numfmt --to=iec "$dbsize")) brauchen zusammen mit 1 GB Reserve etwa $(numfmt --to=iec "$need"), frei sind nur $(numfmt --to=iec "$free") in $GD_BACKUP_ROOT."
+        return 1
+    fi
+    return 0
+}
+
 gd_backup_panel_create() {
     # gd_backup_panel_create <zieldatei> <mit_balken:true/false>
     local target="$1" gauge="$2" work db
@@ -153,6 +175,21 @@ gd_backup_panel_restore() {
     gd_backup_panel_apply "$work"
 }
 
+gd_backup_maintenance_down() {
+    # gd_backup_maintenance_down <panel-ordner> [alter ordner] – Wartungsmodus im (neuen) Panel-Ordner aktivieren.
+    # "php artisan down" legt die Markierung unter storage/framework an – sie gehört zum Ordner. Beim Ordnertausch
+    # bliebe der Marker im alten Ordner, und das entpackte Panel wäre sofort öffentlich.
+    local dir="$1" old="${2:-}" f
+    (cd "$dir" && php artisan down) >> "$GD_LOG" 2>&1
+    if [ ! -e "$dir/storage/framework/down" ] && [ ! -e "$dir/storage/framework/maintenance.php" ]; then
+        # artisan hat nicht funktioniert: Marker des alten Ordners übernehmen
+        for f in down maintenance.php; do
+            [ -n "$old" ] && [ -e "$old/storage/framework/$f" ] && cp -p "$old/storage/framework/$f" "$dir/storage/framework/$f" 2>>"$GD_LOG"
+        done
+    fi
+    return 0
+}
+
 gd_backup_panel_apply() {
     # gd_backup_panel_apply <arbeitsordner> – spielt einen entpackten Stand ein:
     #   <arbeitsordner>/var/www/pterodactyl und optional <arbeitsordner>/germandactyl-backup/panel-db.sql.gz
@@ -191,6 +228,9 @@ gd_backup_panel_apply() {
         GD_RESTORE_INFO="Die Panel-Dateien konnten nicht eingespielt werden (Speicherplatz?). Der vorherige Stand wurde wiederhergestellt."
         return 1
     fi
+    # Das entpackte Panel hat keinen Wartungsmodus-Marker (der lag im alten Ordner): erneut aktivieren,
+    # bis zum Schluss ("php artisan up" ganz am Ende) bleibt das Panel für Besucher gesperrt
+    gd_backup_maintenance_down "$PTERO_DIR" "$old"
 
     if [ -f "$work/germandactyl-backup/panel-db.sql.gz" ]; then
         db="$(cat "$work/germandactyl-backup/database-name" 2>/dev/null)"
@@ -216,14 +256,48 @@ gd_backup_panel_apply() {
     fi
 
     chown -R www-data:www-data "$PTERO_DIR"
-    (cd "$PTERO_DIR" && php artisan optimize:clear && php artisan queue:restart && php artisan up) >> "$GD_LOG" 2>&1
+    # Caches leeren und Queue neu starten; "up" läuft unabhängig davon ganz zuletzt (sonst bliebe das Panel bei einem Fehler gesperrt)
+    (cd "$PTERO_DIR" && php artisan optimize:clear; php artisan queue:restart) >> "$GD_LOG" 2>&1
     systemctl restart pteroq 2>/dev/null
+    (cd "$PTERO_DIR" && php artisan up) >> "$GD_LOG" 2>&1
     rm -rf "$work" "$old"
     return 0
 }
 
+GD_BACKUP_PAUSED=()
+
+gd_backup_services_pause() {
+    # Hält Queue-Worker (pteroq) und Cron an, damit während eines Datenbank-Imports nichts in die Datenbank schreibt.
+    # Es werden nur Dienste angehalten, die laufen; gd_backup_services_resume startet genau diese wieder.
+    local s
+    GD_BACKUP_PAUSED=()
+    for s in pteroq cron; do
+        if systemctl is-active --quiet "$s" 2>/dev/null; then
+            systemctl stop "$s" 2>/dev/null && GD_BACKUP_PAUSED+=("$s")
+        fi
+    done
+    return 0
+}
+
+gd_backup_services_resume() {
+    local s
+    for s in "${GD_BACKUP_PAUSED[@]}"; do systemctl start "$s" 2>/dev/null; done
+    GD_BACKUP_PAUSED=()
+    return 0
+}
+
 gd_backup_db_import() {
-    # gd_backup_db_import <datenbank> <dump.sql oder dump.sql.gz> – ersetzt eine Datenbank,
+    # gd_backup_db_import <datenbank> <dump.sql oder dump.sql.gz> – ersetzt eine Datenbank. Währenddessen ruhen
+    # pteroq und Cron (danach laufen sie wieder, auch nach einem Fehler).
+    local rc
+    gd_backup_services_pause
+    gd_backup_db_import_run "$@"
+    rc=$?
+    gd_backup_services_resume
+    return $rc
+}
+
+gd_backup_db_import_run() {
     # vorher wird der aktuelle Stand gesichert und bei einem Fehler zurückgespielt.
     local db="$1" dump="$2" safety cat_cmd=cat
     [[ "$dump" == *.gz ]] && cat_cmd="gunzip -c"
@@ -234,7 +308,7 @@ gd_backup_db_import() {
     else
         rm -f "$safety"; safety=""
     fi
-    gd_mysql -e "DROP DATABASE IF EXISTS \`$db\`; CREATE DATABASE \`$db\`;" || return 1
+    gd_mysql -e "DROP DATABASE IF EXISTS \`$db\`; CREATE DATABASE \`$db\`;" || { rm -f "$safety"; return 1; }
     if ! $cat_cmd "$dump" | gd_mysql "$db"; then
         if [ -n "$safety" ]; then
             gd_mysql -e "DROP DATABASE IF EXISTS \`$db\`; CREATE DATABASE \`$db\`;"

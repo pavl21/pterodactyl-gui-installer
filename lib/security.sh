@@ -216,10 +216,25 @@ gd_security_steps() {
         gd_step $((p + 3)) "Sicherheit: Automatische Sicherheitsupdates werden aktiviert..." gd_unattended_upgrades_setup
     fi
     if [ "${GD_SEC_BACKUP:-false}" = "true" ] && declare -F gd_ab_setup >/dev/null; then
-        # Täglich 04:00 Uhr, lokal, Gameserver nur mit Wings auf diesem Server
-        gd_step $((p + 4)) "Automatische Backups werden eingerichtet..." gd_ab_setup "$GD_BACKUP_ROOT/restic" "$with_wings" "04:00"
-        gd_step $((p + 4)) "jq wird installiert..." gd_apt_install jq
-        # Erstes Backup sofort erstellen (auf einem neuen Server geht das schnell)
-        gd_step_optional $((p + 5)) "Erstes Backup wird erstellt..." "Das erste Backup ist fehlgeschlagen (Details: /var/log/germandactyl-setup/auto-backup.log)." "$GD_AB_SCRIPT"
+        # Täglich 04:00 Uhr, lokal, Gameserver nur mit Wings auf diesem Server.
+        # Optional: Ein Fehler (z. B. Archiv mit anderem Passwort, kein Speicherplatz) bricht die Installation nicht ab,
+        # sondern landet als Warnung am Ende.
+        GD_AB_SETUP_OK=false
+        gd_step_optional $((p + 4)) "Automatische Backups werden eingerichtet..." "Automatische Backups konnten nicht eingerichtet werden – später über Backups → Automatische Backups." gd_security_backup_setup "$with_wings"
+        if [ "$GD_AB_SETUP_OK" = "true" ]; then
+            # Erstes Backup sofort erstellen (auf einem neuen Server geht das schnell)
+            gd_step_optional $((p + 5)) "Erstes Backup wird erstellt..." "Das erste Backup ist fehlgeschlagen (Details: /var/log/germandactyl-setup/auto-backup.log)." "$GD_AB_SCRIPT"
+        else
+            # Ohne eingerichtete Backups gibt es auch kein Backup-Passwort, das am Ende angezeigt werden müsste
+            GD_SEC_BACKUP=false
+        fi
     fi
+}
+
+gd_security_backup_setup() {
+    # gd_security_backup_setup <mit_wings:true/false> – Archiv lokal unter $GD_BACKUP_ROOT/restic, täglich 04:00 Uhr.
+    # Setzt GD_AB_SETUP_OK=true nur bei vollständigem Erfolg (läuft im selben Shell-Prozess wie gd_step_optional).
+    gd_ab_setup "$GD_BACKUP_ROOT/restic" "$1" "04:00" || return 1
+    gd_apt_install jq || return 1
+    GD_AB_SETUP_OK=true
 }

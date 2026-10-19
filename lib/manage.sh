@@ -180,11 +180,24 @@ gd_collect_status() {
     fi
 
     if systemctl is-enabled --quiet germandactyl-backup.timer 2>/dev/null; then
+        # AUTO_BACKUP_LAST_RESULT = laufend|ok|fehler (AUTO_BACKUP_LAST_RUN = Beginn/Ende des letzten Laufs):
+        # Fehler und ein "laufend" älter als 6 Stunden (Abbruch durch Speichermangel/kill) sind Probleme
+        res="$(gd_conf_get AUTO_BACKUP_LAST_RESULT)"
+        when="$(gd_conf_get AUTO_BACKUP_LAST_RUN)"
         last="$(gd_conf_get AUTO_BACKUP_LAST_OK)"
-        if [ -z "$last" ]; then line2+="Backups ⚠ noch keins   "; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+        age=0
+        [ "$res" = "laufend" ] && [ -n "$when" ] && age=$(( $(date +%s) - $(date -d "$when" +%s 2>/dev/null || date +%s) ))
+        if [ "$res" = "fehler" ]; then
+            line2+="Backups ✖ fehlgeschlagen $(gd_status_date "$when")   "; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+        elif [ "$res" = "laufend" ] && [ "$age" -gt 21600 ]; then
+            line2+="Backups ✖ hängt   "; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+        elif [ -z "$last" ]; then
+            if [ "$res" = "laufend" ]; then line2+="Backups ◷ läuft   "
+            else line2+="Backups ⚠ noch keins   "; GD_PROBLEMS=$((GD_PROBLEMS + 1)); fi
         else
             age=$(( ($(date +%s) - $(date -d "$last" +%s)) / 3600 ))
             if [ "$age" -gt 48 ]; then line2+="Backups ✖ vor ${age} Std.   "; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+            elif [ "$res" = "laufend" ]; then line2+="Backups ◷ läuft   "
             else line2+="Backups ✔ $(date -d "$last" '+%d.%m. %H:%M')   "; fi
         fi
     else
