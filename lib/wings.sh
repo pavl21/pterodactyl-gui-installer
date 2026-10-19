@@ -175,17 +175,21 @@ gd_wings_start() {
 gd_wings_verify() {
     # Fragt die Wings-API mit dem Node-Token ab – entspricht dem "grünen Herz" im Panel
     # gd_wings_verify <fqdn> [config.yml] – Standard: Pterodactyl-Wings
-    local fqdn="$1" cfg="${2:-$WINGS_CONFIG}" token port code i
+    local fqdn="$1" cfg="${2:-$WINGS_CONFIG}" token port code i hdr="$GD_TMP/wings-auth.hdr"
     token="$(awk '$1=="token:"{print $2; exit}' "$cfg" | tr -d "'\"")"
     port="$(awk '/^api:/{a=1} a && $1=="port:"{print $2; exit}' "$cfg")"
     port="${port:-8080}"
+    # Den Token als Header aus einer privaten Datei übergeben ("-H @datei"): als curl-Argument stünde er in der
+    # Prozessliste und wäre für alle lokalen Benutzer sichtbar
+    ( umask 077; printf 'Authorization: Bearer %s\n' "$token" > "$hdr" )
     for i in $(seq 1 10); do
         code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${fqdn}:${port}:127.0.0.1" \
-            -H "Authorization: Bearer ${token}" "https://${fqdn}:${port}/api/system")"
+            -H "@${hdr}" "https://${fqdn}:${port}/api/system")"
         echo "Wings-API antwortet mit HTTP $code"
-        [ "$code" = "200" ] && return 0
+        if [ "$code" = "200" ]; then rm -f "$hdr"; return 0; fi
         sleep 3
     done
+    rm -f "$hdr"
     return 1
 }
 
@@ -198,19 +202,31 @@ gd_panel_env() {
 
 gd_panel_sql() {
     # SQL in der Panel-Datenbank ausführen – mit den Zugangsdaten des Panels (funktioniert auch,
-    # wenn root ein Passwort hat); Rückfall auf root über den unix_socket
-    local db user pass host port cnf
+    # wenn root ein Passwort hat). Auf root über den unix_socket wird nur zurückgegriffen, wenn die
+    # Anmeldung mit den Panel-Zugangsdaten scheitert (Zugriff verweigert / keine Verbindung) – ein
+    # Fehler in der SQL-Anweisung selbst wird gemeldet und nicht mit root-Rechten wiederholt.
+    local db user pass host port cnf out err rc client
     db="$(gd_panel_env DB_DATABASE)"; user="$(gd_panel_env DB_USERNAME)"; pass="$(gd_panel_env DB_PASSWORD)"
     host="$(gd_panel_env DB_HOST)"; port="$(gd_panel_env DB_PORT)"
     if [ -n "$user" ] && [ -n "$pass" ]; then
-        cnf="$GD_TMP/panel-db.cnf"
+        cnf="$GD_TMP/panel-db.cnf"; out="$GD_TMP/panel-sql.out"; err="$GD_TMP/panel-sql.err"
         ( umask 077; printf '[client]\nuser="%s"\npassword="%s"\nhost="%s"\nport="%s"\n' \
             "$user" "${pass//\"/\\\"}" "${host:-127.0.0.1}" "${port:-3306}" > "$cnf" )
-        if command -v mariadb >/dev/null 2>&1; then
-            mariadb --defaults-extra-file="$cnf" -N -D "${db:-panel}" -e "$1" && return 0
-        else
-            mysql --defaults-extra-file="$cnf" -N -D "${db:-panel}" -e "$1" && return 0
+        client=mysql; command -v mariadb >/dev/null 2>&1 && client=mariadb
+        "$client" --defaults-extra-file="$cnf" -N -D "${db:-panel}" -e "$1" > "$out" 2> "$err"
+        rc=$?
+        rm -f "$cnf"
+        if [ $rc -eq 0 ]; then
+            cat "$out"; rm -f "$out" "$err"
+            return 0
         fi
+        # Fehlercodes: 1045 = Access denied (Benutzer/Passwort), 1044 = kein Zugriff auf die Datenbank,
+        # 1130 = Host nicht erlaubt, 2002/2003 = keine Verbindung zum Server/Socket, 2013 = Verbindung verloren
+        if ! grep -qE "ERROR (1044|1045|1130|2002|2003|2013)|Access denied|Can't connect" "$err"; then
+            cat "$err" >&2; rm -f "$out" "$err"
+            return $rc
+        fi
+        rm -f "$out" "$err"
     fi
     gd_mysql -N -D "${db:-panel}" -e "$1"
 }
@@ -287,6 +303,12 @@ gd_allocation_ip() {
 gd_allocations_add() {
     # gd_allocations_add <node-id> <ip> <alias oder leer> <port oder bereich> – Ports im Panel anlegen
     local node="$1" ip="$2" alias_ip="$3" range="$4" a b port values="" alias_php="null"
+    # ip und alias_ip stammen teils aus Netzwerkabfragen bzw. der Panel-Datenbank und landen unten in PHP-Code
+    # und SQL: vorher strikt prüfen (nur IP-Zeichen bzw. Hostname-Zeichen, keine Anführungszeichen o. Ä.)
+    [[ "$node" =~ ^[0-9]+$ ]] || return 1
+    [[ "$ip" =~ ^[0-9A-Fa-f.:]{1,45}$ ]] || return 1
+    [[ "$range" =~ ^[0-9]{1,5}(-[0-9]{1,5})?$ ]] || return 1
+    [[ -z "$alias_ip" || "$alias_ip" =~ ^[A-Za-z0-9.:_-]{1,191}$ ]] || alias_ip=""
     [ -n "$alias_ip" ] && alias_php="'${alias_ip}'"
     if gd_artisan_www tinker --execute="app(\\Pterodactyl\\Services\\Allocations\\AssignmentService::class)->handle(\\Pterodactyl\\Models\\Node::findOrFail(${node}), ['allocation_ip' => '${ip}', 'allocation_alias' => ${alias_php}, 'allocation_ports' => ['${range}']]); echo 'OK';" | grep -q 'OK'; then
         echo "Ports ${range} für ${ip} angelegt (über das Panel)."
@@ -391,15 +413,18 @@ gd_swap_create() {
         # btrfs braucht eine Datei ohne Copy-on-Write
         btrfs filesystem mkswapfile --size "${size}m" "$file" || return 1
     else
-        fallocate -l "${size}M" "$file" 2>/dev/null || dd if=/dev/zero of="$file" bs=1M count="$size" status=none || return 1
-        chmod 600 "$file"
+        # Datei zuerst mit Rechten 600 anlegen: Eine Swap-Datei mit 644 könnte jeder lokale Benutzer lesen
+        # (sie enthält Auszüge aus dem Arbeitsspeicher, z. B. Passwörter)
+        install -m 600 /dev/null "$file" || return 1
+        fallocate -l "${size}M" "$file" 2>/dev/null || dd if=/dev/zero of="$file" bs=1M count="$size" status=none || { rm -f "$file"; return 1; }
         mkswap "$file" || { rm -f "$file"; return 1; }
     fi
     chmod 600 "$file"
     if ! swapon "$file"; then
         # fallocate erzeugt auf manchen Dateisystemen Dateien "mit Löchern", die swapon ablehnt
         rm -f "$file"
-        dd if=/dev/zero of="$file" bs=1M count="$size" status=none && chmod 600 "$file" && mkswap "$file" && swapon "$file" \
+        install -m 600 /dev/null "$file" \
+            && dd if=/dev/zero of="$file" bs=1M count="$size" status=none && mkswap "$file" && swapon "$file" \
             || { rm -f "$file"; return 1; }
     fi
     grep -qE "^${file}[[:space:]]" /etc/fstab || echo "$file none swap sw 0 0" >> /etc/fstab

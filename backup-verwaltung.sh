@@ -163,7 +163,7 @@ ab_setup_dialog() {
     gd_gauge_close
     gd_conf_set AUTO_BACKUP_SETUP "$(date '+%F %T')"
 
-    gd_msg "✱ Wichtig: Passwort des Backup-Archivs" "Die Backups sind verschlüsselt. Ohne dieses Passwort können sie NICHT wiederhergestellt werden, falls dieser Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es an einem sicheren Ort (z. B. Passwortmanager). Auf dem Server liegt es in $GD_AB_PASS." 16 78
+    gd_msg_secret "✱ Wichtig: Passwort des Backup-Archivs" "Die Backups sind verschlüsselt. Ohne dieses Passwort können sie NICHT wiederhergestellt werden, falls dieser Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es an einem sicheren Ort (z. B. Passwortmanager). Auf dem Server liegt es in $GD_AB_PASS." 16 78
     if gd_yesno "Erstes Backup" "Die automatischen Backups sind eingerichtet (täglich um $time Uhr).\n\nSoll das erste Backup jetzt sofort erstellt werden?" 10 70; then
         ab_run_now
     fi

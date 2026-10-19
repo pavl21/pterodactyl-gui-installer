@@ -123,32 +123,47 @@ gd_pelican_certbot() {
 }
 
 gd_pelican_env_set() {
-    local file="$PELICAN_DIR/.env"
-    if grep -q "^$1=" "$file"; then
-        sed -i "s|^$1=.*|$1=$2|" "$file"
-    else
-        # Die .env endet oft ohne Zeilenumbruch – sonst würde der neue Eintrag an die letzte Zeile angehängt
-        [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ] && echo >> "$file"
-        echo "$1=$2" >> "$file"
+    # gd_pelican_env_set KEY WERT – setzt einen Wert in der .env von Pelican (Sonderzeichen im Wert sind erlaubt,
+    # die Datei behält Rechte 640; siehe gd_dotenv_set in lib/common.sh)
+    gd_dotenv_set "$PELICAN_DIR/.env" "$1" "$2"
+}
+
+gd_pelican_permissions() {
+    # Rechte setzen: Die .env (APP_KEY) und die SQLite-Datenbank (alle Panel-Daten inkl. Passwort-Hashes)
+    # dürfen nur Panel (www-data) und root lesen, das Verzeichnis database/ nur www-data
+    chmod -R 755 "$PELICAN_DIR"/storage/* "$PELICAN_DIR"/bootstrap/cache/ || return 1
+    chown -R www-data:www-data "$PELICAN_DIR" || return 1
+    chmod 640 "$PELICAN_DIR/.env" || return 1
+    chmod 750 "$PELICAN_DIR/database" || return 1
+    if [ -f "$PELICAN_DIR/database/database.sqlite" ]; then
+        chmod 640 "$PELICAN_DIR/database/database.sqlite" || return 1
     fi
+    return 0
 }
 
 gd_pelican_configure() {
     # gd_pelican_configure <domain> <email> <benutzer> <passwort> – ohne Web-Installer (SQLite-Datenbank)
     local domain="$1" email="$2" user="$3" pw="$4"
     cd "$PELICAN_DIR" || return 1
+    # .env von Anfang an nicht für alle Benutzer lesbar anlegen (p:environment:setup würde sie sonst mit 644 kopieren)
+    if [ ! -f .env ]; then
+        (umask 027; cp .env.example .env) || return 1
+        chown www-data:www-data .env
+    fi
     php artisan p:environment:setup --no-interaction || return 1
     gd_pelican_env_set APP_URL "https://${domain}"
     gd_pelican_env_set APP_LOCALE de
     gd_pelican_env_set APP_TIMEZONE "$GD_TIMEZONE"
     gd_pelican_env_set DB_CONNECTION sqlite
-    touch database/database.sqlite
+    (umask 027; touch database/database.sqlite)
     php artisan migrate --seed --force || return 1
-    php artisan p:user:make --no-interaction --email="$email" --username="$user" --password="$pw" --admin=1 || return 1
+    # Konto ohne Passwort anlegen und das Passwort danach setzen: "--password=..." wäre für alle lokalen
+    # Benutzer in der Prozessliste sichtbar (siehe gd_user_set_password in lib/panel.sh)
+    php artisan p:user:make --no-interaction --email="$email" --username="$user" --no-password --admin=1 || return 1
+    gd_user_set_password '\App\Models\User' "$user" "$pw" php artisan || return 1
     gd_pelican_env_set APP_INSTALLED true
     php artisan optimize:clear
-    chmod -R 755 storage/* bootstrap/cache/
-    chown -R www-data:www-data "$PELICAN_DIR"
+    gd_pelican_permissions
 }
 
 gd_pelican_services() {

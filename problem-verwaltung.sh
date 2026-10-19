@@ -34,11 +34,14 @@ create_admin_account() {
     email="notfall-${number}@$(gd_conf_get PANEL_DOMAIN | grep . || echo example.com)"
     password="$(gd_gen_password 20)"
 
+    # Konto ohne Passwort anlegen und das Passwort danach setzen: "--password=..." wäre für alle lokalen
+    # Benutzer in der Prozessliste sichtbar (siehe gd_user_set_password in lib/panel.sh)
     if output="$(gd_artisan_www p:user:make --no-interaction --email="$email" --username="$username" \
-        --name-first=Notfall --name-last=Admin --password="$password" --admin=1 2>&1)"; then
+        --name-first=Notfall --name-last=Admin --no-password --admin=1 2>&1 \
+        && gd_user_set_password '\Pterodactyl\Models\User' "$username" "$password" gd_artisan_www 2>&1)"; then
         gd_log "Notfall-Administrator $username angelegt."
         while true; do
-            gd_msg "★ Temporärer Administrator" "Ein neuer Administrator wurde angelegt:\n\n☺ Benutzername: $username\n✉ E-Mail:       $email\n✱ Passwort:     $password\n\nLösche dieses Konto, sobald du wieder Zugriff auf dein eigentliches Konto hast (Admin → Users)." 16 78
+            gd_msg_secret "★ Temporärer Administrator" "Ein neuer Administrator wurde angelegt:\n\n☺ Benutzername: $username\n✉ E-Mail:       $email\n✱ Passwort:     $password\n\nLösche dieses Konto, sobald du wieder Zugriff auf dein eigentliches Konto hast (Admin → Users)." 16 78
             gd_yesno "Zugangsdaten gespeichert?" "Hast du dir die Zugangsdaten gespeichert? Sie werden danach nicht noch einmal angezeigt." 9 70 && break
         done
     else

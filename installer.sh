@@ -129,7 +129,8 @@ gd_check_environment() {
 # Neuinstallation
 # ---------------------------------------------------------------------------
 gd_show_credentials() {
-    whiptail --title "✱ Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
+    # gd_msg_secret statt whiptail --msgbox: Das Passwort darf nicht als Argument in der Prozessliste stehen
+    gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
 }
 
 GD_PENDING_CREDENTIALS="/etc/germandactyl/zugangsdaten-ausstehend"
@@ -280,7 +281,9 @@ gd_fresh_install() {
     gd_conf_set INSTALL_STATE panel_fertig
     gd_conf_set INSTALL_MODE "$mode"
     gd_pending_credentials_save
-    GD_FAIL_HINT="Das Panel selbst ist fertig installiert: https://${GD_DOMAIN}\nBenutzername: ${GD_ADMIN_USER}   Passwort: ${GD_ADMIN_PASSWORD}\nStarte das Skript erneut, um die Einrichtung fortzusetzen."
+    # Kein Passwort im Hinweis: gd_fail übergibt ihn als Argument an whiptail (in der Prozessliste sichtbar).
+    # gd_resume_install zeigt die Zugangsdaten beim nächsten Start aus der Datei GD_PENDING_CREDENTIALS an.
+    GD_FAIL_HINT="Das Panel selbst ist fertig installiert: https://${GD_DOMAIN}\nDie Zugangsdaten werden beim nächsten Start angezeigt (sie liegen unter ${GD_PENDING_CREDENTIALS}, nur für root lesbar).\nStarte das Skript erneut, um die Einrichtung fortzusetzen."
     if $with_wings; then
         gd_wings_local_steps 72
     fi
@@ -295,7 +298,7 @@ gd_fresh_install() {
     # --- Abschluss ------------------------------------------------------------
     gd_show_credentials
     if [ "$GD_SEC_BACKUP" = true ] && [ -s "$GD_AB_PASS" ]; then
-        gd_msg "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+        gd_msg_secret "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
     fi
     if gd_yesno "▣ Zugangsdaten speichern?" "Sollen die Zugangsdaten zusätzlich in einer Datei gespeichert werden, die nur root lesen kann?\n\n/root/germandactyl-zugangsdaten.txt" 11 70; then
         gd_save_credentials

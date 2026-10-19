@@ -143,6 +143,19 @@ gd_msg() {
     gd_whip --title "$1" --msgbox "$2" "${3:-12}" "${4:-70}"
 }
 
+gd_msg_secret() {
+    # gd_msg_secret "Titel" "Text" [höhe] [breite] – wie gd_msg, aber für Passwörter und Token.
+    # Der Text wird NICHT als Prozessargument übergeben (das sähe jeder lokale Benutzer per "ps" bzw. /proc),
+    # sondern über eine nur für root lesbare Datei angezeigt, die danach sofort gelöscht wird.
+    local file rc
+    file="$(umask 077; mktemp "${GD_TMP:-/tmp}/secret.XXXXXX")" || return 1
+    printf '%b' "$2" > "$file"
+    gd_whip --title "$1" --scrolltext --textbox "$file" "${3:-18}" "${4:-78}"
+    rc=$?
+    rm -f "$file"
+    return $rc
+}
+
 gd_yesno() {
     # gd_yesno "Titel" "Text" [höhe] [breite]  -> Rückgabe 0 = Ja
     gd_whip --title "$1" --yesno "$2" "${3:-12}" "${4:-70}"
@@ -435,6 +448,35 @@ gd_conf_get() {
         . "$GD_CONF_FILE" 2>/dev/null
         eval "printf '%s' \"\${$1:-}\""
     )
+}
+
+gd_dotenv_set() {
+    # gd_dotenv_set <datei> <KEY> <WERT> – setzt bzw. ergänzt KEY=WERT in einer .env-Datei.
+    # Der Wert wird unverändert geschrieben (auch mit |, & oder \ – sed würde daran scheitern): Er geht per
+    # Umgebungsvariable an awk, nicht als Argument. Das Ergebnis entsteht in einer privaten Temp-Datei und wird
+    # mit "cat >" zurückgeschrieben, damit Besitzer und Inode erhalten bleiben. Die .env bekommt dabei immer 640.
+    local file="$1" key="$2" tmp rc
+    [ -f "$file" ] || return 1
+    # Ein Zeilenumbruch im Wert würde die Datei zerlegen
+    case "$3" in *$'\n'*) return 1 ;; esac
+    tmp="$(umask 077; mktemp "${GD_TMP:-/tmp}/dotenv.XXXXXX")" || return 1
+    if grep -q "^${key}=" "$file"; then
+        GD_DOTENV_VAL="$3" awk -v k="$key" 'index($0, k "=") == 1 { print k "=" ENVIRON["GD_DOTENV_VAL"]; next } { print }' "$file" > "$tmp"
+        rc=$?
+    else
+        {
+            cat "$file"
+            # Die .env endet oft ohne Zeilenumbruch – sonst würde der neue Eintrag an die letzte Zeile angehängt
+            if [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ]; then echo; fi
+            printf '%s=%s\n' "$key" "$3"
+        } > "$tmp"
+        rc=$?
+    fi
+    # Bei einem Fehler ist die Temp-Datei unvollständig: dann die .env nicht anfassen
+    if [ "$rc" -ne 0 ] || [ ! -s "$tmp" ]; then rm -f "$tmp"; return 1; fi
+    cat "$tmp" > "$file" || { rm -f "$tmp"; return 1; }
+    rm -f "$tmp"
+    chmod 640 "$file"
 }
 
 # ---------------------------------------------------------------------------

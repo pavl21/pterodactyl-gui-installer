@@ -322,20 +322,19 @@ gd_panel_db_has_tables() {
 
 gd_panel_composer() {
     cd "$PTERO_DIR" || return 1
-    [ -f .env ] || cp .env.example .env
+    # Die .env enthält später APP_KEY und Datenbank-Passwort: von Anfang an nicht für alle Benutzer lesbar
+    # (umask 027 -> 640). Besitzer wie am Ende von gd_panel_permissions, damit der Zustand durchgehend gleich bleibt.
+    if [ ! -f .env ]; then
+        (umask 027; cp .env.example .env) || return 1
+        chown www-data:www-data .env
+    fi
     COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction
 }
 
 gd_env_set() {
-    # gd_env_set KEY WERT – setzt einen Wert in der .env des Panels
-    local file="$PTERO_DIR/.env"
-    if grep -q "^$1=" "$file"; then
-        sed -i "s|^$1=.*|$1=$2|" "$file"
-    else
-        # Die .env endet oft ohne Zeilenumbruch – sonst würde der neue Eintrag an die letzte Zeile angehängt
-        [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ] && echo >> "$file"
-        echo "$1=$2" >> "$file"
-    fi
+    # gd_env_set KEY WERT – setzt einen Wert in der .env des Panels (Sonderzeichen im Wert sind erlaubt,
+    # die Datei behält Rechte 640; siehe gd_dotenv_set in lib/common.sh)
+    gd_dotenv_set "$PTERO_DIR/.env" "$1" "$2"
 }
 
 gd_panel_configure() {
@@ -346,24 +345,56 @@ gd_panel_configure() {
     local rpass
     rpass="$(awk '$1=="requirepass"{print $2}' /etc/redis/redis.conf 2>/dev/null | tail -n1 | tr -d '"')"
     php artisan key:generate --force || return 1
+    # Passwörter nicht als Befehlsargument übergeben (für alle lokalen Benutzer per "ps" sichtbar), sondern
+    # vorab in die .env schreiben. Ohne --redis-pass und mit --no-interaction behält p:environment:setup ein
+    # bereits gesetztes REDIS_PASSWORD bei (die Rückfrage "ändern?" wird dann mit Nein beantwortet); ohne
+    # Passwort setzt der Befehl selbst "null". Enthält das Passwort Sonderzeichen, wird es wie vom Panel
+    # selbst (escapeEnvironmentValue) in Anführungszeichen geschrieben.
+    if [ -n "$rpass" ]; then
+        if [[ "$rpass" =~ [^A-Za-z0-9_.+/-] ]]; then
+            rpass="\"$(sed -e 's/[\\"'"'"']/\\&/g' <<< "$rpass")\""
+        fi
+        gd_env_set REDIS_PASSWORD "$rpass" || return 1
+    fi
     php artisan p:environment:setup --no-interaction \
         --author="$email" --url="https://${domain}" --timezone="$GD_TIMEZONE" \
         --cache=redis --session=redis --queue=redis \
-        --redis-host=127.0.0.1 --redis-pass="${rpass:-null}" --redis-port=6379 \
+        --redis-host=127.0.0.1 --redis-port=6379 \
         --settings-ui=true --telemetry="$telemetry" || return 1
     # Das Panel wertet --telemetry=false fehlerhaft aus (Operator-Rangfolge), daher explizit setzen
     gd_env_set PTERODACTYL_TELEMETRY_ENABLED "$telemetry"
-    php artisan p:environment:database --no-interaction \
-        --host=127.0.0.1 --port=3306 --database="$GD_PANEL_DB" \
-        --username="$GD_PANEL_DB_USER" --password="$dbpw" || return 1
+    # Datenbank-Zugang direkt in die .env schreiben, statt "p:environment:database --password=...": Das Passwort
+    # stünde sonst als Argument in der Prozessliste, und der Befehl lässt sich mit --no-interaction nicht ohne
+    # --password nutzen (er würde das vorhandene Passwort durch ein leeres ersetzen und scheitern). Genau diese
+    # fünf Variablen schreibt der Befehl auch; ob die Verbindung stimmt, prüft gleich "migrate".
+    gd_env_set DB_HOST 127.0.0.1 && gd_env_set DB_PORT 3306 && gd_env_set DB_DATABASE "$GD_PANEL_DB" \
+        && gd_env_set DB_USERNAME "$GD_PANEL_DB_USER" && gd_env_set DB_PASSWORD "$dbpw" || return 1
     php artisan migrate --seed --force
+}
+
+gd_user_set_password() {
+    # gd_user_set_password <Benutzer-Modellklasse> <benutzername> <passwort> <artisan-aufruf...>
+    # z. B.: gd_user_set_password '\Pterodactyl\Models\User' admin "$pw" php artisan
+    # Setzt das Passwort eines vorhandenen Benutzers. Benutzername und Passwort gehen per Umgebungsvariable
+    # an PHP und stehen nicht in der Prozessliste (Argumente von "ps" sieht jeder lokale Benutzer, die
+    # Umgebung eines fremden Prozesses nicht). Der Hash entsteht mit demselben Hasher wie im Panel.
+    local model="$1" user="$2" pw="$3" code out
+    shift 3
+    code="echo (${model}::where('username', getenv('GD_PW_USER'))->update(['password' => \\Illuminate\\Support\\Facades\\Hash::make(getenv('GD_PW'))]) === 1) ? 'GD_PW_OK' : 'GD_PW_FEHLER';"
+    out="$(GD_PW_USER="$user" GD_PW="$pw" "$@" tinker --execute="$code" 2>&1)"
+    grep -q 'GD_PW_OK' <<< "$out" && return 0
+    echo "$out"
+    return 1
 }
 
 gd_panel_admin() {
     # gd_panel_admin <email> <benutzername> <passwort>
+    # Das Konto wird ohne Passwort angelegt (--no-password) und das Passwort danach gesetzt – "--password=..."
+    # wäre für alle lokalen Benutzer in der Prozessliste sichtbar.
     cd "$PTERO_DIR" || return 1
     php artisan p:user:make --no-interaction --email="$1" --username="$2" \
-        --name-first=Admin --name-last=User --password="$3" --admin=1
+        --name-first=Admin --name-last=User --no-password --admin=1 || return 1
+    gd_user_set_password '\Pterodactyl\Models\User' "$2" "$3" php artisan
 }
 
 gd_panel_permissions() {
