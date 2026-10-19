@@ -205,6 +205,87 @@ ab_sftp_prepare() {
     return 0
 }
 
+ab_ask_hetzner() {
+    # Hetzner Storage Box -> AB_REPO (sftp://benutzer@uXXXXXX.your-storagebox.de:23/ordner). Richtet den SSH-Schlüssel
+    # /root/.ssh/germandactyl-backup ein, kopiert ihn per SFTP auf die Box, prüft die Anmeldung und trägt den Host in
+    # /root/.ssh/config ein. Das Passwort wird nur fürs Kopieren gebraucht: nicht gespeichert, nicht protokolliert.
+    # Rückgabe 1 = Abbruch oder Fehler (zurück zur Auswahl der Zielart)
+    local user main host folder scan pw out rc why
+    local key="/root/.ssh/germandactyl-backup"
+    user="$(gd_input "▸ Hetzner Storage Box – Benutzer" "Benutzername der Storage Box.\n\nFormat: uXXXXXX (Hauptaccount) oder uXXXXXX-subN (Unter-Account)\nBeispiel: u123456" "" 13 74)" || return 1
+    user="${user//[[:space:]]/}"
+    if ! [[ "$user" =~ ^u[0-9]+(-sub[0-9]+)?$ ]]; then
+        gd_msg "Ungültiger Benutzername" "Bitte gib den Benutzernamen im Format uXXXXXX oder uXXXXXX-subN an, z. B. u123456." 9 70; return 1
+    fi
+    # Der Server ist immer der Hauptaccount (uXXXXXX), auch bei Unter-Accounts (uXXXXXX-subN)
+    main="${user%%-*}"
+    host="${main}.your-storagebox.de"
+    folder="$(gd_input "▸ Hetzner Storage Box – Ordner" "Unterordner auf der Storage Box für das Archiv.\n\nDer Pfad ist relativ zum Home-Verzeichnis der Box und wird bei Bedarf angelegt. Erlaubt sind Buchstaben, Ziffern und . _ - sowie / für verschachtelte Ordner." "germandactyl" 14 74)" || return 1
+    folder="${folder%/}"
+    if ! [[ "$folder" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || [ "$folder" = "." ] || [[ "$folder" == *..* ]]; then
+        gd_msg "Ungültiger Ordner" "Erlaubt sind Buchstaben, Ziffern und die Zeichen . _ - sowie / für verschachtelte Ordner (ohne ..)." 9 74; return 1
+    fi
+    # Host-Schlüssel zuerst: Der Fingerabdruck wird geprüft, bevor das Passwort eingegeben wird
+    mkdir -p /root/.ssh; chmod 700 /root/.ssh
+    if ! ssh-keygen -F "[$host]:23" -f /root/.ssh/known_hosts >/dev/null 2>&1; then
+        scan="$(timeout 20 ssh-keyscan -p 23 -t ed25519,ecdsa,rsa "$host" 2>/dev/null)"
+        if [ -z "$scan" ]; then
+            gd_msg "Storage Box nicht erreichbar" "Die Storage Box $host antwortet nicht auf Port 23.\n\nPrüfe den Benutzernamen. Im Hetzner-Robot muss bei der Storage Box außerdem der Punkt \"SSH-Support\" aktiviert sein." 12 74
+            return 1
+        fi
+        gd_yesno "Host-Schlüssel eintragen?" "Die Storage Box $host ist noch nicht bekannt. Ihr Fingerabdruck:\n\n$(ssh-keygen -lf - <<< "$scan" 2>/dev/null | awk '{print $4 " " $2}' | head -n 3)\n\nVergleiche ihn mit den Angaben deines Anbieters. Soll der Schlüssel in /root/.ssh/known_hosts eingetragen werden?" 16 78 || return 1
+        printf '%s\n' "$scan" >> /root/.ssh/known_hosts
+    fi
+    # SSH-Schlüssel ohne Passphrase: der nächtliche Lauf kann keine Passphrase eingeben
+    if [ -f "$key" ]; then
+        if ! ssh-keygen -y -P '' -f "$key" >/dev/null 2>&1; then
+            gd_msg "Schlüssel mit Passphrase" "Der Schlüssel $key ist mit einer Passphrase geschützt. Die automatischen Backups brauchen einen Schlüssel ohne Passphrase. Benenne ihn um oder entferne die Passphrase und starte die Einrichtung dann erneut." 12 78
+            return 1
+        fi
+        [ -f "$key.pub" ] || ssh-keygen -y -P '' -f "$key" > "$key.pub" 2>> "$GD_LOG"
+    else
+        ssh-keygen -t ed25519 -N '' -f "$key" -C germandactyl-backup >> "$GD_LOG" 2>&1 \
+            || { gd_msg "SSH-Schlüssel fehlgeschlagen" "Der SSH-Schlüssel konnte nicht angelegt werden.\n\nDetails: $GD_LOG" 9 70; return 1; }
+    fi
+    pw="$(gd_whip --title "▸ Hetzner Storage Box – Passwort" --passwordbox "Passwort der Storage Box für $user.\n\nEs wird nur einmal gebraucht, um den SSH-Schlüssel auf der Box zu hinterlegen. Es wird nicht gespeichert." 11 74 3>&1 1>&2 2>&3)" || return 1
+    if [ -z "$pw" ]; then
+        gd_msg "Kein Passwort" "Bitte gib das Passwort der Storage Box ein." 8 60; return 1
+    fi
+    if ! command -v sshpass >/dev/null 2>&1; then
+        gd_apt_install sshpass >> "$GD_LOG" 2>&1 || { unset pw; gd_msg "sshpass fehlt" "Das Paket sshpass konnte nicht installiert werden.\n\nDetails: $GD_LOG" 9 70; return 1; }
+    fi
+    # Das Passwort kommt über die Umgebungsvariable SSHPASS (sshpass -e), nie als Argument: sonst stünde es in der Prozessliste
+    out="$(SSHPASS="$pw" sshpass -e ssh-copy-id -s -p 23 -i "$key.pub" "$user@$host" 2>&1)"; rc=$?
+    unset pw
+    printf '%s\n' "$out" >> "$GD_LOG"
+    if [ "$rc" -ne 0 ]; then
+        if [ "$rc" -eq 5 ] || grep -qi 'permission denied' <<< "$out"; then
+            why="Benutzername oder Passwort sind falsch."
+        else
+            why="Der SSH-Schlüssel konnte nicht auf die Storage Box kopiert werden."
+        fi
+        gd_msg "✖ Storage Box nicht eingerichtet" "$why\n\nPrüfe Benutzername und Passwort (das Passwort der Storage Box, nicht das Hetzner-Konto). Im Hetzner-Robot muss bei der Storage Box der Punkt \"SSH-Support\" aktiviert sein.\n\nDetails: $GD_LOG" 15 78
+        return 1
+    fi
+    # Anmeldung mit dem Schlüssel prüfen (BatchMode: keine Passwortabfrage, sondern sofortiger Fehler)
+    if ! sftp -b - -P 23 -i "$key" -o BatchMode=yes -o ConnectTimeout=20 "$user@$host" <<< "ls" >> "$GD_LOG" 2>&1; then
+        gd_msg "✖ Anmeldung mit Schlüssel fehlgeschlagen" "Der Schlüssel wurde hinterlegt, die Anmeldung damit klappt aber nicht.\n\nPrüfe im Hetzner-Robot, ob der Punkt \"SSH-Support\" aktiv ist.\n\nDetails: $GD_LOG" 13 78
+        return 1
+    fi
+    # Unterordner anlegen. "already exists" ist kein Fehler; ob der Ordner nutzbar ist, zeigt die Prüfung des Archivs gleich
+    printf 'mkdir %s\n' "$folder" | sftp -b - -P 23 -i "$key" -o BatchMode=yes "$user@$host" >> "$GD_LOG" 2>&1
+    # restic verbindet sich über ssh: Host-Block mit Port, Benutzer und Schlüssel – nur anfügen, wenn er fehlt
+    touch /root/.ssh/config && chmod 600 /root/.ssh/config
+    if ! grep -qiE "^[[:space:]]*Host[[:space:]]+(.*[[:space:]])?${host//./\\.}([[:space:]]|\$)" /root/.ssh/config; then
+        printf '\n# GermanDactyl: Hetzner Storage Box (automatische Backups)\nHost %s\n    Port 23\n    User %s\n    IdentityFile %s\n    IdentitiesOnly yes\n' \
+            "$host" "$user" "$key" >> /root/.ssh/config
+    fi
+    # restic-Adresse: relativ zum Home-Verzeichnis der Box (ein einfacher Schrägstrich)
+    AB_REPO="sftp://${user}@${host}:23/${folder}"
+    gd_msg "✔ Storage Box eingerichtet" "Host:       $host (Port 23)\nBenutzer:   $user\nOrdner:     $folder\nSchlüssel:  $key (ohne Passphrase)\n\nDas Passwort wurde nicht gespeichert. Die Backups melden sich ab jetzt mit dem SSH-Schlüssel an.\n\nAls Nächstes wird das Archiv angelegt und geprüft." 16 78
+    return 0
+}
+
 ab_ask_sftp() {
     # SFTP -> AB_REPO (restic-Adresse sftp://benutzer@server:port//pfad)
     local userhost port path host
@@ -281,23 +362,25 @@ ab_ask_target() {
     # shellcheck disable=SC2034
     GD_AB_AWS_SECRET=""
     while true; do
-        kind=$(whiptail --title "▸ Speicherort" --menu "Wohin sollen die Backups gespeichert werden?\n\nEin Ziel außerhalb dieses Servers schützt auch vor dem Ausfall des ganzen Servers." 18 78 4 \
+        kind=$(whiptail --title "▸ Speicherort" --menu "Wohin sollen die Backups gespeichert werden?\n\nEin Ziel außerhalb dieses Servers schützt auch vor dem Ausfall des ganzen Servers." 18 78 5 \
             "1" "Lokaler Pfad (Ordner oder eingehängtes Laufwerk)" \
-            "2" "SFTP (z. B. Storage Box oder anderer Server per SSH)" \
-            "3" "S3 (Amazon S3, Backblaze B2, Wasabi, MinIO, ...)" \
-            "4" "rest-server (restic REST-Server)" 3>&1 1>&2 2>&3) || return 1
+            "2" "Hetzner Storage Box (empfohlen, wird automatisch eingerichtet)" \
+            "3" "SFTP (anderer Server per SSH)" \
+            "4" "S3 (Amazon S3, Backblaze B2, Wasabi, MinIO, ...)" \
+            "5" "rest-server (restic REST-Server)" 3>&1 1>&2 2>&3) || return 1
         case "$kind" in
             1) ab_ask_local && return 0 ;;
-            2) ab_ask_sftp && return 0 ;;
-            3) ab_ask_s3 && return 0 ;;
-            4) ab_ask_rest && return 0 ;;
+            2) ab_ask_hetzner && return 0 ;;
+            3) ab_ask_sftp && return 0 ;;
+            4) ab_ask_s3 && return 0 ;;
+            5) ab_ask_rest && return 0 ;;
         esac
     done
 }
 
 ab_setup_dialog() {
     local servers=false time rc
-    gd_msg "◷ Automatische Backups" "Automatische Backups laufen jeden Tag von selbst und sind inkrementell: Nach dem ersten Backup werden nur noch Änderungen gespeichert. Das spart viel Speicherplatz und Zeit.\n\nGesichert werden:\n- Panel-Dateien und Konfigurationen (nginx, Wings, Zertifikate, Dienste)\n- ALLE Datenbanken samt Benutzern (Panel und Datenbanken deiner Gameserver)\n- optional die Dateien aller Gameserver\n\nAufbewahrt werden 7 tägliche, 4 wöchentliche und 6 monatliche Stände. Das Archiv ist verschlüsselt (restic) und wird jeden Sonntag auf Beschädigungen geprüft.\n\nSpeicherort: lokaler Ordner, SFTP, S3 oder rest-server." 21 78
+    gd_msg "◷ Automatische Backups" "Automatische Backups laufen jeden Tag von selbst und sind inkrementell: Nach dem ersten Backup werden nur noch Änderungen gespeichert. Das spart viel Speicherplatz und Zeit.\n\nGesichert werden:\n- Panel-Dateien und Konfigurationen (nginx, Wings, Zertifikate, Dienste)\n- ALLE Datenbanken samt Benutzern (Panel und Datenbanken deiner Gameserver)\n- optional die Dateien aller Gameserver\n\nAufbewahrt werden 7 tägliche, 4 wöchentliche und 6 monatliche Stände. Das Archiv ist verschlüsselt (restic) und wird jeden Sonntag auf Beschädigungen geprüft.\n\nSpeicherort: lokaler Ordner, Hetzner Storage Box, SFTP, S3 oder rest-server." 21 78
     if gd_yesno "⚑ Gameserver mitsichern?" "Sollen auch die Dateien aller Gameserver (Welten, Spielstände, Plugins) gesichert werden?\n\nDas erste Backup kann je nach Größe länger dauern, danach werden nur Änderungen gespeichert.\nAktuell belegt: $(du -sh "$GD_VOLUMES_DIR" 2>/dev/null | cut -f1 || echo 0)\n\nHinweis: Das Backup läuft im laufenden Betrieb. Laufende Gameserver schreiben währenddessen weiter, deshalb können Spielstände im Backup inkonsistent sein." 17 74; then
         servers=true
     fi

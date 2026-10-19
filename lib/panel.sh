@@ -965,17 +965,28 @@ gd_panel_detect_changes() {
     # gd_panel_detect_changes <installierte-version> – vergleicht $PTERO_DIR mit dem Originalstand dieser Version
     # (app resources routes config database public; ohne .env, storage, vendor, node_modules, bootstrap/cache,
     # public/assets, public/build, .blueprint, *.rej/*.orig und bei installierter Übersetzung resources/lang/de).
-    # Setzt GD_FOREIGN_FILES (Zeilen "M pfad" geändert, "A pfad" neu, "D pfad" gelöscht), GD_FOREIGN_COUNT,
-    # GD_FOREIGN_VERSION, GD_REFERENCE_DIR, GD_FOREIGN_BLUEPRINT (true/false) und GD_BLUEPRINT_EXTENSIONS.
-    # Rückgabe: 0 = keine fremden Änderungen, 1 = fremde Änderungen, 2 = Prüfung nicht möglich (z. B. Download).
-    # Ist Blueprint installiert, verändert es Kerndateien – diese sind von eigenen Änderungen nicht zu unterscheiden
-    # und stehen deshalb ebenfalls in der Liste.
-    local version="$1" ref ex a b nref
+    # Setzt GD_FOREIGN_FILES (Zeilen "M pfad" geändert, "A pfad" neu, "D pfad" gelöscht – nur die eigenen Änderungen),
+    # GD_FOREIGN_COUNT, GD_FOREIGN_VERSION, GD_REFERENCE_DIR, GD_FOREIGN_BLUEPRINT (true/false), GD_BLUEPRINT_EXTENSIONS,
+    # GD_BLUEPRINT_FILES (Zeilen im selben Format) und GD_BLUEPRINT_FILE_COUNT.
+    # Blueprint schreibt beim Anwenden Kerndateien des Panels um und wendet sich nach jedem Update ohnehin erneut an.
+    # Ist Blueprint installiert, werden die Abweichungen deshalb geteilt:
+    #   (1) Blueprint-Dateien: Pfad unter app/BlueprintFramework/, routes/blueprint.php, resources/views/blueprint/,
+    #       resources/scripts/blueprint/, public/extensions/, public/assets/extensions/, .blueprint/, blueprint.sh,
+    #       database/migrations/*blueprint*, oder bei geänderten/neuen Dateien ein Inhalt mit "blueprint" (grep -qi)
+    #   (2) alles übrige = echte eigene Änderungen (GD_FOREIGN_FILES)
+    # Rückgabe: 0 = keine eigenen Änderungen (nach dem Herausrechnen), 1 = eigene Änderungen, 2 = Prüfung nicht möglich
+    # (z. B. Download). Ohne Blueprint bleibt alles beim Alten.
+    # Hinweis für gd_autoupdate_panel (lib/autoupdate.sh, wertet nur den Rückgabewert aus): Ein Panel mit installiertem
+    # Blueprint und nur Blueprint-Abweichungen liefert jetzt 0 statt 1. Der Timer überspringt es dadurch nicht mehr
+    # fälschlich, sondern aktualisiert es wie jedes andere Panel ohne eigene Änderungen.
+    local version="$1" ref ex a b nref line kind path is_bp own=() bp=()
     GD_FOREIGN_FILES=""
     GD_FOREIGN_COUNT=0
     GD_FOREIGN_VERSION=""
     GD_FOREIGN_BLUEPRINT=false
     GD_BLUEPRINT_EXTENSIONS=""
+    GD_BLUEPRINT_FILES=""
+    GD_BLUEPRINT_FILE_COUNT=0
     if [ -z "$version" ] || [ ! -f "$PTERO_DIR/artisan" ]; then
         gd_log "Prüfung auf eigene Änderungen nicht möglich: Version oder Panel-Ordner unbekannt"
         return 2
@@ -1004,15 +1015,33 @@ gd_panel_detect_changes() {
           else { if (r[p] != substr($0, 1, 64)) print "M " p; delete r[p] } }
         END { for (p in r) print "D " p }' "$a" "$b" | LC_ALL=C sort -k2)"
     rm -f "$a" "$b"
-    GD_FOREIGN_COUNT=0
-    [ -n "$GD_FOREIGN_FILES" ] && GD_FOREIGN_COUNT="$(wc -l <<< "$GD_FOREIGN_FILES")"
     GD_FOREIGN_VERSION="$version"
     gd_panel_need blueprint gd_blueprint_installed
     if gd_blueprint_installed; then
         GD_FOREIGN_BLUEPRINT=true
         GD_BLUEPRINT_EXTENSIONS="$(gd_blueprint_extensions)"
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            kind="${line%% *}"
+            path="${line#? }"
+            is_bp=false
+            case "$path" in
+                app/BlueprintFramework/*|routes/blueprint.php|resources/views/blueprint/*|resources/scripts/blueprint/*|public/extensions/*|public/assets/extensions/*|.blueprint/*|blueprint.sh|database/migrations/*blueprint*)
+                    is_bp=true ;;
+                *)
+                    if [ "$kind" != D ] && grep -qi -- blueprint "$PTERO_DIR/$path" 2>/dev/null; then is_bp=true; fi ;;
+            esac
+            if [ "$is_bp" = true ]; then bp+=("$line"); else own+=("$line"); fi
+        done <<< "$GD_FOREIGN_FILES"
+        GD_BLUEPRINT_FILE_COUNT=${#bp[@]}
+        # shellcheck disable=SC2034  # Ergebnisvariable, für Aufrufer und Protokoll bestimmt
+        [ "$GD_BLUEPRINT_FILE_COUNT" -gt 0 ] && GD_BLUEPRINT_FILES="$(printf '%s\n' "${bp[@]}")"
+        GD_FOREIGN_FILES=""
+        [ ${#own[@]} -gt 0 ] && GD_FOREIGN_FILES="$(printf '%s\n' "${own[@]}")"
     fi
-    gd_log "Prüfung auf eigene Änderungen (v${version}): ${GD_FOREIGN_COUNT} abweichende Datei(en)$( [ "$GD_FOREIGN_BLUEPRINT" = true ] && echo ', Blueprint ist installiert')"
+    GD_FOREIGN_COUNT=0
+    [ -n "$GD_FOREIGN_FILES" ] && GD_FOREIGN_COUNT="$(wc -l <<< "$GD_FOREIGN_FILES")"
+    gd_log "Prüfung auf eigene Änderungen (v${version}): ${GD_FOREIGN_COUNT} eigene Datei(en)$( [ "$GD_FOREIGN_BLUEPRINT" = true ] && echo ", Blueprint ist installiert (${GD_BLUEPRINT_FILE_COUNT} Dateien, wird nach dem Update neu angewendet)")"
     [ -n "$GD_FOREIGN_FILES" ] && printf '%s\n' "$GD_FOREIGN_FILES" | head -n 200 >> "$GD_LOG"
     [ "$GD_FOREIGN_COUNT" -eq 0 ]
 }
@@ -1342,8 +1371,11 @@ gd_panel_update_cleanup() {
 }
 
 gd_panel_update_changes_dialog() {
-    # gd_panel_update_changes_dialog <installierte-version> – roter Warndialog zu fremden Änderungen (GD_FOREIGN_FILES)
-    # und Auswahl, wie damit umgegangen wird. Setzt GD_UPDATE_REAPPLY. Rückgabe 1 = Abbruch.
+    # gd_panel_update_changes_dialog <installierte-version> – roter Warndialog zu eigenen Änderungen (GD_FOREIGN_FILES)
+    # und Auswahl, wie damit umgegangen wird. Blueprint-Dateien stehen nicht in der Liste, sondern nur als Zusatzzeile
+    # (GD_BLUEPRINT_FILE_COUNT). Setzt GD_UPDATE_REAPPLY. Rückgabe 1 = Abbruch.
+    # Ohne eigene Änderungen (nur Blueprint) wird dieser Dialog nicht gezeigt; dann kommt der Hinweis in den normalen
+    # Bestätigungsdialog von gd_panel_update.
     local installed="$1" shown rest text choice lines
     shown="$(head -n 8 <<< "$GD_FOREIGN_FILES" | awk '{ k = $1; sub(/^. /, ""); print "  " (k == "M" ? "geändert" : (k == "A" ? "neu      " : "gelöscht ")) "  " $0 }')"
     text="Im Panel (v${installed}) weichen ${GD_FOREIGN_COUNT} Datei(en) vom Original ab:\n\n${shown}"
@@ -1351,8 +1383,8 @@ gd_panel_update_changes_dialog() {
         rest=$((GD_FOREIGN_COUNT - 8))
         text+="\n  … und ${rest} weitere"
     fi
-    if [ "${GD_FOREIGN_BLUEPRINT:-false}" = true ]; then
-        text+="\n\nBlueprint ist installiert und verändert selbst Kerndateien des Panels – darunter können also Blueprint-Änderungen sein (nicht unterscheidbar)."
+    if [ "${GD_FOREIGN_BLUEPRINT:-false}" = true ] && [ "${GD_BLUEPRINT_FILE_COUNT:-0}" -gt 0 ]; then
+        text+="\n\nBlueprint ist installiert (${GD_BLUEPRINT_FILE_COUNT} Dateien) und wird nach dem Update automatisch neu angewendet."
         if [ -n "$GD_BLUEPRINT_EXTENSIONS" ]; then
             text+="\nErweiterungen: $(head -n 10 <<< "$GD_BLUEPRINT_EXTENSIONS" | paste -sd, - | sed 's/,/, /g')"
         fi
@@ -1422,6 +1454,7 @@ gd_panel_update() {
         rc=$?
     fi
     text="Installiert: v${installed:-unbekannt}\nZiel: v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(mit deutscher Übersetzung)' || echo '(Englisch)')\n\nDas Panel ist während der Aktualisierung einige Minuten nicht erreichbar. Änderungen an Dateien des Panels (Themes/Erweiterungen) werden dabei überschrieben.\n\nVor dem Update wird automatisch eine Sicherung (Dateien + Datenbank) erstellt.\n\nMöchtest du fortfahren?"
+    [ "${GD_BLUEPRINT_FILE_COUNT:-0}" -gt 0 ] && text+="\n\nBlueprint ist installiert (${GD_BLUEPRINT_FILE_COUNT} Dateien) und wird nach dem Update automatisch neu angewendet."
     case "$rc" in
         1) gd_panel_update_changes_dialog "$installed" || return 1 ;;
         2)
