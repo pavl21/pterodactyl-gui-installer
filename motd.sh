@@ -92,6 +92,67 @@ for svc in nginx pteroq wings; do
 done
 [ -n "$STATUS_LINE" ] && echo -e "\n❖ Dienste: $STATUS_LINE" | $LOLCAT
 
+# Automatische Backups und Updates: Die Ergebnisse stehen in setup.conf (nur für root lesbar, bei anderen Benutzern entfällt der Block).
+# Die Datei besteht aus Zeilen SCHLÜSSEL=Wert (mit printf %q geschrieben) und wird deshalb in einer Subshell eingelesen.
+GD_CONF="/etc/germandactyl/setup.conf"
+# shellcheck disable=SC1090
+conf_get() { ( . "$GD_CONF" 2>/dev/null; eval "printf '%s' \"\${$1:-}\"" ); }
+fmt_time() { date -d "$1" '+%d.%m.%Y %H:%M' 2>/dev/null || echo "$1"; }
+if [ -r "$GD_CONF" ]; then
+    AUTO_TEXT=""
+    # Backup (AUTO_BACKUP_LAST_RESULT = laufend|ok|fehler, AUTO_BACKUP_LAST_RUN = Beginn/Ende des letzten Laufs,
+    # AUTO_BACKUP_LAST_OK = letzter Erfolg). "laufend" länger als 6 Stunden gilt als hängend oder abgebrochen.
+    if systemctl cat germandactyl-backup.timer >/dev/null 2>&1; then
+        BK_RESULT="$(conf_get AUTO_BACKUP_LAST_RESULT)"; BK_RUN="$(conf_get AUTO_BACKUP_LAST_RUN)"; BK_OK="$(conf_get AUTO_BACKUP_LAST_OK)"
+        BK_AGE=0; BK_RUN_AGE=0
+        [ -n "$BK_OK" ] && BK_AGE=$(( ($(date +%s) - $(date -d "$BK_OK" +%s 2>/dev/null || date +%s)) / 3600 ))
+        [ "$BK_RESULT" = "laufend" ] && [ -n "$BK_RUN" ] && BK_RUN_AGE=$(( $(date +%s) - $(date -d "$BK_RUN" +%s 2>/dev/null || date +%s) ))
+        if [ "$BK_RESULT" = "laufend" ] && [ "$BK_RUN_AGE" -gt 21600 ]; then
+            AUTO_TEXT+="✖ Backup hängt oder wurde abgebrochen${BK_RUN:+ (gestartet: $(fmt_time "$BK_RUN"))}${BK_OK:+, letzter Erfolg: $(fmt_time "$BK_OK")}. Log: /var/log/germandactyl-setup/auto-backup.log"$'\n'
+        elif [ "$BK_RESULT" = "laufend" ]; then
+            AUTO_TEXT+="◷ Backup läuft${BK_RUN:+ (gestartet: $(fmt_time "$BK_RUN"))}${BK_OK:+, letzter Erfolg: $(fmt_time "$BK_OK")}"$'\n'
+        elif [ "$BK_RESULT" = "fehler" ]; then
+            AUTO_TEXT+="✖ Das letzte automatische Backup ist fehlgeschlagen${BK_RUN:+ ($(fmt_time "$BK_RUN"))}${BK_OK:+, letzter Erfolg: $(fmt_time "$BK_OK")}. Log: /var/log/germandactyl-setup/auto-backup.log"$'\n'
+        elif [ -z "$BK_OK" ]; then
+            AUTO_TEXT+="⚠ Automatische Backups sind eingerichtet, es gibt aber noch kein erfolgreiches Backup."$'\n'
+        elif [ "$BK_AGE" -gt 48 ]; then
+            AUTO_TEXT+="⚠ Das letzte erfolgreiche automatische Backup ist $BK_AGE Stunden alt ($(fmt_time "$BK_OK"))."$'\n'
+        else
+            AUTO_TEXT+="✔ Letztes automatisches Backup: $(fmt_time "$BK_OK")"$'\n'
+        fi
+    fi
+    # Geplante Updates von Panel und Wings (LAST_UPDATE_* bzw. LAST_WINGS_UPDATE_*: ok|fehler|uebersprungen)
+    AU_ON=false
+    systemctl is-enabled --quiet germandactyl-update.timer 2>/dev/null && AU_ON=true
+    for UP in "LAST_UPDATE:Panel" "LAST_WINGS_UPDATE:Wings"; do
+        UP_RESULT="$(conf_get "${UP%%:*}_RESULT")"; UP_TIME="$(conf_get "${UP%%:*}_TIME")"; UP_NOTE="$(conf_get "${UP%%:*}_NOTE")"
+        case "$UP_RESULT" in
+            fehler)
+                AUTO_TEXT+="✖ ${UP#*:}-Update fehlgeschlagen${UP_TIME:+ ($(fmt_time "$UP_TIME"))}${UP_NOTE:+: $UP_NOTE}"$'\n'
+                if [ "${UP%%:*}" = "LAST_UPDATE" ]; then
+                    UP_BACKUP="$(conf_get LAST_UPDATE_BACKUP)"
+                    AUTO_TEXT+="  Sicherung: ${UP_BACKUP:-keine}, Log: /var/log/germandactyl-setup/auto-update.log"$'\n'
+                fi ;;
+            uebersprungen)
+                AUTO_TEXT+="⚠ ${UP#*:}-Update übersprungen${UP_TIME:+ ($(fmt_time "$UP_TIME"))}${UP_NOTE:+: $UP_NOTE}"$'\n' ;;
+            ok)
+                $AU_ON && AUTO_TEXT+="✔ Letztes automatisches ${UP#*:}-Update: $(fmt_time "$UP_TIME")${UP_NOTE:+ ($UP_NOTE)}"$'\n' ;;
+        esac
+    done
+    [ -n "$AUTO_TEXT" ] && printf '\n◷ Automatik:\n%s\n' "${AUTO_TEXT%$'\n'}" | $LOLCAT
+fi
+
+# Hinweis auf die Verwaltung (Kurzbefehl): der kürzeste vorhandene Name, gd nur als unser Link auf germandactyl
+GD_CMD=""
+if [ "$(readlink /usr/local/bin/gd 2>/dev/null)" = "/usr/local/bin/germandactyl" ]; then
+    GD_CMD="gd"
+elif [ -L /usr/local/bin/gmd ] || [ -x /usr/local/bin/gmd ]; then
+    GD_CMD="gmd"
+elif [ -x /usr/local/bin/germandactyl ]; then
+    GD_CMD="germandactyl"
+fi
+[ -n "$GD_CMD" ] && echo -e "\n▸ Verwaltung: $GD_CMD\n▸ Kurzbefehle: $GD_CMD hilfe" | $LOLCAT
+
 # Letzter erfolgreicher Login (vor der aktuellen Sitzung)
 LAST_LOGIN="$(last -i -n 2 -w 2>/dev/null | sed -n '2p')"
 if [ -n "$LAST_LOGIN" ] && [[ "$LAST_LOGIN" != wtmp* ]]; then

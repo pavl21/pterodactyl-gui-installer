@@ -20,6 +20,10 @@ GD_LOG_DIR="/var/log/germandactyl-setup"
 PTERO_DIR="/var/www/pterodactyl"
 GD_PHP_VERSION="8.3"
 GD_TIMEZONE="Europe/Berlin"
+# Pterodactyl 2.x hat einen anderen Stack und Update-Ablauf als 1.x – erst nach Anpassung der TUI freigeben
+GD_PANEL_MAJOR="1"
+# Headless-Modus (GD_HEADLESS=1, z. B. geplante Updates per systemd-Timer): Es gibt kein Terminal und keine Dialoge.
+# Alle Dialog-, Fortschritts- und Fehlerfunktionen unten schreiben dann nur noch ins Log; Rückfragen gelten als "Nein".
 
 # whiptail benötigt eine UTF-8-Locale, damit Umlaute und Emojis korrekt dargestellt werden
 case "${LC_ALL:-${LANG:-}}" in
@@ -32,18 +36,46 @@ case "${TERM:-}" in ""|dumb|unknown) export TERM=xterm ;; esac
 # Nach "su" (ohne "-") fehlen unter Debian die sbin-Verzeichnisse – dann wären nginx, sshd, ufw usw. nicht auffindbar
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
+gd_cleanup() {
+    # Aufräumen beim Beenden, auch bei Strg+C oder Abbruch der SSH-Verbindung (Trap in installer.sh)
+    # Eine von uns angelegte policy-rc.d blockiert sonst systemweit jeden Dienststart durch apt.
+    # Der Marker erkennt auch eine Datei, die ein Unterskript angelegt hat (GD_OWN_POLICY gilt nur dort).
+    if [ "${GD_OWN_POLICY:-}" = true ] || grep -qs 'germandactyl-setup' /usr/sbin/policy-rc.d 2>/dev/null; then
+        rm -f /usr/sbin/policy-rc.d
+    fi
+    # Die apt-Zeitgeber, die gd_apt_timers_stop für die Installation angehalten hat, laufen danach wieder.
+    # Die Variable enthält nur die Zeitgeber, die wirklich aktiv waren und von uns gestoppt wurden.
+    if [ -n "${GD_APT_TIMERS_STOPPED:-}" ]; then
+        local t
+        for t in $GD_APT_TIMERS_STOPPED; do
+            systemctl start "$t" >/dev/null 2>&1
+        done
+        GD_APT_TIMERS_STOPPED=""
+    fi
+    declare -F gd_build_swap_off >/dev/null && gd_build_swap_off
+    [ -n "${GD_TMP:-}" ] && rm -rf "$GD_TMP"
+    [ -z "${GD_LOCAL_DIR:-}" ] && [ -n "${GD_LIB_DIR:-}" ] && rm -rf "$GD_LIB_DIR"
+    return 0
+}
+
 # Temporäres Arbeitsverzeichnis, wird beim Beenden automatisch entfernt
 if [ -z "${GD_TMP:-}" ]; then
     GD_TMP="$(mktemp -d /tmp/germandactyl.XXXXXX)"
     export GD_TMP
-    trap 'rm -rf "$GD_TMP"' EXIT
+    trap gd_cleanup EXIT
+    trap 'gd_cleanup; exit 130' INT HUP TERM
 fi
 
 # Log-Datei (nur für root lesbar, da Zugangsdaten auftauchen könnten)
 if [ -z "${GD_LOG:-}" ]; then
     mkdir -p "$GD_LOG_DIR" 2>/dev/null
     chmod 700 "$GD_LOG_DIR" 2>/dev/null
-    GD_LOG="${GD_LOG_DIR}/setup-$(date +%Y%m%d-%H%M%S).log"
+    if [ "${GD_HEADLESS:-}" = 1 ]; then
+        # Geplante Läufe (systemd-Timer) schreiben in ein gemeinsames Log statt jede Nacht eine neue Datei anzulegen
+        GD_LOG="${GD_LOG_DIR}/auto-update.log"
+    else
+        GD_LOG="${GD_LOG_DIR}/setup-$(date +%Y%m%d-%H%M%S).log"
+    fi
     export GD_LOG
 fi
 touch "$GD_LOG" 2>/dev/null && chmod 600 "$GD_LOG" 2>/dev/null
@@ -66,6 +98,7 @@ gd_status() {
 
 gd_die() {
     gd_log "ABBRUCH: $*"
+    [ "${GD_HEADLESS:-}" = 1 ] && { echo "FEHLER: $*" >&2; exit 1; }
     echo ""
     echo "FEHLER - - - - - - - - - - - - - - -"
     echo "$*"
@@ -82,6 +115,7 @@ whiptail() {
     # Aufrufers (z. B. --ok-button) stehen danach und haben Vorrang.
     # Größe an das Terminal anpassen: Zu große Dialoge schneidet whiptail sonst einfach ab
     # (z. B. in kleinen SSH-Fenstern mit 80x24). Wird gekürzt, wird der Text scrollbar.
+    [ "${GD_HEADLESS:-}" = 1 ] && return 1
     local args=("$@") i rows=24 cols=80 size extra=()
     size="$(stty size < /dev/tty 2>/dev/null)" && read -r rows cols <<< "$size"
     # Unbekannte Größe -> 80x24 annehmen; sehr kleine Fenster nicht vergrößern, sondern auf ein Minimum begrenzen
@@ -113,6 +147,8 @@ whiptail() {
 }
 
 gd_whip() {
+    # Headless: kein Dialog (Rückgabe 1 = Abbruch/Nein)
+    [ "${GD_HEADLESS:-}" = 1 ] && return 1
     # whiptail zeichnet auf die Standardausgabe. Wird ein Dialog innerhalb von $(...) aufgerufen
     # (z. B. in gd_ask_domain), wäre er unsichtbar und das Skript würde hängen – daher dann direkt aufs Terminal.
     if [ -t 1 ] || [ ! -w /dev/tty ]; then
@@ -124,11 +160,29 @@ gd_whip() {
 
 gd_msg() {
     # gd_msg "Titel" "Text" [höhe] [breite]
+    [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Meldung] $1: $(printf '%b' "$2" | tr '\n' ' ')"; return 0; }
     gd_whip --title "$1" --msgbox "$2" "${3:-12}" "${4:-70}"
+}
+
+gd_msg_secret() {
+    # gd_msg_secret "Titel" "Text" [höhe] [breite] – wie gd_msg, aber für Passwörter und Token.
+    # Der Text wird NICHT als Prozessargument übergeben (das sähe jeder lokale Benutzer per "ps" bzw. /proc),
+    # sondern über eine nur für root lesbare Datei angezeigt, die danach sofort gelöscht wird.
+    # Headless: Geheimnisse gehören nicht ins Log – nur der Titel wird vermerkt
+    [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Meldung] $1 (Inhalt nicht protokolliert)"; return 0; }
+    local file rc
+    file="$(umask 077; mktemp "${GD_TMP:-/tmp}/secret.XXXXXX")" || return 1
+    printf '%b' "$2" > "$file"
+    gd_whip --title "$1" --scrolltext --textbox "$file" "${3:-18}" "${4:-78}"
+    rc=$?
+    rm -f "$file"
+    return $rc
 }
 
 gd_yesno() {
     # gd_yesno "Titel" "Text" [höhe] [breite]  -> Rückgabe 0 = Ja
+    # Headless gibt es keine Rückfrage: immer "Nein"
+    [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "[Rückfrage, automatisch Nein] $1"; return 1; }
     gd_whip --title "$1" --yesno "$2" "${3:-12}" "${4:-70}"
 }
 
@@ -138,6 +192,7 @@ gd_input() {
 }
 
 gd_warn_colors_on() {
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
     GD_OLD_NEWT_COLORS="${NEWT_COLORS:-}"
     export NEWT_COLORS='
     root=,red
@@ -152,6 +207,7 @@ gd_warn_colors_on() {
 }
 
 gd_warn_colors_off() {
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
     export NEWT_COLORS="${GD_OLD_NEWT_COLORS:-}"
 }
 
@@ -162,13 +218,17 @@ GD_GAUGE_OPEN=0
 
 gd_gauge_open() {
     # gd_gauge_open "Titel" "Starttext"
+    [ "${GD_HEADLESS:-}" = 1 ] && { gd_log "== $1: $2"; return 0; }
     exec 7> >(whiptail --title "$1" --gauge "$2" 10 78 0)
     GD_GAUGE_OPEN=1
 }
 
 gd_progress() {
     # gd_progress <prozent> "Text"
+    GD_PROGRESS_LAST="$1"   # gd_wait_for_apt zeigt seine Wartemeldung auf dem aktuellen Stand des Balkens
     gd_log "== [$1%] $2"
+    # Headless: Das Log ist das Ziel (kein Balken); die Konsole bekommt die Zeile für "Jetzt ausführen" mit
+    [ "${GD_HEADLESS:-}" = 1 ] && { echo "[$1%] $2"; return 0; }
     if [ "$GD_GAUGE_OPEN" = "1" ]; then
         # In einer Subshell schreiben: Ist whiptail beendet, trifft das SIGPIPE nur die Subshell
         # und nicht die laufende Installation. Danach wird ohne Balken weitergearbeitet.
@@ -183,6 +243,7 @@ gd_progress() {
 }
 
 gd_gauge_close() {
+    [ "${GD_HEADLESS:-}" = 1 ] && return 0
     if [ "$GD_GAUGE_OPEN" = "1" ]; then
         exec 7>&-
         GD_GAUGE_OPEN=0
@@ -220,11 +281,30 @@ gd_fail() {
     if [ -n "${GD_FAIL_CLEANUP:-}" ] && declare -F "$GD_FAIL_CLEANUP" >/dev/null; then
         "$GD_FAIL_CLEANUP"
     fi
+    if [ "${GD_HEADLESS:-}" = 1 ]; then
+        local last_lines
+        last_lines="$(tail -n 12 "$GD_LOG" 2>/dev/null | tr -d '\r' | cut -c1-200 | sed 's/^/    /')"
+        gd_log "FEHLGESCHLAGEN: $1"
+        gd_log "Letzte Log-Einträge vor dem Fehler:"
+        [ -n "$last_lines" ] && printf '%s\n' "$last_lines" >> "$GD_LOG"
+        echo "FEHLGESCHLAGEN: $1 (Details im Log: $GD_LOG)" >&2
+        exit 1
+    fi
     local tail_text
     tail_text="$(tail -n "$( [ -n "${GD_FAIL_HINT:-}" ] && echo 8 || echo 12)" "$GD_LOG" 2>/dev/null | tr -d '\r' | cut -c1-110)"
     gd_log "FEHLGESCHLAGEN: $1"
+    # Titel: GD_FAIL_TITLE, sonst nach Ablauf – läuft eine Panel-Aktualisierung (GD_UPDATE_PHASE gesetzt, aber nicht
+    # "fertig"), heißt es Aktualisierung, sonst Installation
+    local title="${GD_FAIL_TITLE:-}"
+    if [ -z "$title" ]; then
+        if [ -n "${GD_UPDATE_PHASE:-}" ] && [ "$GD_UPDATE_PHASE" != "fertig" ]; then
+            title="✖ Fehler bei der Aktualisierung"
+        else
+            title="✖ Fehler bei der Installation"
+        fi
+    fi
     # GD_FAIL_HINT: zusätzlicher Hinweis, z. B. wenn das Panel bereits fertig ist und nur ein späterer Schritt scheitert
-    gd_whip --title "✖ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1${GD_FAIL_HINT:+\n\n$GD_FAIL_HINT}\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 30 118
+    gd_whip --title "$title" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1${GD_FAIL_HINT:+\n\n$GD_FAIL_HINT}\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 30 118
     clear
     gd_die "Schritt fehlgeschlagen: $1"
 }
@@ -255,15 +335,42 @@ gd_ensure_base_tools() {
     return 0
 }
 
-gd_wait_for_apt() {
-    # Wartet (max. 5 Minuten), bis kein anderer apt/dpkg-Prozess mehr läuft
-    local i=0
-    while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
-        [ $i -eq 0 ] && gd_log "Warte auf laufenden apt/dpkg-Prozess..."
-        i=$((i + 1))
-        [ $i -gt 150 ] && return 1
-        sleep 2
+gd_apt_timers_stop() {
+    # Hält die täglichen apt-Zeitgeber (apt-daily, apt-daily-upgrade) an, damit unattended-upgrades nicht mitten in der
+    # Installation startet und die Paketverwaltung blockiert. Es wird nur gestoppt, nicht deaktiviert; gd_cleanup startet
+    # die Zeitgeber beim Beenden wieder. GD_APT_TIMERS_STOPPED enthält die Namen der von uns gestoppten Zeitgeber.
+    local t
+    command -v systemctl >/dev/null 2>&1 || return 0
+    for t in apt-daily.timer apt-daily-upgrade.timer; do
+        if systemctl is-active --quiet "$t" 2>/dev/null && systemctl stop "$t" >/dev/null 2>&1; then
+            GD_APT_TIMERS_STOPPED="${GD_APT_TIMERS_STOPPED:+$GD_APT_TIMERS_STOPPED }$t"
+            gd_log "apt-Zeitgeber $t für die Dauer der Installation angehalten"
+        fi
     done
+    return 0
+}
+
+gd_wait_for_apt() {
+    # Wartet (max. 20 Minuten), bis kein anderer apt/dpkg-Prozess mehr läuft – auf frischen Servern ist das meist
+    # unattended-upgrades, das nach dem ersten Start Updates einspielt. Geprüft wird alle 2 Sekunden, eine Statusmeldung
+    # gibt es alle 10 Sekunden (Fortschrittsbalken bzw. Headless-Ausgabe; sonst eine Datei, die gd_spinner anzeigt).
+    local i=0 msg
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        if [ $((i % 5)) -eq 0 ]; then
+            msg="Warte auf laufenden Systemupdate-Prozess (unattended-upgrades) ... ($((i * 2)) s)"
+            if [ "${GD_HEADLESS:-}" = 1 ] || [ "$GD_GAUGE_OPEN" = "1" ]; then
+                gd_progress "${GD_PROGRESS_LAST:-0}" "$msg"
+            else
+                gd_log "$msg"
+                [ -n "${GD_TMP:-}" ] && printf '%s\n' "$msg" > "$GD_TMP/apt-wait.msg" 2>/dev/null
+                [ $i -eq 0 ] && echo "Warte auf laufenden Systemupdate-Prozess (unattended-upgrades) ..." >&2
+            fi
+        fi
+        [ $i -ge 600 ] && { [ -n "${GD_TMP:-}" ] && rm -f "$GD_TMP/apt-wait.msg"; return 1; }
+        sleep 2
+        i=$((i + 1))
+    done
+    [ -n "${GD_TMP:-}" ] && rm -f "$GD_TMP/apt-wait.msg"
     return 0
 }
 
@@ -277,6 +384,12 @@ gd_apt_update() {
     # Paketlisten aktualisieren. Ein kaputtes Fremd-Repository (abgelaufener Schlüssel, toter PPA) soll die
     # Einrichtung nicht abbrechen – erst eine fehlgeschlagene Paketinstallation ist ein echter Fehler.
     gd_apt update || { echo "Warnung: 'apt-get update' meldete Fehler (siehe oben) – es wird trotzdem fortgefahren."; return 0; }
+}
+
+gd_apt_has_candidate() {
+    # gd_apt_has_candidate <paket> – gibt es für das Paket einen installierbaren Kandidaten? Prüft gezielt eine frisch
+    # eingerichtete Paketquelle, deren Fehler gd_apt_update bewusst verschluckt. LC_ALL=C: apt übersetzt "Candidate".
+    LC_ALL=C apt-cache policy "$1" 2>/dev/null | grep -q 'Candidate: [0-9]'
 }
 
 gd_apt_install() {
@@ -297,11 +410,22 @@ gd_os_detect() {
     fi
 }
 
+# shellcheck disable=SC2034  # GD_OS_UNTESTED wird von installer.sh gelesen
 gd_os_supported() {
+    # Rückgabe 0 = getestet oder neuer als die getesteten Versionen, 1 = unbekanntes System.
+    # Neuere Versionen (Debian > 13, Ubuntu > 26.04, auch künftige LTS wie 28.04) werden angenommen, aber mit
+    # GD_OS_UNTESTED=true markiert: der Aufrufer weist darauf hin, dass sie nicht getestet sind.
     gd_os_detect
+    GD_OS_UNTESTED=false
     case "$GD_OS_ID:$GD_OS_VERSION" in
-        debian:11|debian:12|debian:13) return 0 ;;
-        ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) return 0 ;;
+        debian:12|debian:13|ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) return 0 ;;
+    esac
+    case "$GD_OS_ID" in
+        debian)
+            [[ "$GD_OS_VERSION" =~ ^[0-9]+$ ]] && [ "$GD_OS_VERSION" -gt 13 ] && { GD_OS_UNTESTED=true; return 0; } ;;
+        ubuntu)
+            [[ "$GD_OS_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] && gd_version_ge "$GD_OS_VERSION" 26.04 \
+                && { GD_OS_UNTESTED=true; return 0; } ;;
     esac
     return 1
 }
@@ -361,6 +485,16 @@ gd_mysqldump() {
     fi
 }
 
+gd_curl() {
+    # Einheitlicher Download-Helfer: folgt Weiterleitungen, bricht bei HTTP-Fehlern ab, wiederholt bei Netzwerkfehlern
+    # (5 Versuche, 3 s Pause) und begrenzt Verbindungsaufbau (20 s) und Gesamtdauer (600 s). Weitere Optionen des
+    # Aufrufers stehen danach und haben Vorrang (z. B. --max-time 15 oder -o <datei>).
+    # --retry-all-errors gibt es erst ab curl 7.71; ohne die Option wird nur bei vorübergehenden Fehlern wiederholt.
+    local retry_all=()
+    curl --help all 2>/dev/null | grep -q -- '--retry-all-errors' && retry_all=(--retry-all-errors)
+    curl -fsSL --retry 5 --retry-delay 3 "${retry_all[@]}" --connect-timeout 20 --max-time 600 "$@"
+}
+
 gd_latest_tag() {
     # gd_latest_tag <owner/repo> -> Name des neuesten Release-Tags, z. B. "v1.15.1" oder "beta-2026-08"
     local url
@@ -378,10 +512,18 @@ gd_latest_tag() {
 
 gd_latest_release() {
     # gd_latest_release <owner/repo> -> Versionsnummer ohne "v", z. B. "1.15.1"
+    # Für das Panel (pterodactyl/panel) werden nur Versionen der Major-Version GD_PANEL_MAJOR zurückgegeben
     local tag
     tag="$(gd_latest_tag "$1")" || return 1
     tag="${tag#v}"
     [[ "$tag" =~ ^[0-9]+(\.[0-9]+)+(-[0-9A-Za-z.]+)?$ ]] || return 1
+    if [ "$1" = "pterodactyl/panel" ] && [ "${tag%%.*}" != "$GD_PANEL_MAJOR" ]; then
+        # Neuestes Release hat eine andere Major-Version (z. B. 2.x): höchste Version der freigegebenen Major suchen
+        tag="$(curl -fsSL --max-time 20 "https://api.github.com/repos/pterodactyl/panel/releases?per_page=50" 2>/dev/null \
+            | grep -oE '"tag_name": *"[^"]+"' | cut -d'"' -f4 \
+            | grep -E "^v${GD_PANEL_MAJOR}\.[0-9]+\.[0-9]+$" | sed 's/^v//' | sort -V | tail -n1)"
+        [ -n "$tag" ] || return 1
+    fi
     echo "$tag"
 }
 
@@ -411,6 +553,35 @@ gd_conf_get() {
         . "$GD_CONF_FILE" 2>/dev/null
         eval "printf '%s' \"\${$1:-}\""
     )
+}
+
+gd_dotenv_set() {
+    # gd_dotenv_set <datei> <KEY> <WERT> – setzt bzw. ergänzt KEY=WERT in einer .env-Datei.
+    # Der Wert wird unverändert geschrieben (auch mit |, & oder \ – sed würde daran scheitern): Er geht per
+    # Umgebungsvariable an awk, nicht als Argument. Das Ergebnis entsteht in einer privaten Temp-Datei und wird
+    # mit "cat >" zurückgeschrieben, damit Besitzer und Inode erhalten bleiben. Die .env bekommt dabei immer 640.
+    local file="$1" key="$2" tmp rc
+    [ -f "$file" ] || return 1
+    # Ein Zeilenumbruch im Wert würde die Datei zerlegen
+    case "$3" in *$'\n'*) return 1 ;; esac
+    tmp="$(umask 077; mktemp "${GD_TMP:-/tmp}/dotenv.XXXXXX")" || return 1
+    if grep -q "^${key}=" "$file"; then
+        GD_DOTENV_VAL="$3" awk -v k="$key" 'index($0, k "=") == 1 { print k "=" ENVIRON["GD_DOTENV_VAL"]; next } { print }' "$file" > "$tmp"
+        rc=$?
+    else
+        {
+            cat "$file"
+            # Die .env endet oft ohne Zeilenumbruch – sonst würde der neue Eintrag an die letzte Zeile angehängt
+            if [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ]; then echo; fi
+            printf '%s=%s\n' "$key" "$3"
+        } > "$tmp"
+        rc=$?
+    fi
+    # Bei einem Fehler ist die Temp-Datei unvollständig: dann die .env nicht anfassen
+    if [ "$rc" -ne 0 ] || [ ! -s "$tmp" ]; then rm -f "$tmp"; return 1; fi
+    cat "$tmp" > "$file" || { rm -f "$tmp"; return 1; }
+    rm -f "$tmp"
+    chmod 640 "$file"
 }
 
 # ---------------------------------------------------------------------------
@@ -472,6 +643,11 @@ gd_local_ip() {
     ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
 }
 
+gd_has_ipv4_route() {
+    # Gibt es eine IPv4-Route ins Internet? (Pterodactyl, GitHub und Let's Encrypt brauchen IPv4)
+    ip -4 route get 1.1.1.1 >/dev/null 2>&1
+}
+
 gd_local_ips() {
     # Alle globalen IPv4-Adressen dieses Servers (auch Zusatz- und Failover-IPs)
     ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}'
@@ -521,11 +697,41 @@ gd_resolve_aaaa() {
     dig +short AAAA "$1" @1.1.1.1 2>/dev/null | grep -E '^[0-9a-fA-F:]+$'
 }
 
+gd_ip_to_int() {
+    # gd_ip_to_int <ipv4> -> 32-Bit-Zahl, Rückgabe 1 bei ungültiger Adresse
+    local a b c d
+    [[ "$1" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+    IFS=. read -r a b c d <<< "$1"
+    # 10# verhindert, dass führende Nullen als Oktalzahl gelten
+    [ $((10#$a)) -le 255 ] && [ $((10#$b)) -le 255 ] && [ $((10#$c)) -le 255 ] && [ $((10#$d)) -le 255 ] || return 1
+    echo $(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))
+}
+
+gd_ip_in_cidr() {
+    # gd_ip_in_cidr <ipv4> <netz/länge> – wahr, wenn die Adresse im Netz liegt
+    local ip net bits mask
+    ip="$(gd_ip_to_int "$1")" || return 1
+    net="$(gd_ip_to_int "${2%/*}")" || return 1
+    bits="${2#*/}"
+    [[ "$bits" =~ ^[0-9]+$ ]] && [ "$bits" -le 32 ] || return 1
+    mask=$(( bits == 0 ? 0 : (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))
+    [ $(( ip & mask )) -eq $(( net & mask )) ]
+}
+
+# Offizielle IPv4-Netze des Cloudflare-Proxys, Quelle: https://www.cloudflare.com/ips-v4 (Stand: 19.10.2026).
+# Bewusst fest hinterlegt, damit keine Netzabfrage nötig ist. Die Liste ändert sich selten.
+GD_CLOUDFLARE_NETS=(
+    173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18
+    108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17
+    162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22
+)
+
 gd_is_cloudflare_ip() {
-    # Grobe Prüfung auf die bekanntesten Cloudflare-Proxy-Netze
-    case "$1" in
-        104.1[6-9].*|104.2[0-9].*|104.3[01].*|172.6[4-9].*|172.7[01].*|162.15[89].*|188.114.9[6-9].*|190.93.2[4-5][0-9].*|141.101.*|108.162.*|173.245.*|103.21.24[4-7].*|103.22.20[0-3].*|103.31.[4-7].*|197.234.24[0-3].*|198.41.1[2-9][0-9].*|198.41.2[0-5][0-9].*) return 0 ;;
-    esac
+    # Liegt die IPv4-Adresse in einem Cloudflare-Proxy-Netz?
+    local net
+    for net in "${GD_CLOUDFLARE_NETS[@]}"; do
+        gd_ip_in_cidr "$1" "$net" && return 0
+    done
     return 1
 }
 
@@ -536,7 +742,7 @@ gd_dns_check_dialog() {
     dns_ips="$(gd_resolve_a "$domain")"
 
     if [ -z "$dns_ips" ]; then
-        gd_msg "✖ Domain-Überprüfung" "Für die Domain $domain wurde kein A-Eintrag (IPv4) gefunden.\n\nLege bei deinem Domain-Anbieter einen A-Eintrag an, der auf die IP-Adresse dieses Servers zeigt:\n\n$server_ip\n\nDNS-Änderungen können einige Minuten dauern." 16 78
+        gd_msg "✖ Domain-Überprüfung" "Für die Domain $domain wurde kein A-Eintrag (IPv4) gefunden.\n\nLege bei deinem Domain-Anbieter einen A-Eintrag an, der auf die IP-Adresse dieses Servers zeigt:\n\n${server_ip:-unbekannt}\n\nDNS-Änderungen können einige Minuten dauern." 16 78
         return 1
     fi
 
@@ -566,7 +772,7 @@ gd_dns_check_dialog() {
     if gd_is_cloudflare_ip "$first_ip"; then
         hint="\n\nDie Domain zeigt auf Cloudflare. Deaktiviere in Cloudflare den Proxy (graue Wolke, 'DNS only'), sonst können weder das SSL-Zertifikat noch Wings funktionieren."
     fi
-    gd_msg "✖ Domain-Überprüfung" "Die Domain $domain zeigt auf eine andere IP-Adresse.\n\nDNS-Eintrag: $(tr '\n' ' ' <<< "$dns_ips")\nDieser Server: $server_ip\n\nPrüfe die DNS-Einträge auf Schreibfehler.${hint}" 18 78
+    gd_msg "✖ Domain-Überprüfung" "Die Domain $domain zeigt auf eine andere IP-Adresse.\n\nDNS-Eintrag: $(tr '\n' ' ' <<< "$dns_ips")\nDieser Server: ${server_ip:-unbekannt}\n\nPrüfe die DNS-Einträge auf Schreibfehler.${hint}" 18 78
     return 1
 }
 
@@ -614,12 +820,12 @@ gd_ask_email() {
 # Weitere Skripte aus dem Repository ausführen/laden
 # ---------------------------------------------------------------------------
 gd_fetch() {
-    # gd_fetch <pfad im repo> <ziel> – lokale Kopie bevorzugen, sonst herunterladen
+    # gd_fetch <pfad im repo> <ziel> – lokale Kopie bevorzugen, sonst herunterladen.
     local rel="$1" dest="$2"
     if [ -n "${GD_LOCAL_DIR:-}" ] && [ -f "$GD_LOCAL_DIR/$rel" ]; then
         cp "$GD_LOCAL_DIR/$rel" "$dest"
     else
-        curl -fsSL "$GD_RAW/$rel" -o "$dest"
+        curl -fsSL "$GD_RAW/$rel" -o "$dest" || return 1
     fi
 }
 
@@ -632,7 +838,7 @@ gd_source_lib() {
         return
     fi
     mkdir -p "$GD_TMP/lib"
-    gd_fetch "lib/$name.sh" "$GD_TMP/lib/$name.sh" || gd_die "Die Datei lib/$name.sh konnte nicht geladen werden."
+    gd_fetch "lib/$name.sh" "$GD_TMP/lib/$name.sh" || gd_die "Die Datei lib/$name.sh konnte nicht geladen werden (Internetverbindung prüfen)."
     # shellcheck disable=SC1090
     . "$GD_TMP/lib/$name.sh"
 }
@@ -643,7 +849,7 @@ gd_run() {
     local script="$1" target="$GD_TMP/run-$1"
     shift
     if ! gd_fetch "$script" "$target"; then
-        gd_msg "Fehler" "Das Skript $script konnte nicht geladen werden. Prüfe die Internetverbindung." 9 70
+        gd_msg "Fehler" "Das Skript $script konnte nicht geladen werden. Prüfe die Internetverbindung (Details im Log)." 10 70
         return 1
     fi
     GD_LIB_DIR="${GD_LIB_DIR:-}" GD_LOCAL_DIR="${GD_LOCAL_DIR:-}" GD_BRANCH="$GD_BRANCH" \

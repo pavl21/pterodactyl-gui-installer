@@ -12,13 +12,33 @@ sudo bash -c "$(curl -sSL https://setup.germandactyl.de/)"
 
 Ist Pterodactyl bereits installiert, öffnet sich stattdessen die Verwaltung. Dort findest du Hilfe & Analyse, Updates, Backups, Wings und Ports, Blueprint, phpMyAdmin, Database-Host, Firewall, fail2ban, SSH-Loginseite, Swap und die Deinstallation.
 
-Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germandactyl` bzw. kurz `gmd` (nur, wenn es auf dem Server noch keinen Befehl `gmd` gibt).
+Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germandactyl` bzw. kurz `gmd` oder `gd` (`gmd` und `gd` nur, wenn es auf dem Server noch keinen gleichnamigen Befehl gibt).
+
+## Kurzbefehle
+
+Für häufige Aufgaben musst du das Menü nicht öffnen. Alle Befehle funktionieren auch mit `germandactyl` und `gd`, etwa `germandactyl update panel`.
+
+| Befehl | Was passiert |
+| --- | --- |
+| `gmd` | Öffnet die Verwaltung |
+| `gmd analyse` | Startet die Analyse mit Dialogen |
+| `gmd analyse --text` | Analyse als reiner Text, ohne Dialoge |
+| `gmd analyse --text --fix` | Analyse als Text und behebt alle automatisch behebbaren Probleme |
+| `gmd backup` | Öffnet die Backup-Verwaltung |
+| `gmd update` | Öffnet das Update-Menü |
+| `gmd update panel` / `wings` / `system` | Aktualisiert direkt das Panel, Wings oder die System-Pakete |
+| `gmd ssl` | Öffnet die SSL-Zertifikatsverwaltung |
+| `gmd wings` | Öffnet die Wings-Verwaltung |
+| `gmd firewall` | Öffnet die Firewall-Verwaltung |
+| `gmd logs` | Zeigt die Logs |
+| `gmd status` | Zeigt die Statuszeile |
+| `gmd hilfe` | Zeigt alle Kurzbefehle |
 
 ## Voraussetzungen
 
-- Debian 11, 12 oder 13 bzw. Ubuntu 22.04, 24.04 oder 26.04 (amd64 oder arm64)
+- Debian 12 oder 13 bzw. Ubuntu 22.04, 24.04 oder 26.04 (amd64 oder arm64)
 - Root-Rechte
-- Eine Domain bzw. Subdomain, deren A-Eintrag auf den Server zeigt. Bei Cloudflare muss der Proxy dafür deaktiviert sein.
+- Eine Domain bzw. Subdomain, deren A-Eintrag auf den Server zeigt. Bei Cloudflare kann der Proxy (orange Wolke) für das Panel an bleiben, wenn du bei der Installation einen Cloudflare API-Token (Berechtigungen Zone:DNS:Edit und Zone:Zone:Read) verwendest – das Zertifikat wird dann per DNS-Challenge ausgestellt. Für Wings muss der Proxy aus sein (DNS only), dafür ist bei aktivem Proxy eine eigene Subdomain nötig.
 
 ## Was wird eingerichtet?
 
@@ -29,7 +49,7 @@ Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germa
   - Sonst kannst du wählen: die neueste Version auf Englisch oder die neueste übersetzte Version.
 - **Wings (optional):**
   - Docker, Wings, eine automatisch angelegte Node, die Konfiguration und ein Portbereich für Gameserver.
-  - Läuft Wings auf einem anderen Server, fügst du nur den Befehl aus dem Panel ein ("Generate Token").
+  - Läuft Wings auf einem anderen Server, fügst du nur den Befehl aus dem Panel ein („Generate Token“).
 - **Absicherung (optional):**
   - UFW-Firewall; dein SSH-Port wird automatisch freigegeben.
   - fail2ban
@@ -46,6 +66,8 @@ Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germa
 
 ## Hinweis
 
-Dies ist ein inoffizielles Projekt. Die Nutzung erfolgt auf eigene Verantwortung. Erstelle vor Updates und Änderungen immer ein Backup, zum Beispiel über die Backup-Verwaltung.
+**Testphase:** GermanDactyl Setup befindet sich noch in der Testphase. Es können jederzeit unerwartete Fehler auftreten, auch bei Funktionen, die bereits stabil wirken. Setze es deshalb zuerst auf einem Testserver ein und erstelle vor Updates und Änderungen immer ein Backup, zum Beispiel über die Backup-Verwaltung. Fehler melde bitte als [Issue](https://github.com/pavl21/pterodactyl-gui-installer/issues).
+
+Dies ist ein inoffizielles Projekt. Die Nutzung erfolgt auf eigene Verantwortung.
 
 Pelican (der Nachfolger von Pterodactyl) kann ebenfalls installiert werden – als Panel mit Wings auf demselben Server oder als reiner Wings-Server für ein Pelican-Panel auf einem anderen Server. Pelican ist noch eine Beta-Version; die Verwaltungsfunktionen (Backups, Blueprint, phpMyAdmin usw.) sind nur für Pterodactyl vorgesehen.

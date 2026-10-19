@@ -23,6 +23,18 @@ gd_uninstall_backup() {
     ls -lhR "$GD_BACKUP_ROOT"
 }
 
+gd_uninstall_dbhost_firewall() {
+    # Firewall-Regeln des Database-Hosts (database-host-config.sh) entfernen, erkennbar am Kommentar.
+    # Von hinten nach vorn löschen, weil sich die Nummern nach jedem Löschen verschieben.
+    local n
+    gd_ufw_active || return 0
+    for n in $(LC_ALL=C ufw status numbered | grep -E '# MariaDB \((Gameserver-Container|Panel|Database-Host)\)' \
+        | grep -oE '^\[ *[0-9]+\]' | tr -d '[] ' | sort -rn); do
+        ufw --force delete "$n" >/dev/null 2>&1
+    done
+    return 0
+}
+
 gd_uninstall_panel() {
     local db dbuser dbhost
     db="$(gd_panel_env DB_DATABASE)"
@@ -58,6 +70,8 @@ gd_uninstall_panel() {
         rm -f /etc/mysql/mariadb.conf.d/99-germandactyl.cnf
         systemctl restart mariadb 2>/dev/null || systemctl restart mysql 2>/dev/null
     fi
+    # Firewall-Regeln für Port 3306 (Database-Host) entfernen
+    gd_uninstall_dbhost_firewall
     # phpMyAdmin (nur wenn von GermanDactyl Setup installiert)
     if grep -qs "GermanDactyl" /usr/share/phpmyadmin/config.inc.php; then
         rm -rf /usr/share/phpmyadmin

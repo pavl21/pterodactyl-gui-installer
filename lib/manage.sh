@@ -1,11 +1,12 @@
 #!/bin/bash
 # Pfad: lib/manage.sh
-# Verwaltung: Hauptmenü mit Statuszeile und Themen-Gruppen, Kurzbefehle (germandactyl/gmd),
-# Ports freigeben, System-Updates, Firewall, fail2ban, automatische Updates, Logs und Support-Paket.
-# Benötigt: common, security, panel, wings, blueprint, backup, autobackup, uninstall
+# Verwaltung: Hauptmenü mit Statuszeile und Themen-Gruppen, Kurzbefehle (germandactyl/gmd/gd) mit Unterbefehlen,
+# Ports freigeben, System-Updates, Firewall, fail2ban, automatische Sicherheitsupdates, Logs und Support-Paket.
+# Benötigt: common, security, panel, wings, blueprint, backup, autobackup, autoupdate, uninstall
 
 GD_SHORTCUT="/usr/local/bin/germandactyl"
 GD_SHORTCUT_SHORT="/usr/local/bin/gmd"
+GD_SHORTCUT_GD="/usr/local/bin/gd"
 
 # ---------------------------------------------------------------------------
 # Kurzbefehle
@@ -18,42 +19,237 @@ gd_panel_php_fpm() {
     echo "$f"
 }
 
-gd_shortcut_install() {
-    # "germandactyl" startet immer die aktuelle Version; "gmd" nur, wenn es den Befehl noch nicht gibt
-    cat > "$GD_SHORTCUT" <<EOF
+gd_shortcut_body() {
+    # gd_shortcut_body <pfad> <kurzbefehl|update> – schreibt ein Startskript auf die Standardausgabe.
+    # Kurzbefehl (germandactyl) und Update-Skript (germandactyl-update, für den Timer der automatischen Updates)
+    # teilen sich denselben Rumpf: Branch und Repository werden beim Anlegen eingetragen. Das Skript lädt installer.sh
+    # (fehlt der Branch, von main) und startet es. Das Update-Skript setzt zusätzlich GD_HEADLESS=1, übergibt --auto-update und meldet
+    # Fehler (ohne Terminal) in setup.conf, damit sie in der Statuszeile und im Login-Hinweis erscheinen.
+    # Argumente des Aufrufs (z. B. "gmd backup") gehen unverändert an installer.sh (dort: gd_dispatch); beim
+    # Update-Skript steht --auto-update davor.
+    local path="$1" kind="$2" q_branch q_repo
+    q_branch="$(printf '%q' "${GD_BRANCH}")"
+    q_repo="$(printf '%q' "${GD_REPO}")"
+    cat <<EOF
 #!/bin/bash
-# Pfad: $GD_SHORTCUT – angelegt von GermanDactyl Setup
+# Pfad: $path – angelegt von GermanDactyl Setup
+EOF
+    if [ "$kind" = update ]; then
+        cat <<'EOF'
+# Geplantes Update von Panel und Wings (Timer germandactyl-update.timer, Einstellungen: auto-update.conf).
+# Lädt wie der Kurzbefehl germandactyl installer.sh und startet es mit --auto-update.
+EOF
+    else
+        cat <<'EOF'
 # Startet die jeweils aktuelle Version von GermanDactyl Setup (Installation und Verwaltung).
-if [ "\$(id -u)" != "0" ]; then exec sudo "\$0" "\$@"; fi
-branch="${GD_BRANCH}"
-script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/\${branch}/installer.sh")" || {
+EOF
+    fi
+    cat <<EOF
+branch=${q_branch}
+repo=${q_repo}
+EOF
+    if [ "$kind" = update ]; then
+        cat <<'EOF'
+export GD_HEADLESS=1
+args=(--auto-update)
+LOG=/var/log/germandactyl-setup/auto-update.log
+STATE=/etc/germandactyl/setup.conf
+report() {
+    # report <ergebnis> <hinweis> – ohne Terminal: ins Log und in setup.conf (für Statuszeile und Login-Hinweis)
+    mkdir -p "$(dirname "$LOG")" /etc/germandactyl
+    echo "[$(date '+%F %T')] $2" >> "$LOG"
+    touch "$STATE"; chmod 600 "$STATE"
+    sed -i -e '/^LAST_UPDATE_RESULT=/d' -e '/^LAST_UPDATE_TIME=/d' -e '/^LAST_UPDATE_NOTE=/d' -e '/^LAST_UPDATE_BACKUP=/d' "$STATE" 2>/dev/null
+    printf 'LAST_UPDATE_RESULT=%q\nLAST_UPDATE_TIME=%q\nLAST_UPDATE_NOTE=%q\n' "$1" "$(date '+%F %T')" "$2" >> "$STATE"
+}
+EOF
+    else
+        cat <<'EOF'
+args=()
+report() { :; }
+EOF
+    fi
+    cat <<'EOF'
+if [ "$(id -u)" != "0" ]; then exec sudo "$0" "$@"; fi
+
+script="$(curl -fsSL "https://raw.githubusercontent.com/$repo/$branch/installer.sh")" || {
     # Branch existiert nicht mehr (z. B. Test-Branch gelöscht) -> auf main zurückfallen
     branch="main"
-    script="\$(curl -fsSL "https://raw.githubusercontent.com/${GD_REPO}/main/installer.sh")"
-} || { echo "GermanDactyl Setup konnte nicht geladen werden. Prüfe die Internetverbindung."; exit 1; }
-GD_BRANCH="\$branch" exec bash -c "\$script"
+    script="$(curl -fsSL "https://raw.githubusercontent.com/$repo/main/installer.sh")"
+} || { echo "GermanDactyl Setup konnte nicht geladen werden. Prüfe die Internetverbindung."; report uebersprungen "GermanDactyl Setup konnte nicht geladen werden (Internetverbindung?)"; exit 1; }
+# (bash -c: das erste Argument nach dem Skript ist $0, danach folgen --auto-update und die Argumente des Aufrufs)
+GD_BRANCH="$branch" exec bash -c "$script" germandactyl "${args[@]}" "$@"
 EOF
+}
+
+gd_shortcut_install() {
+    # "germandactyl" startet immer die aktuelle Version; "gmd" und "gd" nur, wenn es den Befehl noch nicht gibt.
+    # Ein angelegter Link wird in setup.conf vermerkt (SHORTCUT_GMD / SHORTCUT_GD).
+    gd_shortcut_body "$GD_SHORTCUT" kurzbefehl > "$GD_SHORTCUT"
     chmod 755 "$GD_SHORTCUT"
     if [ ! -e "$GD_SHORTCUT_SHORT" ] && ! command -v gmd >/dev/null 2>&1; then
         ln -s "$GD_SHORTCUT" "$GD_SHORTCUT_SHORT"
         gd_conf_set SHORTCUT_GMD 1
     fi
+    if [ ! -e "$GD_SHORTCUT_GD" ] && ! command -v gd >/dev/null 2>&1; then
+        ln -s "$GD_SHORTCUT" "$GD_SHORTCUT_GD"
+        gd_conf_set SHORTCUT_GD 1
+    fi
     return 0
 }
 
 gd_shortcut_remove() {
-    # "gmd" nur entfernen, wenn es unser Link ist (die setup.conf ist nach der Deinstallation schon gelöscht)
-    if [ -L "$GD_SHORTCUT_SHORT" ] && [ "$(readlink "$GD_SHORTCUT_SHORT")" = "$GD_SHORTCUT" ]; then
-        rm -f "$GD_SHORTCUT_SHORT"
-    fi
+    # "gmd" und "gd" nur entfernen, wenn es unser Link ist (die setup.conf ist nach der Deinstallation schon gelöscht)
+    local link
+    for link in "$GD_SHORTCUT_SHORT" "$GD_SHORTCUT_GD"; do
+        if [ -L "$link" ] && [ "$(readlink "$link")" = "$GD_SHORTCUT" ]; then
+            rm -f "$link"
+        fi
+    done
     rm -f "$GD_SHORTCUT"
     return 0
 }
 
+gd_shortcut_name() {
+    # Kürzester verfügbarer Name unseres Kurzbefehls: gd, sonst gmd, sonst germandactyl
+    if [ "$(readlink "$GD_SHORTCUT_GD" 2>/dev/null)" = "$GD_SHORTCUT" ]; then echo "gd"
+    elif [ "$(readlink "$GD_SHORTCUT_SHORT" 2>/dev/null)" = "$GD_SHORTCUT" ]; then echo "gmd"
+    else echo "germandactyl"; fi
+}
+
 gd_shortcut_hint() {
-    local hint="germandactyl"
-    [ "$(readlink "$GD_SHORTCUT_SHORT" 2>/dev/null)" = "$GD_SHORTCUT" ] && hint="gmd (oder germandactyl)"
-    echo "$hint"
+    local name
+    name="$(gd_shortcut_name)"
+    if [ "$name" = "germandactyl" ]; then echo "germandactyl"; else echo "$name (oder germandactyl)"; fi
+}
+
+gd_shortcut_help_text() {
+    # gd_shortcut_help_text <text|dialog> – Übersicht über Verwaltung und Kurzbefehle.
+    # "text": alle Kurzbefehle auf der Standardausgabe (gmd hilfe). "dialog": kompakte Liste mit Hinweisen als
+    # Dialog "So geht es weiter" (Abschluss der Installation).
+    local mode="${1:-text}" n domain text="" w lines i
+    local cmds=() descs=()
+    n="$(gd_shortcut_name)"
+    domain="${GD_DOMAIN:-$(gd_conf_get PANEL_DOMAIN)}"
+    if [ "$mode" = dialog ]; then
+        cmds=("status" "analyse" "backup" "update" "ssl" "hilfe")
+        descs=("Zustand von Panel, Wings, Backups und Zertifikat" "Analyse (--text: ohne Dialoge, --fix: beheben)" "Backup-Verwaltung" "Updates (panel, wings oder system direkt)" "SSL-Zertifikate prüfen und erneuern" "Alle Kurzbefehle anzeigen")
+    else
+        cmds=("" "analyse" "analyse --text" "analyse --text --fix" "backup" "update" "update panel|wings|system" "ssl" "wings" "firewall" "logs" "status" "hilfe")
+        descs=("Verwaltung öffnen" "Analyse mit Dialogen" "Analyse als Text, ohne Dialoge" "Analyse als Text und behebt Probleme automatisch" "Backup-Verwaltung" "Update-Menü" "Panel, Wings oder System-Pakete direkt aktualisieren" "SSL-Zertifikate" "Wings-Verwaltung" "Firewall" "Logs anzeigen" "Statuszeile als Text ausgeben" "Diese Übersicht")
+    fi
+    [ "$mode" = dialog ] || text+="GermanDactyl Setup – Kurzbefehle"$'\n\n'
+    [ -n "$domain" ] && text+="Panel:       https://${domain}"$'\n'
+    text+="Verwaltung:  $(gd_shortcut_hint)"$'\n\n'
+    if [ "$n" = germandactyl ]; then text+="Kurzbefehle:"$'\n'
+    else text+="Kurzbefehle (statt \"$n\" geht auch germandactyl):"$'\n'; fi
+    w=$(( ${#n} + 28 ))
+    [ "$mode" = dialog ] && w=$(( ${#n} + 9 ))
+    for i in "${!cmds[@]}"; do
+        text+="$(printf '  %-*s %s' "$w" "$n${cmds[$i]:+ ${cmds[$i]}}" "${descs[$i]}")"$'\n'
+    done
+    if [ "$mode" = dialog ]; then
+        text+=$'\n'
+        if [ -x /usr/local/bin/germandactyl-motd ]; then
+            text+="Beim SSH-Login zeigt dir der Login-Hinweis (MOTD), ob ein Backup oder Update fehlgeschlagen ist."$'\n'
+        else
+            text+="Mit der SSH-Loginseite (Verwaltung → Server & Sicherheit) siehst du nach dem Login, ob ein Backup oder Update fehlgeschlagen ist."$'\n'
+        fi
+        text+="Protokolle der Installation und aller Aktionen: ${GD_LOG_DIR}/"
+        lines=$(( $(printf '%s' "$text" | fold -s -w 72 | wc -l) + 7 ))
+        gd_msg "☰ So geht es weiter" "$text" "$lines" 78
+    else
+        printf '%s' "$text"
+    fi
+}
+
+gd_run_plain() {
+    # gd_run_plain <skript.sh> [argumente] – wie gd_run, aber die Eingabe bleibt unverändert (kein /dev/tty): für Aufrufe
+    # ohne Terminal und Dialoge, z. B. "gmd analyse --text" per cron oder "ssh -T"
+    local script="$1" target="$GD_TMP/run-$1"
+    shift
+    if ! gd_fetch "$script" "$target"; then
+        echo "Das Skript $script konnte nicht geladen werden. Prüfe die Internetverbindung (Details im Log: $GD_LOG)." >&2
+        return 1
+    fi
+    GD_LIB_DIR="${GD_LIB_DIR:-}" GD_LOCAL_DIR="${GD_LOCAL_DIR:-}" GD_BRANCH="$GD_BRANCH" \
+        GD_LOG="$GD_LOG" GD_TMP="$GD_TMP" bash "$target" "$@"
+}
+
+gd_dispatch() {
+    # gd_dispatch <befehl> [argumente] – Kurzbefehl mit Unterbefehl (germandactyl|gd|gmd <befehl>, siehe "hilfe"):
+    # springt direkt in einen Bereich der Verwaltung. Danach beendet sich das Skript (der Aufrufer macht "exit"),
+    # es geht nicht ins Hauptmenü zurück. "hilfe" und "status" laufen als reiner Text ohne whiptail; alle anderen
+    # Befehle brauchen eine vorhandene Installation.
+    # Rückgabe: 0 ok, 1 Fehler oder keine (fertige) Installation, 2 unbekannter Befehl oder ungültige Argumente.
+    local cmd="${1:-}" interactive=true installed=false rc=0
+    [ $# -gt 0 ] && shift
+    case "$cmd${*:+ $*}" in
+        hilfe|help|-h|--help) gd_shortcut_help_text text; return 0 ;;
+        status) interactive=false ;;
+        "analyse --text"|"analyse --text --fix") interactive=false ;;
+        analyse|backup|update|ssl|wings|firewall|logs) ;;
+        "update panel"|"update wings"|"update system") ;;
+        *)
+            { echo "Unbekannter Befehl oder ungültige Argumente: $cmd${*:+ $*}"; echo; gd_shortcut_help_text text; } >&2
+            return 2 ;;
+    esac
+
+    { [ -d "$PTERO_DIR" ] || [ -f /etc/pterodactyl/config.yml ]; } && installed=true
+    if [ "$cmd" != status ]; then
+        if ! $installed; then
+            echo "Pterodactyl ist auf diesem Server nicht installiert. Starte 'germandactyl' ohne Argumente für die Installation." >&2
+            return 1
+        fi
+        case "$(gd_conf_get INSTALL_STATE)" in
+            laeuft|panel_fertig)
+                echo "Die Installation ist nicht abgeschlossen. Starte 'germandactyl' ohne Argumente, um sie fortzusetzen." >&2
+                return 1 ;;
+        esac
+    fi
+
+    if $interactive; then
+        # Dialoge brauchen whiptail (fehlt es, richtet gd_prepare_system aus installer.sh die Grundpakete ein)
+        if ! command -v whiptail >/dev/null 2>&1 && declare -F gd_prepare_system >/dev/null; then
+            gd_prepare_system
+        fi
+        command -v whiptail >/dev/null 2>&1 || { echo "whiptail wurde nicht gefunden (apt-get install whiptail)." >&2; return 1; }
+    fi
+    gd_log "Kurzbefehl: $cmd${*:+ $*}"
+    # Wie im Hauptmenü: Kurzbefehl erneuern, damit auch gd bzw. gmd nachgezogen werden
+    $installed && gd_shortcut_install >/dev/null 2>&1
+
+    case "$cmd" in
+        status)
+            gd_collect_status
+            printf '%b\n' "$GD_STATUS" | grep -v '^[[:space:]]*$'   # ohne Panel/Wings bleibt Zeile 1 leer
+            return 0 ;;
+        analyse)
+            if [ "${1:-}" = "--text" ]; then
+                gd_run_plain analyse.sh "$@"; return $?
+            fi
+            gd_run analyse.sh ;;
+        backup) gd_run backup-verwaltung.sh ;;
+        update)
+            case "${1:-}" in
+                panel)
+                    gd_has_panel || { echo "Das Panel ist auf diesem Server nicht installiert." >&2; return 1; }
+                    gd_panel_update && gd_conf_set PANEL_LATEST_TS 0
+                    rc=$? ;;
+                wings)
+                    gd_has_wings || { echo "Wings ist auf diesem Server nicht installiert." >&2; return 1; }
+                    gd_wings_update && gd_conf_set WINGS_LATEST_TS 0
+                    rc=$? ;;
+                system) gd_system_update; rc=$? ;;
+                *) gd_menu_update ;;
+            esac ;;
+        ssl) gd_run certbot-renew-verwaltung.sh ;;
+        wings) gd_run wings-installer.sh ;;
+        firewall) gd_firewall_menu ;;
+        logs) gd_logs_menu ;;
+    esac
+    clear
+    return "$rc"
 }
 
 # ---------------------------------------------------------------------------
@@ -62,9 +258,20 @@ gd_shortcut_hint() {
 gd_has_panel() { [ -f "$PTERO_DIR/artisan" ]; }
 gd_has_wings() { [ -x "$WINGS_BIN" ]; }
 
+gd_manage_wings_version() {
+    # Installierte Wings-Version (z. B. 1.13.2), leer wenn unbekannt
+    "$WINGS_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
+}
+
+gd_status_date() {
+    # gd_status_date "2026-10-19 04:31:07" -> "19.10." (leer bei leerer/ungültiger Angabe)
+    [ -n "$1" ] || return 0
+    date -d "$1" '+%d.%m.' 2>/dev/null
+}
+
 gd_collect_status() {
     # Setzt GD_STATUS (Text für den Menükopf) und GD_PROBLEMS (Anzahl)
-    local line1="" line2="" svc php_fpm days domain code last age usage
+    local line1="" line2="" extra=() svc php_fpm days domain code last age usage res when note frag
     GD_PROBLEMS=0
     domain="$(gd_conf_get PANEL_DOMAIN)"
     php_fpm="$(gd_panel_php_fpm)"
@@ -93,11 +300,24 @@ gd_collect_status() {
     fi
 
     if systemctl is-enabled --quiet germandactyl-backup.timer 2>/dev/null; then
+        # AUTO_BACKUP_LAST_RESULT = laufend|ok|fehler (AUTO_BACKUP_LAST_RUN = Beginn/Ende des letzten Laufs):
+        # Fehler und ein "laufend" älter als 6 Stunden (Abbruch durch Speichermangel/kill) sind Probleme
+        res="$(gd_conf_get AUTO_BACKUP_LAST_RESULT)"
+        when="$(gd_conf_get AUTO_BACKUP_LAST_RUN)"
         last="$(gd_conf_get AUTO_BACKUP_LAST_OK)"
-        if [ -z "$last" ]; then line2+="Backups ⚠ noch keins   "; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+        age=0
+        [ "$res" = "laufend" ] && [ -n "$when" ] && age=$(( $(date +%s) - $(date -d "$when" +%s 2>/dev/null || date +%s) ))
+        if [ "$res" = "fehler" ]; then
+            line2+="Backups ✖ fehlgeschlagen $(gd_status_date "$when")   "; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+        elif [ "$res" = "laufend" ] && [ "$age" -gt 21600 ]; then
+            line2+="Backups ✖ hängt   "; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+        elif [ -z "$last" ]; then
+            if [ "$res" = "laufend" ]; then line2+="Backups ◷ läuft   "
+            else line2+="Backups ⚠ noch keins   "; GD_PROBLEMS=$((GD_PROBLEMS + 1)); fi
         else
             age=$(( ($(date +%s) - $(date -d "$last" +%s)) / 3600 ))
             if [ "$age" -gt 48 ]; then line2+="Backups ✖ vor ${age} Std.   "; GD_PROBLEMS=$((GD_PROBLEMS + 1))
+            elif [ "$res" = "laufend" ]; then line2+="Backups ◷ läuft   "
             else line2+="Backups ✔ $(date -d "$last" '+%d.%m. %H:%M')   "; fi
         fi
     else
@@ -109,25 +329,68 @@ gd_collect_status() {
     if [ "$usage" -ge 90 ]; then line2+="Speicher ✖ ${usage} %"; GD_PROBLEMS=$((GD_PROBLEMS + 1))
     else line2+="Speicher ${usage} %"; fi
 
+    # Ergebnis der letzten Updates (geplant oder von Hand): Fehler zählen als Problem, "übersprungen" ist ein Hinweis
+    for frag in "LAST_UPDATE:Update" "LAST_WINGS_UPDATE:Wings-Update"; do
+        res="$(gd_conf_get "${frag%%:*}_RESULT")"
+        when="$(gd_status_date "$(gd_conf_get "${frag%%:*}_TIME")")"
+        note="$(gd_conf_get "${frag%%:*}_NOTE" | tr -d '\\' | tr '\n' ' ' | cut -c1-40)"
+        case "$res" in
+            fehler) extra+=("${frag#*:} ✖ fehlgeschlagen${when:+ $when}"); GD_PROBLEMS=$((GD_PROBLEMS + 1)) ;;
+            uebersprungen) extra+=("${frag#*:} ⚠ übersprungen${note:+ ($note)}") ;;
+        esac
+    done
+    # Auto-Update nur, wenn in Zeile 2 noch Platz ist (Fenster ist 78 Zeichen breit)
+    if systemctl is-enabled --quiet germandactyl-update.timer 2>/dev/null; then
+        when="$(gd_status_date "$(gd_conf_get AUTO_UPDATE_LAST_RUN)")"
+        frag="Auto-Update ✔${when:+ $when}"
+        # Passt der Zeitpunkt nicht mehr, genügt "Auto-Update ✔"
+        [ $(( ${#line2} + 3 + ${#frag} )) -le 74 ] || frag="Auto-Update ✔"
+        [ $(( ${#line2} + 3 + ${#frag} )) -le 74 ] && line2+="   $frag"
+    fi
+
     GD_STATUS="${line1}\n${line2}"
+    GD_STATUS_LINES=2
+    for frag in "${extra[@]}"; do
+        GD_STATUS+="\n${frag}"
+        GD_STATUS_LINES=$((GD_STATUS_LINES + 1))
+    done
 }
 
 gd_update_check() {
-    # Neueste Panel-Version höchstens einmal am Tag abfragen (Ergebnis wird zwischengespeichert)
-    local ts latest
+    # Neueste Panel- und Wings-Version höchstens einmal am Tag abfragen (Ergebnis wird zwischengespeichert)
+    local ts latest installed
     GD_UPDATE_VERSION=""
-    gd_has_panel || return 0
-    ts="$(gd_conf_get PANEL_LATEST_TS)"
-    if [ -z "$ts" ] || [ $(( $(date +%s) - ts )) -gt 86400 ]; then
-        latest="$(gd_latest_release pterodactyl/panel)"
-        if [ -n "$latest" ]; then
-            gd_conf_set PANEL_LATEST "$latest"
-            gd_conf_set PANEL_LATEST_TS "$(date +%s)"
+    GD_WINGS_UPDATE_VERSION=""
+    if gd_has_panel; then
+        ts="$(gd_conf_get PANEL_LATEST_TS)"
+        if [ -z "$ts" ] || [ $(( $(date +%s) - ts )) -gt 86400 ]; then
+            latest="$(gd_latest_release pterodactyl/panel)"
+            if [ -n "$latest" ]; then
+                gd_conf_set PANEL_LATEST "$latest"
+                gd_conf_set PANEL_LATEST_TS "$(date +%s)"
+            fi
+        fi
+        latest="$(gd_conf_get PANEL_LATEST)"
+        if [ -n "$latest" ] && ! gd_version_ge "$(gd_panel_installed_version)" "$latest"; then
+            GD_UPDATE_VERSION="$latest"
         fi
     fi
-    latest="$(gd_conf_get PANEL_LATEST)"
-    if [ -n "$latest" ] && ! gd_version_ge "$(gd_panel_installed_version)" "$latest"; then
-        GD_UPDATE_VERSION="$latest"
+    if gd_has_wings; then
+        ts="$(gd_conf_get WINGS_LATEST_TS)"
+        if [ -z "$ts" ] || [ $(( $(date +%s) - ts )) -gt 86400 ]; then
+            latest="$(gd_latest_release pterodactyl/wings)"
+            if [ -n "$latest" ]; then
+                # Wings 2.x gehört zu Pterodactyl 2.x, das noch nicht freigegeben ist: nur die Major-Version des Panels anbieten
+                [[ "$latest" == "$GD_PANEL_MAJOR".* ]] || latest=""
+                gd_conf_set WINGS_LATEST "$latest"
+                gd_conf_set WINGS_LATEST_TS "$(date +%s)"
+            fi
+        fi
+        latest="$(gd_conf_get WINGS_LATEST)"
+        installed="$(gd_manage_wings_version)"
+        if [ -n "$latest" ] && [ -n "$installed" ] && ! gd_version_ge "$installed" "$latest"; then
+            GD_WINGS_UPDATE_VERSION="$latest"
+        fi
     fi
     return 0
 }
@@ -138,16 +401,19 @@ gd_update_check() {
 gd_main_menu() {
     local choice items
     gd_shortcut_install >/dev/null 2>&1
+    # Das Skript der geplanten Updates mit der aktuellen Vorlage erneuern (Branch, Repository)
+    gd_autoupdate_enabled && gd_autoupdate_write_script >/dev/null 2>&1
     gd_update_check
     while true; do
         gd_collect_status
         items=()
         [ "$GD_PROBLEMS" -gt 0 ] && items+=("!" "⚠ $( [ "$GD_PROBLEMS" -eq 1 ] && echo "1 Problem" || echo "$GD_PROBLEMS Probleme") gefunden – jetzt prüfen und beheben")
         [ -n "$GD_UPDATE_VERSION" ] && items+=("U" "↑ Update verfügbar: Panel v$GD_UPDATE_VERSION")
+        [ -n "$GD_WINGS_UPDATE_VERSION" ] && items+=("W" "↑ Update verfügbar: Wings v$GD_WINGS_UPDATE_VERSION")
         items+=("1" "✚ Hilfe & Analyse")
         items+=("2" "↑ Aktualisieren (Panel, Wings, System)")
         items+=("3" "↺ Backups")
-        items+=("4" "⇄ Gameserver & Wings (Ports, Swap)")
+        items+=("4" "⇄ Gameserver & Wings (Wings, Ports, Swap)")
         gd_has_panel && items+=("5" "❖ Erweiterungen & Aussehen")
         gd_has_panel && items+=("6" "▦ Datenbanken (phpMyAdmin, DB-Host)")
         items+=("7" "⚙ Server & Sicherheit (Firewall, SSH)")
@@ -155,10 +421,11 @@ gd_main_menu() {
         items+=("8" "✖ Deinstallieren")
         items+=("0" "⊗ Beenden")
 
-        choice=$(whiptail --title "GermanDactyl Verwaltung" --menu "$GD_STATUS" $(( ${#items[@]} / 2 + 10 )) 78 $(( ${#items[@]} / 2 )) "${items[@]}" 3>&1 1>&2 2>&3) || choice=0
+        choice=$(whiptail --title "GermanDactyl Verwaltung" --menu "$GD_STATUS" $(( ${#items[@]} / 2 + 8 + GD_STATUS_LINES )) 78 $(( ${#items[@]} / 2 )) "${items[@]}" 3>&1 1>&2 2>&3) || choice=0
         case "$choice" in
             "!") gd_run analyse.sh ;;
             U) gd_panel_update && gd_conf_set PANEL_LATEST_TS 0 ;;
+            W) gd_wings_update && gd_conf_set WINGS_LATEST_TS 0 ;;
             1) gd_menu_help ;;
             2) gd_menu_update ;;
             3) gd_run backup-verwaltung.sh ;;
@@ -214,15 +481,17 @@ gd_menu_update() {
     while true; do
         items=()
         gd_has_panel && items+=("1" "↑ Panel aktualisieren (installiert: v$(gd_panel_installed_version))")
-        gd_has_wings && items+=("2" "↑ Wings aktualisieren (installiert: v$("$WINGS_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1))")
+        gd_has_wings && items+=("2" "↑ Wings aktualisieren (installiert: v$(gd_manage_wings_version))")
         gd_has_panel && gd_blueprint_installed && items+=("3" "❖ Blueprint aktualisieren")
         items+=("4" "⚙ System-Pakete aktualisieren (apt)")
+        items+=("5" "⏰ Automatische Updates (Panel/Wings)")
         c=$(gd_submenu "↑ Aktualisieren" "Was soll aktualisiert werden?" "${items[@]}") || return
         case "$c" in
             1) gd_panel_update && gd_conf_set PANEL_LATEST_TS 0 ;;
-            2) gd_wings_update ;;
+            2) gd_wings_update && gd_conf_set WINGS_LATEST_TS 0 ;;
             3) gd_blueprint_reapply_dialog ;;
             4) gd_system_update ;;
+            5) gd_autoupdate_menu ;;
             *) return ;;
         esac
     done
@@ -311,7 +580,7 @@ gd_ports_dialog() {
     nodes="$(gd_panel_sql "SELECT id, name FROM nodes ORDER BY id;" 2>/dev/null)"
     count="$(grep -c . <<< "$nodes")"
     if [ "$count" -eq 0 ]; then
-        gd_msg "Keine Node" "Im Panel gibt es noch keine Node. Richte zuerst Wings ein (Gameserver & Wings → Wings installieren)." 10 70
+        gd_msg "Keine Node" "Im Panel gibt es noch keine Node. Richte zuerst Wings ein (Gameserver & Wings → Wings installieren/verwalten)." 10 70
         return
     elif [ "$count" -eq 1 ]; then
         node="$(awk '{print $1}' <<< "$nodes")"
@@ -344,7 +613,7 @@ gd_ports_dialog() {
             ufw allow "${ports/-/:}/tcp" comment 'Gameserver' >> "$GD_LOG" 2>&1
             ufw allow "${ports/-/:}/udp" comment 'Gameserver' >> "$GD_LOG" 2>&1
         fi
-        gd_msg "✔ Ports freigegeben" "Die Ports $ports sind im Panel angelegt$($fw && echo ' und in der Firewall geöffnet').\n\nDu kannst sie jetzt beim Erstellen oder Bearbeiten eines Servers zuweisen." 11 74
+        gd_msg "✔ Ports freigegeben" "Die Ports $ports sind im Panel angelegt$($fw && echo ' und in der Firewall geöffnet').\n\nDu kannst sie jetzt beim Erstellen oder Bearbeiten eines Servers zuweisen.\n\nHinweis: Ports laufender Gameserver öffnet Docker direkt – sie lassen sich in der Firewall nicht schließen. Entferne dazu die Port-Zuweisung im Panel." 15 74
     else
         gd_msg "✖ Fehler" "Die Ports konnten nicht angelegt werden. Details: $GD_LOG" 9 70
     fi
@@ -383,7 +652,7 @@ gd_firewall_open_dialog() {
     gd_ufw_active || {
         gd_msg "Firewall aus" "Die Firewall ist nicht aktiv – alle Ports sind bereits erreichbar." 8 64; return; }
     while true; do
-        ports="$(gd_input "✚ Port öffnen" "Welcher Port oder Bereich soll geöffnet werden? (z. B. 25565 oder 27015-27030)" "" 10 70)" || return
+        ports="$(gd_input "✚ Port öffnen" "Welcher Port oder Bereich soll geöffnet werden? (z. B. 25565 oder 27015-27030)\n\nPorts von Gameservern öffnet Docker beim Start selbst – dafür brauchst du hier keine Regel." "" 12 70)" || return
         ports="$(tr -d '[:space:]' <<< "$ports")"
         [[ "$ports" =~ ^[0-9]{1,5}$ ]] && [ "$ports" -ge 1 ] && [ "$ports" -le 65535 ] && break
         if [[ "$ports" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]] && [ "${BASH_REMATCH[1]}" -ge 1 ] \
@@ -407,7 +676,7 @@ gd_firewall_open_dialog() {
 }
 
 gd_firewall_menu() {
-    local c active rules items=() num rule
+    local c active items=() num rule
     command -v ufw >/dev/null 2>&1 || gd_apt_install ufw >> "$GD_LOG" 2>&1
     while true; do
         active=false; gd_ufw_active && active=true
@@ -418,6 +687,7 @@ gd_firewall_menu() {
             "4" "$($active && echo '⊘ Firewall ausschalten' || echo '✔ Firewall einschalten (SSH wird automatisch freigegeben)')") || return
         case "$c" in
             1) ufw status verbose > "$GD_TMP/ufw.txt" 2>&1
+               printf '\nHinweis: Ports laufender Gameserver öffnet Docker direkt (an UFW vorbei).\nSie stehen hier nicht und lassen sich hier nicht schließen. Entferne dazu die\nPort-Zuweisung im Panel.\n' >> "$GD_TMP/ufw.txt"
                whiptail --title "Firewall-Regeln" --scrolltext --textbox "$GD_TMP/ufw.txt" 24 90 ;;
             2) gd_firewall_open_dialog ;;
             3) $active || { gd_msg "Firewall aus" "Die Firewall ist nicht aktiv." 8 50; continue; }
@@ -427,7 +697,7 @@ gd_firewall_menu() {
                    [ -n "$num" ] && items+=("$num" "$(sed -E 's/^\[ *[0-9]+\] *//' <<< "$line" | tr -s ' ' | cut -c1-60)")
                done < <(LC_ALL=C ufw status numbered)
                [ ${#items[@]} -eq 0 ] && { gd_msg "Keine Regeln" "Es sind keine Regeln vorhanden." 8 50; continue; }
-               num=$(whiptail --title "✖ Port schließen" --menu "Welche Regel soll entfernt werden?" 20 78 10 "${items[@]}" 3>&1 1>&2 2>&3) || continue
+               num=$(whiptail --title "✖ Port schließen" --menu "Welche Regel soll entfernt werden?\n\nHinweis: Ports laufender Gameserver öffnet Docker direkt – sie lassen sich hier nicht schließen. Entferne dazu die Port-Zuweisung im Panel." 23 78 10 "${items[@]}" 3>&1 1>&2 2>&3) || continue
                rule="$(LC_ALL=C ufw status numbered | grep -E "^\[ *$num\]" | sed -E 's/^\[ *[0-9]+\] *//')"
                if { grep -qE "^($(gd_ssh_ports | paste -sd'|' -))(/tcp)?([[:space:]]|$)" <<< "$rule" || grep -qiE '^(OpenSSH|SSH)([[:space:]]|$)' <<< "$rule"; } \
                    && ! gd_yesno "⚠ SSH-Regel" "Diese Regel gibt deinen SSH-Zugang frei. Wenn du sie entfernst, kannst du dich eventuell nicht mehr verbinden!\n\nTrotzdem entfernen?" 11 70; then
@@ -435,7 +705,7 @@ gd_firewall_menu() {
                fi
                ufw --force delete "$num" >> "$GD_LOG" 2>&1 && gd_msg "✔ Entfernt" "Die Regel wurde entfernt." 8 40 ;;
             4) if $active; then
-                   gd_yesno "⊘ Firewall ausschalten" "Danach sind alle Ports des Servers von außen erreichbar. Wirklich ausschalten?" 9 70 && ufw disable >> "$GD_LOG" 2>&1
+                   gd_yesno "⊘ Firewall ausschalten" "Danach sind alle Dienste dieses Servers von außen erreichbar, auch z. B. die Datenbank, wenn sie auf allen Schnittstellen lauscht.\n\nPorts von Gameservern öffnet Docker ohnehin direkt, unabhängig von der Firewall.\n\nWirklich ausschalten?" 14 70 && ufw disable >> "$GD_LOG" 2>&1
                else
                    gd_msg "✔ Firewall einschalten" "Freigegeben werden automatisch: dein SSH-Port, 80, 443$(gd_has_wings && echo ', 8080, 2022 und die Gameserver-Ports')." 9 74
                    clear; echo "Firewall wird eingerichtet..."
@@ -473,7 +743,7 @@ gd_autoupdates_toggle() {
         gd_autoupdates_set 0
         gd_msg "Ausgeschaltet" "Automatische Sicherheitsupdates sind ausgeschaltet." 8 60
     else
-        gd_yesno "↑ Automatische Sicherheitsupdates" "Sicherheitsupdates werden automatisch täglich installiert. Das schließt Sicherheitslücken, ohne dass du daran denken musst.\n\nEinschalten?" 11 70 || return
+        gd_yesno "↑ Automatische Sicherheitsupdates" "Sicherheitsupdates werden automatisch täglich installiert. Das schließt Sicherheitslücken, ohne dass du daran denken musst.\n\nDazu zählen auch Updates für PHP aus der Quelle des Panels. Docker-Pakete gehören bewusst nicht dazu, sonst würden alle Gameserver ungeplant neu starten.\n\nEinschalten?" 15 70 || return
         clear; echo "Wird eingerichtet..."
         gd_unattended_upgrades_setup >> "$GD_LOG" 2>&1 && gd_msg "✔ Eingeschaltet" "Automatische Sicherheitsupdates sind eingeschaltet." 8 60
     fi

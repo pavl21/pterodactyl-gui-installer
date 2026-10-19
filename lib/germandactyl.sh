@@ -5,8 +5,12 @@
 
 GD_PATCH_SERVER="https://patch.germandactyl.de"
 GD_PATCH_REPO="pavl21/GermanDactyl"
-GD_PATCH_FALLBACK="1.12.2"   # Wird nur genutzt, wenn die Patch-Liste nicht abgerufen werden kann
+GD_PATCH_FALLBACK="1.15.1"   # Neueste bekannte Patch-Version – nur Rückfallwert, falls die Patch-Liste nicht abgerufen werden kann
 GD_NODE_MAJOR="22"
+
+# Prüfung der Patches: Die Prüfsumme des Patches wird mit patches/SHA256SUMS aus dem GermanDactyl-Repository
+# (https://github.com/pavl21/GermanDactyl) verglichen.
+GD_PATCH_CHECKSUM_BASE="https://raw.githubusercontent.com/pavl21/GermanDactyl/main/patches"
 
 gd_patch_exists() {
     # gd_patch_exists <version> -> wahr, wenn es einen GermanDactyl-Patch gibt
@@ -18,7 +22,7 @@ gd_patch_exists() {
 gd_patch_latest() {
     # Neueste Version, für die ein Patch existiert (aus dem GermanDactyl-Repository ermittelt)
     local list
-    list="$(curl -fsS --max-time 15 "https://api.github.com/repos/$GD_PATCH_REPO/contents/patches" 2>/dev/null \
+    list="$(gd_curl --max-time 15 --retry 2 "https://api.github.com/repos/$GD_PATCH_REPO/contents/patches" 2>/dev/null \
         | grep -oE '"name": *"v[0-9]+\.[0-9]+\.[0-9]+\.patch"' \
         | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1)"
     if [ -n "$list" ]; then
@@ -44,7 +48,7 @@ gd_choose_panel_version() {
     fi
 
     patch_version="$(gd_patch_latest)"
-    choice=$(whiptail --title "DE GermanDactyl – Versionsauswahl" --menu "Die neueste Pterodactyl-Version ist v$latest. Für diese Version gibt es noch keine deutsche Übersetzung (GermanDactyl).\n\nDie neueste übersetzte Version ist v$patch_version. Welche Version möchtest du installieren?" 18 78 2 \
+    choice=$(whiptail --title "✎ GermanDactyl – Versionsauswahl" --menu "Die neueste Pterodactyl-Version ist v$latest. Für diese Version gibt es noch keine deutsche Übersetzung (GermanDactyl).\n\nDie neueste übersetzte Version ist v$patch_version. Welche Version möchtest du installieren?" 18 78 2 \
         "1" "v$latest – aktuellste Version, Oberfläche auf Englisch" \
         "2" "v$patch_version – ältere Version, Oberfläche auf Deutsch" 3>&1 1>&2 2>&3) || return 1
 
@@ -95,7 +99,9 @@ gd_build_swap_on() {
     GD_BUILD_SWAP=""
     if [ "${total:-0}" -lt 3072 ]; then
         GD_BUILD_SWAP="/swapfile-germandactyl-build"
-        if fallocate -l 2G "$GD_BUILD_SWAP" 2>/dev/null || dd if=/dev/zero of="$GD_BUILD_SWAP" bs=1M count=2048 status=none; then
+        # Datei zuerst mit Rechten 600 anlegen, damit sie zu keinem Zeitpunkt für alle lesbar ist
+        if install -m 600 /dev/null "$GD_BUILD_SWAP" 2>/dev/null \
+            && { fallocate -l 2G "$GD_BUILD_SWAP" 2>/dev/null || dd if=/dev/zero of="$GD_BUILD_SWAP" bs=1M count=2048 status=none; }; then
             chmod 600 "$GD_BUILD_SWAP"
             mkswap "$GD_BUILD_SWAP" >/dev/null && swapon "$GD_BUILD_SWAP" || { rm -f "$GD_BUILD_SWAP"; GD_BUILD_SWAP=""; }
         else
@@ -114,17 +120,113 @@ gd_build_swap_off() {
     return 0
 }
 
+gd_patch_verify() {
+    # gd_patch_verify <version> <patch-datei> – lädt patches/SHA256SUMS und vergleicht die Prüfsumme der
+    # heruntergeladenen Patch-Datei (v<version>.patch) mit dem Eintrag der Liste.
+    # Ohne passende Prüfsumme wird der Patch nicht angewendet (Rückgabe 1, Grund auf stdout).
+    # Der Patch ändert PHP- und JavaScript-Dateien des Panels und läuft anschließend im Build bzw. im Webserver –
+    # eine fehlerhafte oder unvollständige Datei soll deshalb nie angewendet werden.
+    local version="$1" file="$2" dir="$GD_TMP/patch-pruefsumme" name expected actual
+    rm -rf "$dir"
+    mkdir -p "$dir" && chmod 700 "$dir" || return 1
+    if ! gd_curl --proto '=https' --proto-redir '=https' --max-time 30 -o "$dir/SHA256SUMS" "$GD_PATCH_CHECKSUM_BASE/SHA256SUMS"; then
+        echo "Die Prüfsummenliste konnte nicht geladen werden."
+        return 1
+    fi
+    name="v${version}.patch"
+    expected="$(awk -v f="$name" '$2 == f || $2 == "*" f { print $1; exit }' "$dir/SHA256SUMS")"
+    if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "Für $name gibt es keine Prüfsumme."
+        return 1
+    fi
+    actual="$(sha256sum "$file" | cut -d' ' -f1)"
+    if [ "$actual" != "$expected" ]; then
+        echo "Die Prüfsumme von $name stimmt nicht mit der Liste überein."
+        return 1
+    fi
+    echo "Prüfsumme von $name ist gültig ($actual)."
+    return 0
+}
+
 gd_patch_apply() {
-    # gd_patch_apply <version> [panel-pfad] – lädt den Patch und wendet ihn an
-    local version="$1" dir="${2:-$PTERO_DIR}" rejected
+    # gd_patch_apply <version> [panel-pfad] – lädt den Patch, prüft die Prüfsumme und wendet ihn an.
+    # Rückgabe: 0 = Patch (ggf. teilweise) angewendet oder bereits vorhanden, 1 = Download/Prüfung/Anwendung komplett fehlgeschlagen
+    local version="$1" dir="${2:-$PTERO_DIR}"
+    local patch="$GD_TMP/germandactyl.patch" backup_root="/var/backups/germandactyl"
+    local stamp created f old_dir rej_dir out rc rejected n list saved=false
+    local opts=(--ignore-whitespace --ignore-space-change)
     cd "$dir" || return 1
-    curl -fsSL "$GD_PATCH_SERVER/$version" -o "$GD_TMP/germandactyl.patch" || return 1
-    git apply --ignore-whitespace --ignore-space-change -C1 --reject "$GD_TMP/germandactyl.patch"
-    rejected="$(find . -path ./node_modules -prune -o \( -name '*.rej' -o -name '*.orig' \) -print)"
+    gd_curl --proto '=https' --proto-redir '=https' "$GD_PATCH_SERVER/$version" -o "$patch" || return 1
+    # Ungeprüfte Patches werden nie angewendet, eine Option zum Überspringen gibt es bewusst nicht
+    if ! gd_patch_verify "$version" "$patch"; then
+        echo "Prüfsumme des Patches ungültig – wird aus Sicherheitsgründen nicht angewendet"
+        rm -f "$patch"
+        return 1
+    fi
+    stamp="$(date +%Y%m%d-%H%M%S)"
+
+    # Ist der Patch bereits vollständig angewendet (z. B. Reparatur ohne Panel-Update), gibt es nichts zu tun
+    if git apply "${opts[@]}" --reverse --check "$patch" >/dev/null 2>&1; then
+        echo "Die Übersetzung v$version ist bereits angewendet, nichts zu tun."
+        return 0
+    fi
+
+    # Vom Patch neu angelegte Dateien (v. a. resources/lang/de/* und resources/lang/de.json) können noch von
+    # einer früheren Übersetzung stammen. git apply bricht dann mit "already exists in working directory" ab,
+    # ohne eine .rej-Datei anzulegen – die Übersetzung bliebe stillschweigend veraltet. Sie werden daher vorher gesichert.
+    created="$(git apply --summary "$patch" 2>/dev/null | sed -n 's/^ create mode [0-7]* //p')"
+    old_dir="$backup_root/alte-uebersetzung-${version}-${stamp}"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ -e "$f" ] || [ -L "$f" ]; then
+            mkdir -p "$old_dir" && cp -a --parents "$f" "$old_dir/" && rm -f "$f" && saved=true
+            echo "Alte Übersetzungsdatei gesichert und entfernt: $f"
+        fi
+    done <<< "$created"
+    if $saved; then
+        chmod 700 "$backup_root" "$old_dir" 2>/dev/null
+        echo "Sicherung der alten Übersetzung: $old_dir"
+    fi
+
+    # Normaler Fall: Der Patch passt komplett
+    if git apply "${opts[@]}" --check "$patch" >/dev/null 2>&1; then
+        git apply "${opts[@]}" "$patch" || return 1
+        return 0
+    fi
+
+    # Der Patch passt nicht komplett (Addon/Theme installiert oder Panel-Version weicht ab):
+    # passende Teile anwenden, den Rest als .rej-Dateien ablegen
+    out="$(git apply "${opts[@]}" --reject -v "$patch" 2>&1)"
+    rc=$?
+    echo "$out"
+    find . -path ./node_modules -prune -o -name '*.orig' -exec rm -f {} +
+    rejected="$(find . -path ./node_modules -prune -o -name '*.rej' -print | sed 's#^\./##' | sort)"
     if [ -n "$rejected" ]; then
-        echo "Folgende Dateien konnten nicht übersetzt werden (Addon/Theme installiert?):"
-        sed 's#^\./##; s#\.rej$##; s#\.orig$##' <<< "$rejected" | sort -u
-        find . -path ./node_modules -prune -o \( -name '*.rej' -o -name '*.orig' \) -exec rm -f {} +
+        # Rejects nicht löschen, sondern mit Verzeichnisstruktur sichern (zur manuellen Nacharbeit)
+        rej_dir="$backup_root/rejects-${version}-${stamp}"
+        mkdir -p "$rej_dir" && chmod 700 "$backup_root" "$rej_dir" 2>/dev/null
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            mkdir -p "$rej_dir/$(dirname "$f")" && mv -f "$f" "$rej_dir/$f"
+        done <<< "$rejected"
+        rejected="$(sed 's#\.rej$##' <<< "$rejected")"
+        n="$(wc -l <<< "$rejected")"
+        echo "Folgende Dateien konnten nicht (vollständig) übersetzt werden (Addon/Theme installiert?):"
+        echo "$rejected"
+        echo "Die nicht angewendeten Teile liegen in: $rej_dir"
+        list="$(head -n 5 <<< "$rejected" | paste -sd, - | sed 's/,/, /g')"
+        [ "$n" -gt 5 ] && list+=" und $((n - 5)) weitere"
+        GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Die deutsche Übersetzung ist unvollständig: $n Datei(en) konnten nicht übersetzt werden ($list). Sie bleiben teilweise englisch (Details: $rej_dir und Log)."
+        return 0
+    fi
+    if [ $rc -ne 0 ]; then
+        if grep -qE '^Appl(ied|ying) patch' <<< "$out"; then
+            # Teilweise angewendet, ohne dass .rej-Dateien entstanden sind (z. B. Dateien fehlen)
+            GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ Die deutsche Übersetzung ist unvollständig: Einige Dateien konnten nicht übersetzt werden (Details im Log)."
+            return 0
+        fi
+        echo "Die Übersetzung v$version konnte nicht angewendet werden."
+        return 1
     fi
     return 0
 }

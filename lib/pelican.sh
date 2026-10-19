@@ -14,6 +14,7 @@ gd_pelican_packages() {
     gd_apt_install_nostart "php${v}" "php${v}-cli" "php${v}-common" "php${v}-gd" "php${v}-mysql" "php${v}-mbstring" \
         "php${v}-bcmath" "php${v}-xml" "php${v}-fpm" "php${v}-curl" "php${v}-zip" "php${v}-intl" "php${v}-sqlite3" \
         nginx sqlite3 tar unzip git cron certbot python3-certbot-nginx || return 1
+    gd_certbot_timer_enable
     update-alternatives --set php "/usr/bin/php${v}" 2>/dev/null
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
     gd_nginx_disable_default
@@ -23,7 +24,7 @@ gd_pelican_packages() {
 
 gd_pelican_download() {
     mkdir -p "$PELICAN_DIR"
-    curl -fL "https://github.com/pelican/panel/releases/latest/download/panel.tar.gz" -o "$GD_TMP/pelican.tar.gz" || return 1
+    gd_curl "https://github.com/pelican/panel/releases/latest/download/panel.tar.gz" -o "$GD_TMP/pelican.tar.gz" || return 1
     tar -xzf "$GD_TMP/pelican.tar.gz" -C "$PELICAN_DIR" || return 1
     cd "$PELICAN_DIR" && COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction
 }
@@ -31,6 +32,13 @@ gd_pelican_download() {
 gd_pelican_nginx() {
     # gd_pelican_nginx <domain> <http|ssl>
     local domain="$1" mode="$2" sock="/run/php/php${PELICAN_PHP}-fpm.sock"
+    local listen4="listen 443 ssl http2;" listen6="listen [::]:443 ssl http2;" h2=false
+    # Ab nginx 1.25.1 gilt "http2 on;" statt "listen ... http2" (siehe gd_nginx_http2_directive in lib/panel.sh)
+    if gd_nginx_http2_directive; then
+        listen4="listen 443 ssl;"
+        listen6="listen [::]:443 ssl;"
+        h2=true
+    fi
     gd_nginx_backup pelican.conf
     if [ "$mode" = "http" ]; then
         cat > /etc/nginx/sites-available/pelican.conf <<EOF
@@ -58,8 +66,9 @@ $(gd_has_ipv6 && echo "    listen [::]:80;")
 }
 
 server {
-    listen 443 ssl http2;
-$(gd_has_ipv6 && echo "    listen [::]:443 ssl http2;")
+    ${listen4}
+$(gd_has_ipv6 && echo "    ${listen6}")
+$($h2 && echo "    http2 on;")
     server_name ${domain};
     server_tokens off;
 
@@ -122,32 +131,53 @@ gd_pelican_certbot() {
 }
 
 gd_pelican_env_set() {
-    local file="$PELICAN_DIR/.env"
-    if grep -q "^$1=" "$file"; then
-        sed -i "s|^$1=.*|$1=$2|" "$file"
-    else
-        # Die .env endet oft ohne Zeilenumbruch – sonst würde der neue Eintrag an die letzte Zeile angehängt
-        [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ] && echo >> "$file"
-        echo "$1=$2" >> "$file"
+    # gd_pelican_env_set KEY WERT – setzt einen Wert in der .env von Pelican (Sonderzeichen im Wert sind erlaubt,
+    # die Datei behält Rechte 640; siehe gd_dotenv_set in lib/common.sh)
+    gd_dotenv_set "$PELICAN_DIR/.env" "$1" "$2"
+}
+
+gd_pelican_permissions() {
+    # Rechte setzen: Die .env (APP_KEY) und die SQLite-Datenbank (alle Panel-Daten inkl. Passwort-Hashes)
+    # dürfen nur Panel (www-data) und root lesen, das Verzeichnis database/ nur www-data
+    chmod -R 755 "$PELICAN_DIR"/storage/* "$PELICAN_DIR"/bootstrap/cache/ || return 1
+    chown -R www-data:www-data "$PELICAN_DIR" || return 1
+    chmod 640 "$PELICAN_DIR/.env" || return 1
+    chmod 750 "$PELICAN_DIR/database" || return 1
+    if [ -f "$PELICAN_DIR/database/database.sqlite" ]; then
+        chmod 640 "$PELICAN_DIR/database/database.sqlite" || return 1
     fi
+    return 0
 }
 
 gd_pelican_configure() {
     # gd_pelican_configure <domain> <email> <benutzer> <passwort> – ohne Web-Installer (SQLite-Datenbank)
     local domain="$1" email="$2" user="$3" pw="$4"
     cd "$PELICAN_DIR" || return 1
-    php artisan p:environment:setup --no-interaction || return 1
+    # .env von Anfang an nicht für alle Benutzer lesbar anlegen (p:environment:setup würde sie sonst mit 644 kopieren)
+    if [ ! -f .env ]; then
+        (umask 027; cp .env.example .env) || return 1
+        chown www-data:www-data .env
+    fi
+    # Aktuelle Pelican-Versionen verlangen --url (sonst "Application URL is required"); ältere kennen die Option nicht
+    # und würden mit "option does not exist" abbrechen – daher nur übergeben, wenn der Befehl sie definiert
+    local url_opt=()
+    if grep -q -- '--url' app/Console/Commands/Environment/AppSettingsCommand.php 2>/dev/null; then
+        url_opt=(--url="https://${domain}")
+    fi
+    php artisan p:environment:setup --no-interaction "${url_opt[@]}" || return 1
     gd_pelican_env_set APP_URL "https://${domain}"
     gd_pelican_env_set APP_LOCALE de
     gd_pelican_env_set APP_TIMEZONE "$GD_TIMEZONE"
     gd_pelican_env_set DB_CONNECTION sqlite
-    touch database/database.sqlite
+    (umask 027; touch database/database.sqlite)
     php artisan migrate --seed --force || return 1
-    php artisan p:user:make --no-interaction --email="$email" --username="$user" --password="$pw" --admin=1 || return 1
+    # Konto ohne Passwort anlegen und das Passwort danach setzen: "--password=..." wäre für alle lokalen
+    # Benutzer in der Prozessliste sichtbar (siehe gd_user_set_password in lib/panel.sh)
+    php artisan p:user:make --no-interaction --email="$email" --username="$user" --no-password --admin=1 || return 1
+    gd_user_set_password '\App\Models\User' "$user" "$pw" php artisan || return 1
     gd_pelican_env_set APP_INSTALLED true
     php artisan optimize:clear
-    chmod -R 755 storage/* bootstrap/cache/
-    chown -R www-data:www-data "$PELICAN_DIR"
+    gd_pelican_permissions
 }
 
 gd_pelican_services() {

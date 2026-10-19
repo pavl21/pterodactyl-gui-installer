@@ -36,7 +36,7 @@ pelican_update() {
     gd_step 20 "PHP-Pakete werden aktualisiert..." gd_pelican_packages
     gd_step 35 "Neueste Version wird heruntergeladen und Abhängigkeiten installiert..." gd_pelican_download
     # Erst Rechte setzen, dann alle artisan-Befehle als www-data (sonst entstehen root-eigene Cache-/Logdateien)
-    gd_step 65 "Berechtigungen werden gesetzt..." bash -c "chmod -R 755 '$PELICAN_DIR'/storage/* '$PELICAN_DIR'/bootstrap/cache/ && chown -R www-data:www-data '$PELICAN_DIR'"
+    gd_step 65 "Berechtigungen werden gesetzt..." gd_pelican_permissions
     gd_step 70 "Datenbank wird aktualisiert..." bash -c "cd '$PELICAN_DIR' && runuser -u www-data -- env HOME=/tmp sh -c 'php artisan migrate --seed --force && php artisan optimize:clear && php artisan filament:optimize'"
     gd_step 90 "Dienste werden neu gestartet..." bash -c "cd '$PELICAN_DIR' && runuser -u www-data -- env HOME=/tmp php artisan queue:restart; systemctl restart pelican-queue"
     gd_step 95 "Panel wird wieder freigegeben..." gd_pelican_artisan_www up
@@ -58,7 +58,7 @@ if [ -d "$PELICAN_DIR" ] && [ "$(gd_conf_get PELICAN_INSTALL_STATE)" = "panel_fe
     if [ -s "$PELICAN_PENDING" ]; then
         # shellcheck disable=SC1090
         . "$PELICAN_PENDING"
-        whiptail --title "✱ Deine Zugangsdaten" --msgbox "Die letzte Einrichtung wurde nach der Installation des Panels abgebrochen. Pelican selbst ist nutzbar.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nWings richtest du im nächsten Menü unter 'Wings installieren/verwalten' ein." 17 78
+        gd_msg_secret "✱ Deine Zugangsdaten" "Die letzte Einrichtung wurde nach der Installation des Panels abgebrochen. Pelican selbst ist nutzbar.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nWings richtest du im nächsten Menü unter 'Wings installieren/verwalten' ein." 17 78
         rm -f "$PELICAN_PENDING"
     fi
     gd_conf_set PELICAN_INSTALL_STATE fertig
@@ -66,7 +66,7 @@ fi
 
 # Abgebrochene Installation: nicht als "installiert" behandeln, sondern Neuinstallation anbieten
 if [ -d "$PELICAN_DIR" ] && [ "$(gd_conf_get PELICAN_INSTALL_STATE)" = "laeuft" ]; then
-    if gd_yesno "⚠ Abgebrochene Installation" "Eine frühere Installation von Pelican wurde nicht abgeschlossen.\n\nSoll sie entfernt und die Installation neu gestartet werden? Die Pelican-Datenbank im Panel-Ordner wird dabei mit gelöscht." 12 76; then
+    if gd_yesno "⚠ Abgebrochene Installation" "Eine frühere Installation von Pelican wurde nicht abgeschlossen.\n\nSoll sie entfernt und die Installation neu gestartet werden? Die Pelican-Datenbank im Panel-Ordner wird dabei mitgelöscht." 12 76; then
         systemctl disable --now pelican-queue >/dev/null 2>&1
         rm -rf "$PELICAN_DIR"
     else
@@ -102,7 +102,7 @@ GD_ADMIN_USER="admin"
 GD_ADMIN_PASSWORD="$(gd_gen_password 24)"
 
 WITH_WINGS=false
-if gd_yesno "⇄ Wings mitinstallieren?" "Soll Wings auf diesem Server gleich mit installiert und automatisch mit Pelican verbunden werden?" 10 70; then
+if gd_yesno "⇄ Wings mitinstallieren?" "Soll Wings auf diesem Server gleich mitinstalliert und automatisch mit Pelican verbunden werden?" 10 70; then
     WITH_WINGS=true
     while true; do
         GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden? (z. B. 25565-25600)" "$GD_DEFAULT_PORT_RANGE" 10 70)" || exit 0
@@ -130,7 +130,8 @@ gd_step 62 "Pelican wird auf Erreichbarkeit geprüft..." gd_pelican_healthcheck 
 gd_conf_set PELICAN_INSTALL_STATE panel_fertig
 ( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
     "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_PASSWORD" > "$PELICAN_PENDING" )
-GD_FAIL_HINT="Pelican selbst ist fertig installiert: https://${GD_DOMAIN}\nBenutzername: ${GD_ADMIN_USER}   Passwort: ${GD_ADMIN_PASSWORD}"
+# Das Passwort gehört nicht in den Hinweis: er landet als Argument von whiptail in der Prozessliste
+GD_FAIL_HINT="Pelican selbst ist fertig installiert: https://${GD_DOMAIN}\nDie Zugangsdaten werden beim nächsten Start angezeigt (sie liegen unter ${PELICAN_PENDING}, nur für root lesbar)."
 if $WITH_WINGS; then
     gd_step 65 "Docker wird installiert..." gd_docker_install
     gd_step 75 "Wings wird heruntergeladen..." gd_pelican_wings_binary
@@ -161,9 +162,9 @@ rm -f "$PELICAN_PENDING"
 GD_FAIL_HINT=""
 gd_shortcut_install >> "$GD_LOG" 2>&1
 if [ "${GD_SEC_BACKUP:-false}" = "true" ] && [ -s "$GD_AB_PASS" ]; then
-    gd_msg "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+    gd_msg_secret "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
 fi
-whiptail --title "✱ Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}" 15 78
+gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}" 15 78
 
 if $WITH_WINGS; then
     if [ "${WINGS_OK:-false}" = "true" ]; then

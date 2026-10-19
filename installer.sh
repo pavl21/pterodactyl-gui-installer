@@ -6,6 +6,15 @@
 # Das Skript ist eigenständig: Panel und Wings werden nach der offiziellen Dokumentation selbst eingerichtet,
 # es werden keine fremden Installationsskripte mehr ausgeführt.
 
+# Geplantes Update (--auto-update, gestartet vom systemd-Timer über /usr/local/sbin/germandactyl-update):
+# Headless-Modus ohne Terminal und ohne Dialoge. Bei jedem anderen Start gilt er nie (auch nicht aus der Umgebung).
+if [ "${1:-}" = "--auto-update" ]; then
+    GD_HEADLESS=1
+    export GD_HEADLESS
+else
+    unset GD_HEADLESS
+fi
+
 # Das Skript ist nur für Systeme mit apt vorgesehen
 if ! command -v apt-get >/dev/null 2>&1; then
     echo "Abbruch: Für dein System ist dieses Skript nicht vorgesehen. Unterstützt werden Debian und Ubuntu."
@@ -21,19 +30,40 @@ fi
 # ---------------------------------------------------------------------------
 # Bibliotheken laden: aus einem lokalen Checkout oder aus dem Repository
 # ---------------------------------------------------------------------------
-GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup uninstall manage)
+_gd_headless_report() {
+    # _gd_headless_report <ergebnis> <hinweis> – nur im Headless-Modus: Fehler, die vor dem Laden der Bibliotheken
+    # auftreten, landen in setup.conf (Statuszeile und Login-Hinweis) und im Log, weil niemand zuschaut
+    [ "${GD_HEADLESS:-}" = 1 ] || return 0
+    local log="/var/log/germandactyl-setup/auto-update.log" state="/etc/germandactyl/setup.conf"
+    mkdir -p "$(dirname "$log")" /etc/germandactyl
+    echo "[$(date '+%F %T')] $2" >> "$log"
+    touch "$state"; chmod 600 "$state"
+    sed -i -e '/^LAST_UPDATE_RESULT=/d' -e '/^LAST_UPDATE_TIME=/d' -e '/^LAST_UPDATE_NOTE=/d' -e '/^LAST_UPDATE_BACKUP=/d' "$state" 2>/dev/null
+    printf 'LAST_UPDATE_RESULT=%q\nLAST_UPDATE_TIME=%q\nLAST_UPDATE_NOTE=%q\n' "$1" "$(date '+%F %T')" "$2" >> "$state"
+}
+
+GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup autoupdate uninstall manage)
+GD_BRANCH="${GD_BRANCH:-main}"
 _gd_self="${BASH_SOURCE[0]:-}"
+# Lokaler Checkout nur, wenn neben dem Skript lib/common.sh liegt. Startet der Kurzbefehl installer.sh als Datei aus
+# einem Temp-Verzeichnis, liegt dort nur installer.sh, kein lib/ – dann gilt der Zweig "Repository".
 if [ -n "$_gd_self" ] && [ -f "$_gd_self" ] && [ -f "$(dirname "$_gd_self")/lib/common.sh" ]; then
     GD_LOCAL_DIR="$(cd "$(dirname "$_gd_self")" && pwd)"
     GD_LIB_DIR="$GD_LOCAL_DIR/lib"
 else
     GD_LOCAL_DIR=""
     GD_LIB_DIR="$(mktemp -d /tmp/germandactyl-lib.XXXXXX)"
-    trap 'rm -rf "$GD_LIB_DIR"' EXIT
+    # Arbeitsverzeichnis schon jetzt anlegen: common.sh übernimmt es
+    if [ -z "${GD_TMP:-}" ]; then
+        GD_TMP="$(mktemp -d /tmp/germandactyl.XXXXXX)"
+        export GD_TMP
+    fi
+    trap 'rm -rf "$GD_LIB_DIR" "$GD_TMP"' EXIT
+    _gd_raw="https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH}"
     for _gd_lib in "${GD_LIBS[@]}"; do
-        if ! curl -fsSL "https://raw.githubusercontent.com/pavl21/pterodactyl-gui-installer/${GD_BRANCH:-main}/lib/${_gd_lib}.sh" \
-            -o "$GD_LIB_DIR/${_gd_lib}.sh"; then
+        if ! curl -fsSL "$_gd_raw/lib/${_gd_lib}.sh" -o "$GD_LIB_DIR/${_gd_lib}.sh"; then
             echo "Abbruch: Die Datei lib/${_gd_lib}.sh konnte nicht geladen werden. Prüfe die Internetverbindung."
+            _gd_headless_report uebersprungen "Die Datei lib/${_gd_lib}.sh konnte nicht geladen werden (Internetverbindung?)"
             exit 1
         fi
     done
@@ -43,24 +73,33 @@ for _gd_lib in "${GD_LIBS[@]}"; do
     # shellcheck disable=SC1090
     . "$GD_LIB_DIR/${_gd_lib}.sh"
 done
-# Temporäre Dateien und heruntergeladene Bibliotheken beim Beenden entfernen
-trap 'rm -rf "$GD_TMP"; [ -z "$GD_LOCAL_DIR" ] && rm -rf "$GD_LIB_DIR"' EXIT
+# Aufräumen beim Beenden und bei Abbruch (Strg+C, SSH-Verbindung getrennt): temporäre Dateien, heruntergeladene
+# Bibliotheken, eine ggf. angelegte policy-rc.d und die temporäre Swap-Datei
+trap gd_cleanup EXIT
+trap 'gd_cleanup; exit 130' INT HUP TERM
 
 # ---------------------------------------------------------------------------
 # Vorbereitung
 # ---------------------------------------------------------------------------
 gd_spinner() {
-    # gd_spinner <pid> "Text" – einfache Ladeanimation, solange der Prozess läuft
-    local pid="$1" msg="$2" chars='|/-\' i=0
+    # gd_spinner <pid> "Text" – einfache Ladeanimation, solange der Prozess läuft. Wartet apt auf einen anderen
+    # Prozess (gd_wait_for_apt), steht dessen Meldung statt des Standardtexts da.
+    local pid="$1" msg="$2" chars='|/-\' i=0 shown
     while kill -0 "$pid" 2>/dev/null; do
-        printf '\r [%c]  %s' "${chars:i++%4:1}" "$msg"
+        shown="$msg"
+        [ -s "$GD_TMP/apt-wait.msg" ] && shown="$(head -n1 "$GD_TMP/apt-wait.msg" 2>/dev/null)"
+        printf '\r\033[K [%c]  %s' "${chars:i++%4:1}" "$shown"
         sleep 0.3
     done
-    printf '\r%*s\r' $((${#msg} + 8)) ''
+    printf '\r\033[K'
 }
 
 gd_prepare_system() {
     gd_status "Vorbereitung: Benötigte Grundpakete werden installiert..."
+    # Frisch gestartete Server spielen oft sofort Updates ein (unattended-upgrades) und sperren dabei apt. Die täglichen
+    # apt-Zeitgeber werden für die Installation angehalten (nur gestoppt, nicht deaktiviert); gd_cleanup startet sie
+    # beim Beenden wieder. Ein bereits laufender Update-Prozess wird in gd_wait_for_apt abgewartet.
+    gd_apt_timers_stop
     (
         dpkg --configure -a
         gd_apt_update; gd_apt_install whiptail curl dnsutils ca-certificates gnupg lsb-release jq iproute2 psmisc tar
@@ -78,14 +117,22 @@ gd_prepare_system() {
 }
 
 gd_check_environment() {
+    # IPv4: Pterodactyl, GitHub und Let's Encrypt benötigen eine IPv4-Verbindung (reine IPv6-Server scheitern sonst
+    # später an irgendeinem Download). Ohne das Programm "ip" lässt sich das nicht prüfen – dann wird nichts beanstandet.
+    if command -v ip >/dev/null 2>&1 && ! gd_has_ipv4_route; then
+        gd_die "Dieser Server hat keine IPv4-Verbindung. Pterodactyl, GitHub und Let's Encrypt benötigen IPv4 (NAT64/DNS64 einrichten)."
+    fi
+
     # Betriebssystem
     if ! gd_os_supported; then
         gd_warn_colors_on
-        if ! gd_yesno "Nicht getestetes Betriebssystem" "Dein System ($GD_OS_NAME) wurde mit diesem Skript nicht getestet.\n\nGetestet sind: Debian 11, 12, 13 und Ubuntu 22.04, 24.04, 26.04.\n\nMöchtest du trotzdem fortfahren?" 14 70; then
+        if ! gd_yesno "Nicht getestetes Betriebssystem" "Dein System ($GD_OS_NAME) wurde mit diesem Skript nicht getestet.\n\nGetestet sind: Debian 12, 13 und Ubuntu 22.04, 24.04, 26.04.\n\nMöchtest du trotzdem fortfahren?" 14 70; then
             gd_warn_colors_off
             clear; echo "Die Installation wurde abgebrochen."; exit 0
         fi
         gd_warn_colors_off
+    elif [ "${GD_OS_UNTESTED:-false}" = true ]; then
+        gd_msg "Neueres Betriebssystem – nicht getestet" "Dein System ($GD_OS_NAME) ist neuer als die getesteten Versionen (Debian 12, 13 und Ubuntu 22.04, 24.04, 26.04) und wurde mit diesem Skript nicht getestet.\n\nDie Installation wird fortgesetzt. Fehlt für dein System eine Paketquelle (z. B. für PHP oder Docker), bricht sie mit einer entsprechenden Meldung ab." 13 72
     fi
 
     # CPU-Architektur: Pterodactyl unterstützt amd64 und arm64
@@ -97,6 +144,32 @@ gd_check_environment() {
             gd_msg "Nicht unterstützte CPU-Architektur" "Die CPU-Architektur '$(uname -m)' wird von Pterodactyl nicht unterstützt (nur amd64 und arm64). Die Installation wird abgebrochen." 10 70
             clear; exit 1 ;;
     esac
+
+    # Systemzeit: Ohne synchronisierte Uhr scheitern Zertifikate (Let's Encrypt) und apt-Updates.
+    # Nur bei einer eindeutigen Antwort ("no") eingreifen; in Containern ohne systemd liefert timedatectl nichts.
+    if command -v timedatectl >/dev/null 2>&1 && [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "no" ]; then
+        gd_log "Systemzeit nicht per NTP synchronisiert – systemd-timesyncd wird aktiviert"
+        systemctl enable --now systemd-timesyncd >> "$GD_LOG" 2>&1
+        for _ in 1 2 3 4 5; do
+            [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "yes" ] && break
+            sleep 2
+        done
+        if [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" != "yes" ]; then
+            gd_msg "Systemzeit nicht synchronisiert" "Die Uhr dieses Servers ist nicht per NTP synchronisiert (aktuelle Zeit: $(date '+%d.%m.%Y %H:%M:%S %Z')). Ich habe versucht, die Zeitsynchronisierung (systemd-timesyncd) zu aktivieren.\n\nGeht die Uhr falsch, scheitern das SSL-Zertifikat (Let's Encrypt) und Paket-Downloads. Prüfe nach der Installation mit 'timedatectl', ob die Zeit stimmt." 14 76
+        fi
+    fi
+
+    # Freier Speicherplatz auf /: Panel, Docker-Images und Gameserver brauchen Platz
+    local free_mb
+    free_mb="$(df -Pm / 2>/dev/null | awk 'NR==2{print $4}')"
+    if [[ "$free_mb" =~ ^[0-9]+$ ]] && [ "$free_mb" -lt 8000 ]; then
+        gd_warn_colors_on
+        if ! gd_yesno "⚠ Wenig freier Speicherplatz" "Auf '/' sind nur noch ${free_mb} MB frei. Für Panel, Docker-Images und Gameserver werden mindestens 8000 MB (8 GB) empfohlen – die Installation kann sonst mittendrin an Speichermangel scheitern.\n\nMöchtest du trotzdem fortfahren?" 13 74; then
+            gd_warn_colors_off
+            clear; echo "Die Installation wurde abgebrochen (zu wenig freier Speicherplatz: ${free_mb} MB)."; exit 0
+        fi
+        gd_warn_colors_off
+    fi
 
     # Heimnetz / NAT
     local local_ip
@@ -121,16 +194,58 @@ gd_check_environment() {
             clear; echo "Die Installation wurde abgebrochen (Port 80/443 belegt: ${blocker})."; exit 1
         fi
     fi
+
+    # Hinweis (kein Abbruch): Eine abreißende SSH-Verbindung unterbricht die Installation. In tmux/screen läuft sie weiter.
+    if [ -z "${TMUX:-}" ] && [ -z "${STY:-}" ] && [ -n "${SSH_CONNECTION:-}" ]; then
+        gd_msg "Tipp: Stabile Verbindung" "Tipp: Die Installation dauert 5 bis 20 Minuten. Bricht die SSH-Verbindung ab, wird sie unterbrochen. Starte das Skript bei instabiler Verbindung in 'tmux' oder 'screen'." 11 72
+    fi
 }
 
 # ---------------------------------------------------------------------------
 # Neuinstallation
 # ---------------------------------------------------------------------------
 gd_show_credentials() {
-    whiptail --title "✱ Deine Zugangsdaten" --msgbox "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
+    # gd_msg_secret statt whiptail --msgbox: Das Passwort darf nicht als Argument in der Prozessliste stehen
+    gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
 }
 
 GD_PENDING_CREDENTIALS="/etc/germandactyl/zugangsdaten-ausstehend"
+
+gd_install_opts_save() {
+    # Die gewählten Optionen der Installation in setup.conf (INSTALL_OPTS) sichern, damit gd_resume_install nach einem
+    # Abbruch dieselben Schritte (Absicherung, Portbereich ...) ohne neue Rückfragen ausführen kann. Alle Werte sind
+    # einfache Wörter (true/false, Domain, Portbereich, Verfahren) ohne Leerzeichen.
+    gd_conf_set INSTALL_OPTS "GD_SEC_UFW=${GD_SEC_UFW:-false} GD_SEC_FAIL2BAN=${GD_SEC_FAIL2BAN:-false} GD_SEC_UPDATES=${GD_SEC_UPDATES:-false} GD_SEC_BACKUP=${GD_SEC_BACKUP:-false} GD_PORT_RANGE=${GD_PORT_RANGE:-} GD_WINGS_FQDN=${GD_WINGS_FQDN:-} GD_SSL_METHOD=${GD_SSL_METHOD:-webroot}"
+}
+
+# shellcheck disable=SC2034  # die Optionen werden von gd_security_steps und gd_resume_install gelesen
+gd_install_opts_load() {
+    # Liest INSTALL_OPTS und setzt die Variablen wieder. Nur bekannte Namen und unkritische Zeichen werden übernommen
+    # (kein eval). Rückgabe 1, wenn nichts gespeichert ist.
+    local opts kv val
+    opts="$(gd_conf_get INSTALL_OPTS)"
+    [ -n "$opts" ] || return 1
+    for kv in $opts; do
+        val="${kv#*=}"
+        [[ "$val" =~ ^[A-Za-z0-9._:-]*$ ]] || continue
+        case "${kv%%=*}" in
+            GD_SEC_UFW) GD_SEC_UFW="$val" ;;
+            GD_SEC_FAIL2BAN) GD_SEC_FAIL2BAN="$val" ;;
+            GD_SEC_UPDATES) GD_SEC_UPDATES="$val" ;;
+            GD_SEC_BACKUP) GD_SEC_BACKUP="$val" ;;
+            GD_PORT_RANGE) GD_PORT_RANGE="$val" ;;
+            GD_WINGS_FQDN) GD_WINGS_FQDN="$val" ;;
+            GD_SSL_METHOD) GD_SSL_METHOD="$val" ;;
+        esac
+    done
+    return 0
+}
+
+gd_install_opts_clear() {
+    # Nach abgeschlossener Installation werden die gesicherten Optionen nicht mehr gebraucht
+    [ -f "$GD_CONF_FILE" ] && sed -i '/^INSTALL_OPTS=/d' "$GD_CONF_FILE"
+    return 0
+}
 
 gd_pending_credentials_save() {
     # Zugangsdaten zwischenspeichern (nur root), bis sie am Ende angezeigt wurden
@@ -140,30 +255,61 @@ gd_pending_credentials_save() {
 }
 
 gd_resume_install() {
-    # Panel ist fertig, ein späterer Schritt (Wings oder Absicherung) wurde nicht abgeschlossen
-    local mode text
+    # Panel ist fertig, ein späterer Schritt (Wings oder Absicherung) wurde nicht abgeschlossen.
+    # Die Absicherung (Firewall, fail2ban, Updates, Backups) wird mit den gesicherten Optionen (INSTALL_OPTS) nachgeholt;
+    # die Schritte sind wiederholbar. Fehlt die Sicherung der Optionen (ältere Installation), bleibt es beim Hinweis.
+    local mode text with_wings=false wings_missing=false have_opts=false v done_text
     mode="$(gd_conf_get INSTALL_MODE)"
-    if [ "$mode" = "panel_wings" ] && [ ! -f /etc/pterodactyl/config.yml ]; then
+    gd_install_opts_load && have_opts=true
+    [ "$mode" = "panel_wings" ] && with_wings=true
+    if $with_wings && [ ! -f "$WINGS_CONFIG" ]; then
+        wings_missing=true
         text="Dein Panel ist installiert, aber die Einrichtung von Wings wurde nicht abgeschlossen.\n\nSoll Wings jetzt fertig eingerichtet werden? Das Panel bleibt dabei unverändert."
+    elif $have_opts; then
+        text="Dein Panel ist installiert, aber die letzten Schritte (Absicherung: Firewall, fail2ban, automatische Updates, Backups) wurden nicht abgeschlossen.\n\nSie werden jetzt mit den Einstellungen deiner Installation nachgeholt."
     else
         text="Dein Panel ist installiert, aber die letzten Schritte (z. B. Absicherung) wurden nicht abgeschlossen.\n\nFirewall, fail2ban, automatische Updates und Backups kannst du in der Verwaltung unter 'Server & Sicherheit' bzw. 'Backups' einrichten."
-        mode="panel"
+        with_wings=false
     fi
     if [ -s "$GD_PENDING_CREDENTIALS" ]; then
         # shellcheck disable=SC1090
         . "$GD_PENDING_CREDENTIALS"
         gd_show_credentials
     fi
-    if [ "$mode" = "panel_wings" ]; then
+    if $wings_missing; then
         gd_yesno "⇄ Einrichtung fortsetzen" "$text" 13 76 || return 0
-        gd_run wings-installer.sh
-        [ -f /etc/pterodactyl/config.yml ] || return 0
+        # Erfolg gilt nur, wenn das Skript sauber endet UND Wings läuft: erst dann wird die Installation als fertig markiert
+        if ! gd_run wings-installer.sh || [ ! -f "$WINGS_CONFIG" ] || ! systemctl is-active --quiet wings; then
+            gd_msg "✖ Wings ist nicht eingerichtet" "Die Einrichtung von Wings wurde nicht abgeschlossen oder Wings läuft nicht (Details im Log: $GD_LOG).\n\nDie Installation bleibt unvollständig. Starte das Skript erneut, um sie fortzusetzen." 12 76
+            return 0
+        fi
+        # Domain und Portbereich so übernehmen, wie sie im Wings-Skript gewählt wurden
+        v="$(gd_conf_get WINGS_PORT_RANGE)"; [ -n "$v" ] && GD_PORT_RANGE="$v"
+        v="$(gd_conf_get WINGS_FQDN)"; [ -n "$v" ] && GD_WINGS_FQDN="$v"
     else
         gd_msg "⇄ Einrichtung fortsetzen" "$text" 13 76
     fi
+    if $have_opts; then
+        # Wie in gd_fresh_install: GD_FAIL_HINT erinnert daran, dass das Panel selbst fertig ist
+        GD_FAIL_HINT="Das Panel selbst ist fertig installiert.\nStarte das Skript erneut, um die Einrichtung fortzusetzen."
+        gd_gauge_open "✚ Einrichtung wird fortgesetzt" "Absicherung wird vorbereitet..."
+        gd_security_steps 20 "$with_wings" "${GD_PORT_RANGE:-}"
+        gd_progress 100 "Einrichtung abgeschlossen."
+        gd_gauge_close
+        GD_FAIL_HINT=""
+    fi
     gd_conf_set INSTALL_STATE fertig
+    gd_install_opts_clear
     rm -f "$GD_PENDING_CREDENTIALS"
     gd_shortcut_install >> "$GD_LOG" 2>&1
+    if $have_opts; then
+        if [ "${GD_SEC_BACKUP:-false}" = true ] && [ -s "$GD_AB_PASS" ]; then
+            gd_msg_secret "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+        fi
+        done_text="Die Einrichtung wurde abgeschlossen."
+        [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
+        gd_msg "✔ Einrichtung abgeschlossen" "$done_text" 14 78
+    fi
 }
 
 gd_save_credentials() {
@@ -207,6 +353,9 @@ gd_fresh_install() {
     # --- Eingaben -------------------------------------------------------------
     GD_DOMAIN="$(gd_ask_domain "⌂ Domain für das Panel" "Gib die Domain (FQDN) ein, unter der das Panel erreichbar sein soll, z. B. panel.deinedomain.de.\n\nDer DNS-Eintrag (A-Eintrag) muss bereits auf diesen Server zeigen, das wird im nächsten Schritt geprüft.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
 
+    # Läuft die Domain über den Cloudflare-Proxy, gibt es die Wahl: Proxy ausschalten oder DNS-01 per API-Token
+    gd_ssl_method_ask "$GD_DOMAIN" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+
     GD_EMAIL="$(gd_ask_email "✉ E-Mail-Adresse" "Gib deine E-Mail-Adresse ein. Sie wird für das SSL-Zertifikat (Let's Encrypt) und dein Administrator-Konto verwendet.\n\nMit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
 
     while true; do
@@ -224,8 +373,17 @@ gd_fresh_install() {
 
     if $with_wings; then
         GD_WINGS_FQDN="$GD_DOMAIN"
-        if ! gd_yesno "⇄ Domain für Wings" "Wings (die Verbindung zu deinen Gameservern) nutzt standardmäßig dieselbe Domain wie das Panel:\n\n${GD_DOMAIN} (Port 8080)\n\nDas ist die einfachste Variante. Möchtest du diese Domain verwenden?\n\nBei 'Nein' kannst du eine eigene Subdomain angeben (z. B. node1.deinedomain.de)." 15 76; then
-            GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss ebenfalls auf diesen Server zeigen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        if [ "$GD_SSL_METHOD" = "cloudflare" ]; then
+            # Das Panel bleibt hinter dem Cloudflare-Proxy – Wings darf das nicht: Die Verbindung zu Wings (Port 8080)
+            # und SFTP (Port 2022) laufen nicht über den Proxy. Deshalb ist eine eigene Subdomain Pflicht.
+            gd_msg "⇄ Eigene Domain für Wings" "Dein Panel (${GD_DOMAIN}) bleibt hinter dem Cloudflare-Proxy. Die Verbindung zu Wings (Port 8080) und SFTP (Port 2022) laufen nicht über den Cloudflare-Proxy.\n\nWings braucht deshalb eine eigene Subdomain, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und in Cloudflare auf 'DNS only' (graue Wolke) stehen." 15 76
+            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        elif ! gd_yesno "⇄ Domain für Wings" "Wings (die Verbindung zu deinen Gameservern) nutzt standardmäßig dieselbe Domain wie das Panel:\n\n${GD_DOMAIN} (Port 8080)\n\nDas ist die einfachste Variante. Möchtest du diese Domain verwenden?\n\nBei 'Nein' kannst du eine eigene Subdomain angeben (z. B. node1.deinedomain.de)." 15 76; then
+            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss ebenfalls auf diesen Server zeigen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+        elif gd_is_cloudflare_ip "$(gd_resolve_a "$GD_DOMAIN" | head -n1)"; then
+            # Über den Cloudflare-Proxy (orange Wolke) funktioniert Port 8080 nicht – die Konsole im Panel bliebe tot
+            gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${GD_DOMAIN} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) ist darüber nicht erreichbar.\n\nGib im nächsten Schritt eine eigene Subdomain für Wings an, die in Cloudflare auf 'DNS only' (graue Wolke) steht." 13 76
+            GD_WINGS_FQDN="$(gd_ask_wings_domain "$GD_DOMAIN" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de. Sie muss auf diesen Server zeigen und darf nicht über den Cloudflare-Proxy laufen.")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
         fi
         while true; do
             GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden?\n\nFormat: Start-Ende, z. B. 25565-25600 (höchstens 1000 Ports, jeweils größer als 1024). Du kannst später im Panel weitere Ports hinzufügen." "$GD_DEFAULT_PORT_RANGE" 14 74)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
@@ -256,6 +414,7 @@ gd_fresh_install() {
     # --- Zusammenfassung ------------------------------------------------------
     local summary
     summary="Panel:         https://${GD_DOMAIN}\nVersion:       v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(Deutsch, GermanDactyl)' || echo '(Englisch)')\nE-Mail:        ${GD_EMAIL}\nBenutzername:  ${GD_ADMIN_USER}\nTelemetrie:    $( $GD_TELEMETRY && echo an || echo aus)\n"
+    summary+="Zertifikat:    $( [ "$GD_SSL_METHOD" = cloudflare ] && echo "Let's Encrypt über Cloudflare (DNS-01), Proxy bleibt an" || echo "Let's Encrypt (Webroot)")\n"
     if $with_wings; then
         summary+="Wings:         https://${GD_WINGS_FQDN}:8080 (automatisch verbunden)\nGameserver:    Ports ${GD_PORT_RANGE}\n"
     fi
@@ -268,8 +427,13 @@ gd_fresh_install() {
 
     # --- Installation ---------------------------------------------------------
     GD_ADMIN_PASSWORD="$(gd_gen_password 24)"
+    # shellcheck disable=SC2034  # wird von gd_panel_install_steps gelesen
     GD_DB_PASSWORD="$(gd_gen_password 48)"
-    gd_log "Installation gestartet: mode=$mode domain=$GD_DOMAIN version=$GD_PANEL_VERSION patch=$GD_APPLY_PATCH"
+    gd_log "Installation gestartet: mode=$mode domain=$GD_DOMAIN version=$GD_PANEL_VERSION patch=$GD_APPLY_PATCH ssl=$GD_SSL_METHOD"
+    gd_conf_set SSL_METHOD "$GD_SSL_METHOD"
+    # Optionen sichern, bevor etwas installiert wird: Bricht ein späterer Schritt ab, holt gd_resume_install die
+    # Absicherung beim nächsten Start mit denselben Einstellungen nach
+    gd_install_opts_save
 
     gd_gauge_open "➜ Pterodactyl wird installiert" "Installation wird vorbereitet..."
     gd_panel_install_steps
@@ -278,22 +442,26 @@ gd_fresh_install() {
     gd_conf_set INSTALL_STATE panel_fertig
     gd_conf_set INSTALL_MODE "$mode"
     gd_pending_credentials_save
-    GD_FAIL_HINT="Das Panel selbst ist fertig installiert: https://${GD_DOMAIN}\nBenutzername: ${GD_ADMIN_USER}   Passwort: ${GD_ADMIN_PASSWORD}\nStarte das Skript erneut, um die Einrichtung fortzusetzen."
+    # Kein Passwort im Hinweis: gd_fail übergibt ihn als Argument an whiptail (in der Prozessliste sichtbar).
+    # gd_resume_install zeigt die Zugangsdaten beim nächsten Start aus der Datei GD_PENDING_CREDENTIALS an.
+    GD_FAIL_HINT="Das Panel selbst ist fertig installiert: https://${GD_DOMAIN}\nDie Zugangsdaten werden beim nächsten Start angezeigt (sie liegen unter ${GD_PENDING_CREDENTIALS}, nur für root lesbar).\nStarte das Skript erneut, um die Einrichtung fortzusetzen."
     if $with_wings; then
         gd_wings_local_steps 72
     fi
     gd_security_steps 91 "$with_wings" "${GD_PORT_RANGE:-}"
     gd_progress 100 "Installation abgeschlossen."
     gd_gauge_close
+    # shellcheck disable=SC2034  # wird von gd_fail gelesen
     GD_FAIL_HINT=""
     gd_conf_set INSTALL_STATE fertig
+    gd_install_opts_clear
     rm -f "$GD_PENDING_CREDENTIALS"
     gd_shortcut_install >> "$GD_LOG" 2>&1
 
     # --- Abschluss ------------------------------------------------------------
     gd_show_credentials
     if [ "$GD_SEC_BACKUP" = true ] && [ -s "$GD_AB_PASS" ]; then
-        gd_msg "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+        gd_msg_secret "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
     fi
     if gd_yesno "▣ Zugangsdaten speichern?" "Sollen die Zugangsdaten zusätzlich in einer Datei gespeichert werden, die nur root lesen kann?\n\n/root/germandactyl-zugangsdaten.txt" 11 70; then
         gd_save_credentials
@@ -306,21 +474,24 @@ gd_fresh_install() {
         done_text="Dein Panel ist einsatzbereit: https://${GD_DOMAIN}\n\nDamit du Gameserver erstellen kannst, brauchst du noch Wings. Starte dazu die Verwaltung (Befehl: $(gd_shortcut_hint)) und wähle 'Gameserver & Wings → Wings installieren/verwalten'."
     fi
     [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
-    gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports freigeben' frei."
-    done_text+="\n\nDie Verwaltung startest du künftig einfach mit dem Befehl: $(gd_shortcut_hint)"
+    [ "$GD_SSL_METHOD" = "cloudflare" ] && done_text+="\n\nCloudflare: Stelle unter 'SSL/TLS' den Verschlüsselungsmodus auf 'Vollständig (streng)', sonst kann es zu Weiterleitungsschleifen kommen."
+    gd_ufw_active && done_text+="\n\nDie Firewall ist aktiv. Weitere Ports gibst du in der Verwaltung unter 'Gameserver & Wings → Ports für Gameserver freigeben' frei."
     gd_msg "✔ Installation erfolgreich" "$done_text" 22 78
+    # Befehl für die Verwaltung, wichtigste Kurzbefehle, Login-Hinweis und Log-Verzeichnis
+    gd_shortcut_help_text dialog
     clear
     echo ""
     echo "FERTIG - - - - - - - - - - - - - - -"
     echo "Panel: https://${GD_DOMAIN}"
     echo "Log:   $GD_LOG"
     echo "Verwaltung: $(gd_shortcut_hint)"
+    echo "Kurzbefehle: $(gd_shortcut_name) hilfe"
     echo ""
 }
 
 gd_install_menu() {
     local choice
-    if ! whiptail --title "Willkommen bei GermanDactyl Setup!" --yesno "Dieses Skript installiert das Pterodactyl Panel inklusive deutscher Übersetzung (GermanDactyl) und auf Wunsch Wings – vollautomatisch und fertig eingerichtet.\n\nDu benötigst eine Domain bzw. Subdomain, deren DNS-Eintrag auf diesen Server zeigt.\n\nMit der Bestätigung stimmst du zu, dass:\n- benötigte Pakete installiert werden dürfen\n- du den Nutzungsbedingungen von Let's Encrypt zustimmst\n- du der Besitzer der Domain bist bzw. die Berechtigung dafür hast\n- die angegebene E-Mail-Adresse deine eigene ist\n\nMöchtest du fortfahren?" 22 78; then
+    if ! whiptail --title "Willkommen bei GermanDactyl Setup!" --yesno "Dieses Skript installiert das Pterodactyl Panel inklusive deutscher Übersetzung (GermanDactyl) und auf Wunsch Wings – vollautomatisch und fertig eingerichtet.\n\n⚠ Testphase: GermanDactyl Setup ist noch in der Testphase. Es können jederzeit unerwartete Fehler auftreten, nutze es zuerst auf einem Testserver.\n\nDu benötigst eine Domain bzw. Subdomain, deren DNS-Eintrag auf diesen Server zeigt.\n\nMit der Bestätigung stimmst du zu, dass:\n- benötigte Pakete installiert werden dürfen\n- du den Nutzungsbedingungen von Let's Encrypt zustimmst\n- du der Besitzer der Domain bist bzw. die Berechtigung dafür hast\n- die angegebene E-Mail-Adresse deine eigene ist\n\nMöchtest du fortfahren?" 24 78; then
         clear; echo "Die Installation wurde abgebrochen."; exit 0
     fi
 
@@ -341,12 +512,33 @@ gd_install_menu() {
 }
 
 # ---------------------------------------------------------------------------
+# Geplantes Update (--auto-update): kein Banner, keine Vorbereitung mit whiptail, keine Dialoge
+# ---------------------------------------------------------------------------
+# Die Bibliotheken sind oben bereits geladen. Dieser Zweig steht bewusst vor dem Startblock.
+if [ "${GD_HEADLESS:-}" = 1 ]; then
+    gd_log "Automatisches Update gestartet (Branch: $GD_BRANCH, lokal: ${GD_LOCAL_DIR:-nein})"
+    gd_autoupdate_run
+    exit $?
+fi
+
+# ---------------------------------------------------------------------------
+# Kurzbefehl mit Unterbefehl (germandactyl|gd|gmd <befehl>, z. B. "gmd backup" oder "gmd status")
+# ---------------------------------------------------------------------------
+# Kein Banner und keine Vorbereitung: gd_dispatch prüft Befehl und Installation, "hilfe" und "status" laufen ohne
+# whiptail. Danach ist das Skript beendet (nicht zurück ins Hauptmenü). Unbekannte Befehle: Hilfe und Rückgabewert 2.
+if [ $# -gt 0 ]; then
+    gd_dispatch "$@"
+    exit $?
+fi
+
+# ---------------------------------------------------------------------------
 # Start
 # ---------------------------------------------------------------------------
 clear
 echo "----------------------------------"
 echo "GermanDactyl Setup"
 echo "Pterodactyl Panel + Wings mit deutscher Übersetzung – von Pavl21"
+echo "Testphase: Es können jederzeit unerwartete Fehler auftreten. Erstelle vor Änderungen ein Backup."
 echo "----------------------------------"
 gd_log "GermanDactyl Setup gestartet (Branch: $GD_BRANCH, lokal: ${GD_LOCAL_DIR:-nein})"
 
@@ -367,6 +559,10 @@ if [ -d "$PTERO_DIR" ] && [ "$(gd_conf_get INSTALL_STATE)" = "laeuft" ]; then
     if gd_yesno "Unvollständige Installation" "Die letzte Installation wurde nicht abgeschlossen (Details im Log unter $GD_LOG_DIR).\n\nSoll die unvollständige Installation entfernt und neu gestartet werden?\n\nBereits installierte Pakete bleiben erhalten, der Neustart geht deshalb schneller." 14 76; then
         rm -rf "$PTERO_DIR"
         gd_conf_set INSTALL_STATE neu
+    else
+        # Das halbfertige Panel nicht in der Verwaltung öffnen: dort würde es wie eine fertige Installation wirken
+        gd_warn_colors_off
+        clear; echo "Die unvollständige Installation bleibt unverändert. Starte das Skript erneut, um neu zu installieren."; exit 0
     fi
     gd_warn_colors_off
 fi

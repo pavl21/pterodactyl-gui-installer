@@ -22,21 +22,25 @@ PMA_SNIPPET="/etc/nginx/snippets/germandactyl-phpmyadmin.conf"
 PANEL_NGINX="/etc/nginx/sites-available/pterodactyl.conf"
 
 install_phpmyadmin() {
-    local line version url sock
+    local line version url sock expected
     line="$(curl -fsSL https://www.phpmyadmin.net/home_page/version.txt)" || return 1
+    line="${line//$'\r'/}"
     version="$(sed -n '1p' <<< "$line")"
     url="$(sed -n '3p' <<< "$line")"
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Unbekanntes Versionsformat: $version"; return 1; }
-    [ -z "$url" ] && url="https://files.phpmyadmin.net/phpMyAdmin/${version}/phpMyAdmin-${version}-all-languages.zip"
+    # Die Download-URL wird nur akzeptiert, wenn sie auf den offiziellen Download-Server zeigt
+    [[ "$url" == https://files.phpmyadmin.net/* ]] \
+        || url="https://files.phpmyadmin.net/phpMyAdmin/${version}/phpMyAdmin-${version}-all-languages.zip"
     echo "phpMyAdmin $version wird installiert: $url"
 
     gd_apt_install unzip || return 1
     curl -fsSL "$url" -o "$GD_TMP/pma.zip" || return 1
-    # Prüfsumme kontrollieren, falls verfügbar
-    if curl -fsSL "${url}.sha256" -o "$GD_TMP/pma.sha256" 2>/dev/null; then
-        [ "$(awk '{print $1}' "$GD_TMP/pma.sha256")" = "$(sha256sum "$GD_TMP/pma.zip" | awk '{print $1}')" ] \
-            || { echo "Prüfsumme stimmt nicht überein – Abbruch."; return 1; }
-    fi
+    # Prüfsumme ist Pflicht: ohne sie wird nichts entpackt oder installiert
+    curl -fsSL "${url}.sha256" -o "$GD_TMP/pma.sha256" 2>/dev/null \
+        || { echo "Prüfsumme nicht abrufbar – Abbruch."; return 1; }
+    expected="$(awk '{print $1; exit}' "$GD_TMP/pma.sha256")"
+    [ -n "$expected" ] && [ "$expected" = "$(sha256sum "$GD_TMP/pma.zip" | awk '{print $1}')" ] \
+        || { echo "Prüfsumme stimmt nicht überein – Abbruch."; return 1; }
     unzip -q "$GD_TMP/pma.zip" -d "$GD_TMP/pma" || return 1
     # Gehört das Verzeichnis zum Paket "phpmyadmin" aus Debian/Ubuntu, nicht überschreiben (dpkg wäre danach inkonsistent)
     if dpkg -S "$PMA_DIR" >/dev/null 2>&1; then
@@ -150,7 +154,9 @@ if ! create_database_user >> "$GD_LOG" 2>&1; then
 fi
 
 while true; do
-    gd_msg "✱ Zugangsdaten für phpMyAdmin" "Adresse:       https://$(gd_conf_get PANEL_DOMAIN)/phpmyadmin\nBenutzername:  ${PMA_USER}\nPasswort:      ${PMA_PASSWORD}\n\nSpeichere dir diese Daten jetzt ab, sie werden nicht noch einmal angezeigt." 14 78
+    # Passwort nicht als Argument übergeben (wäre in der Prozessliste sichtbar) – gd_msg_secret nutzt eine 600-Datei
+    gd_msg_secret "✱ Zugangsdaten für phpMyAdmin" "$(printf 'Adresse:       https://%s/phpmyadmin\nBenutzername:  %s\nPasswort:      %s\n\nSpeichere dir diese Daten jetzt ab, sie werden nicht noch einmal angezeigt.' \
+        "$(gd_conf_get PANEL_DOMAIN)" "$PMA_USER" "$PMA_PASSWORD")" 14 78
     gd_yesno "Zugangsdaten gespeichert?" "Hast du die Zugangsdaten gespeichert und funktionieren sie?" 8 60 && break
 done
 gd_msg "★ Einrichtung abgeschlossen" "Du kannst phpMyAdmin jetzt nutzen." 8 50
