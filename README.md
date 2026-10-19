@@ -10,6 +10,8 @@ Das Skript ist eigenständig: Panel und Wings werden nach der offiziellen Dokume
 sudo bash -c "$(curl -sSL https://setup.germandactyl.de/)"
 ```
 
+Im Express-Modus brauchst du nur deine Domain, alles andere wird automatisch mit sicheren Standardwerten eingerichtet (anonymes Zertifikat, Benutzer admin, Firewall, fail2ban, Sicherheitsupdates, tägliche Backups).
+
 Ist Pterodactyl bereits installiert, öffnet sich stattdessen die Verwaltung. Dort findest du Hilfe & Analyse, Updates, Backups, Wings und Ports, Blueprint, phpMyAdmin, Database-Host, Firewall, fail2ban, SSH-Loginseite, Swap und die Deinstallation.
 
 Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germandactyl` bzw. kurz `gmd` oder `gd` (`gmd` und `gd` nur, wenn es auf dem Server noch keinen gleichnamigen Befehl gibt).
