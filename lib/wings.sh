@@ -424,15 +424,23 @@ gd_wings_location() {
 }
 
 gd_wings_node_resources() {
-    # Setzt GD_NODE_MEMORY und GD_NODE_DISK (MB) anhand der Serverausstattung
-    local mem disk
+    # Setzt GD_NODE_MEMORY und GD_NODE_DISK (MB) anhand der Serverausstattung.
+    # Speicher: Gesamt-RAM minus Reserve. Liegt das Panel auf diesem Server, bleiben 1024 MB für Panel, Datenbank
+    # und System; ohne Panel genügen 512 MB. Mindestens 512 MB.
+    # Festplatte: freier Platz auf dem Volumes-Pfad minus 10 % als Puffer (Logs, Backups, Wachstum), mindestens 1024 MB.
+    # Die Overallocation ist in gd_wings_node_create auf 0 gesetzt, die Limits sind also harte Grenzen.
+    local mem disk reserve=1024 vol
     mem="$(LC_ALL=C free -m | awk '/^Mem:/{print $2}')"
-    [ -d "$PTERO_DIR" ] && mem=$((mem - 1024))   # Reserve für Panel, Datenbank und System
-    [ "$mem" -lt 1024 ] && mem=1024
-    mkdir -p /var/lib/pterodactyl
-    disk="$(df -Pm /var/lib/pterodactyl | awk 'NR==2{print $4}')"
-    disk=$((disk * 90 / 100))
-    [ "$disk" -lt 5120 ] && disk=5120
+    [[ "$mem" =~ ^[0-9]+$ ]] || mem=0
+    [ -f "$PTERO_DIR/artisan" ] || reserve=512
+    mem=$(( mem - reserve ))
+    [ "$mem" -lt 512 ] && mem=512
+    vol="${GD_VOLUMES_DIR:-/var/lib/pterodactyl}"
+    mkdir -p "$vol"
+    disk="$(LC_ALL=C df -Pm "$vol" | awk 'NR==2{print $4}')"
+    [[ "$disk" =~ ^[0-9]+$ ]] || disk=0
+    disk=$(( disk * 90 / 100 ))
+    [ "$disk" -lt 1024 ] && disk=1024
     GD_NODE_MEMORY="$mem"
     GD_NODE_DISK="$disk"
 }
@@ -448,6 +456,8 @@ gd_wings_node_create() {
     fi
     location="$(gd_wings_location)" || return 1
     gd_wings_node_resources
+    # Overallocation (--overallocateMemory/--overallocateDisk) bewusst auf 0: Das Panel soll keine Gameserver-Limits
+    # zusagen, die der Server real nicht hat (sonst können mehr Server gestartet werden, als RAM bzw. Platz vorhanden ist)
     out="$(gd_artisan_www p:node:make --no-interaction \
         --name="Node-$(hostname -s)" --description="Automatisch eingerichtet von GermanDactyl Setup" \
         --locationId="$location" --fqdn="$fqdn" --public=1 --scheme=https --proxy=0 --maintenance=0 \

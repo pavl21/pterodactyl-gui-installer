@@ -61,22 +61,30 @@ gd_wings_manage() {
 }
 
 gd_swap_dialog() {
-    local size
-    if [ -e /swapfile ]; then
-        gd_msg "Swap vorhanden" "Es existiert bereits eine Swap-Datei. Du kannst sie in der Verwaltung unter 'Gameserver & Wings → Swap-Speicher verwalten' anpassen." 9 70
+    # Richtet den Swap-Speicher ohne Rückfrage ein (Name beibehalten, der Aufruf aus der Verwaltung bleibt gleich).
+    # Ist schon Swap aktiv, passiert nichts. Sonst entspricht die Größe dem RAM (mindestens 1024, höchstens 4096 MB);
+    # angelegt wird nur, wenn auf / danach noch 5 GB frei bleiben. Meldungen gehen ausschließlich ins Log: In einem
+    # Container ohne Swap-Unterstützung bricht die Einrichtung deshalb nicht ab.
+    local ram swap_total size free
+    swap_total="$(LC_ALL=C free -m | awk '/^Swap:/{print $2}')"
+    [[ "$swap_total" =~ ^[0-9]+$ ]] && [ "$swap_total" -gt 0 ] && return 0
+    ram="$(LC_ALL=C free -m | awk '/^Mem:/{print $2}')"
+    [[ "$ram" =~ ^[0-9]+$ ]] || ram=0
+    size=$(( ram ))
+    [ "$size" -gt 4096 ] && size=4096
+    [ "$size" -lt 1024 ] && size=1024
+    free="$(LC_ALL=C df -Pm / | awk 'NR==2{print $4}')"
+    [[ "$free" =~ ^[0-9]+$ ]] || free=0
+    if [ "$free" -lt $(( size + 5120 )) ]; then
+        gd_log "Kein Swap angelegt: zu wenig freier Speicherplatz (frei: ${free} MB, benötigt: $(( size + 5120 )) MB)."
         return 0
     fi
-    gd_yesno "Swap-Speicher" "Möchtest du Swap-Speicher einrichten? Er wird genutzt, wenn der Arbeitsspeicher knapp wird." 9 70 || return 0
-    while true; do
-        size="$(gd_input "Swap-Speicher erstellen" "Gib die gewünschte Swap-Größe in MB ein (z. B. 2048):" "2048" 10 60)" || return 0
-        [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -ge 256 ] && break
-        gd_msg "Ungültige Eingabe" "Bitte gib eine Zahl ab 256 ein." 8 50
-    done
     if gd_swap_create "$size" >> "$GD_LOG" 2>&1; then
-        gd_msg "Swap-Speicher erstellt" "Swap-Speicher mit ${size} MB wurde erstellt, aktiviert und bleibt auch nach einem Neustart erhalten." 9 70
+        gd_log "Swap-Speicher mit ${size} MB angelegt und aktiviert."
     else
-        gd_msg "Fehler" "Der Swap-Speicher konnte nicht erstellt werden. Details: $GD_LOG" 9 70
+        gd_log "Swap-Speicher konnte nicht angelegt werden (oft fehlt Swap-Unterstützung im Container). Details siehe oben."
     fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
