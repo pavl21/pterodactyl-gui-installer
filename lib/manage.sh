@@ -19,6 +19,59 @@ gd_panel_php_fpm() {
     echo "$f"
 }
 
+gd_local_copy_update() {
+    # Lokale Kopie von GermanDactyl Setup unter GD_LOCAL_COPY erneuern (nur für den Branch main). Der Kurzbefehl startet
+    # dann sofort aus dieser Kopie, statt bei jedem Aufruf alle Skripte von GitHub zu laden.
+    # Ablauf: laden, entpacken, prüfen, dann austauschen. Schlägt ein Schritt fehl, bleibt die bisherige Kopie unverändert.
+    # Rückgabe 1 bei Fehlern (Details im Log).
+    [ "${GD_BRANCH:-main}" = main ] || return 0
+    local tmp src stage ok=true f
+    tmp="$(mktemp -d)" || return 1
+    src="$tmp/src"
+    if ! curl -fsSL --max-time 60 "https://codeload.github.com/${GD_REPO}/tar.gz/${GD_BRANCH:-main}" -o "$tmp/archiv.tar.gz"; then
+        gd_log "Lokale Kopie: Download von GitHub fehlgeschlagen."
+        rm -rf "$tmp"; return 1
+    fi
+    mkdir -p "$src"
+    # Der Inhalt liegt in einem Unterordner (pterodactyl-gui-installer-<branch>): der Ordner wird beim Entpacken weggelassen
+    if ! tar -xzf "$tmp/archiv.tar.gz" -C "$src" --strip-components=1 --no-same-owner; then
+        gd_log "Lokale Kopie: Das Archiv konnte nicht entpackt werden."
+        rm -rf "$tmp"; return 1
+    fi
+    # Prüfung: Hauptskript und Bibliotheken müssen vorhanden und fehlerfrei lesbar sein
+    [ -f "$src/installer.sh" ] && [ -f "$src/lib/common.sh" ] || ok=false
+    for f in "$src/installer.sh" "$src"/lib/*.sh; do
+        bash -n "$f" 2>/dev/null || ok=false
+    done
+    if ! $ok; then
+        gd_log "Lokale Kopie: Prüfung fehlgeschlagen, die bisherige Kopie bleibt erhalten."
+        rm -rf "$tmp"; return 1
+    fi
+    # Austausch: Die neue Kopie liegt zuerst neben dem Ziel (gleiches Dateisystem), danach zwei Umbenennungen
+    stage="$GD_LOCAL_COPY.neu"
+    rm -rf "$stage" "$GD_LOCAL_COPY.alt"
+    mkdir -p "$(dirname "$GD_LOCAL_COPY")"
+    if ! mv "$src" "$stage"; then
+        gd_log "Lokale Kopie: Die neue Kopie konnte nicht bereitgestellt werden."
+        rm -rf "$stage" "$tmp"; return 1
+    fi
+    chmod 700 "$stage"
+    if [ -e "$GD_LOCAL_COPY" ] && ! mv "$GD_LOCAL_COPY" "$GD_LOCAL_COPY.alt"; then
+        gd_log "Lokale Kopie: Die bisherige Kopie konnte nicht beiseitegelegt werden."
+        rm -rf "$stage" "$tmp"; return 1
+    fi
+    if ! mv "$stage" "$GD_LOCAL_COPY"; then
+        [ -e "$GD_LOCAL_COPY.alt" ] && mv "$GD_LOCAL_COPY.alt" "$GD_LOCAL_COPY"
+        gd_log "Lokale Kopie: Austausch fehlgeschlagen, die bisherige Kopie bleibt erhalten."
+        rm -rf "$stage" "$tmp"; return 1
+    fi
+    rm -rf "$GD_LOCAL_COPY.alt" "$tmp"
+    chmod 700 "$GD_LOCAL_COPY"
+    gd_conf_set LOCAL_COPY_TS "$(date +%s)"
+    gd_log "Lokale Kopie aktualisiert (Branch ${GD_BRANCH:-main})."
+    return 0
+}
+
 gd_shortcut_body() {
     # gd_shortcut_body <pfad> <kurzbefehl|update> – schreibt ein Startskript auf die Standardausgabe.
     # Kurzbefehl (germandactyl) und Update-Skript (germandactyl-update, für den Timer der automatischen Updates)
@@ -71,6 +124,16 @@ EOF
     fi
     cat <<'EOF'
 if [ "$(id -u)" != "0" ]; then exec sudo "$0" "$@"; fi
+EOF
+    if [ "$kind" != update ]; then
+        # Lokale Kopie (siehe gd_local_copy_update): sofort starten, ohne Download. Fehlt sie, geht es unten aus dem Netz weiter.
+        cat <<EOF
+if [ "\$branch" = main ] && [ -f "$GD_LOCAL_COPY/installer.sh" ] && [ -f "$GD_LOCAL_COPY/lib/common.sh" ]; then
+    GD_BRANCH="\$branch" exec bash "$GD_LOCAL_COPY/installer.sh" "\$@"
+fi
+EOF
+    fi
+    cat <<'EOF'
 
 script="$(curl -fsSL "https://raw.githubusercontent.com/$repo/$branch/installer.sh")" || {
     # Branch existiert nicht mehr (z. B. Test-Branch gelöscht) -> auf main zurückfallen
@@ -95,6 +158,10 @@ gd_shortcut_install() {
         ln -s "$GD_SHORTCUT" "$GD_SHORTCUT_GD"
         gd_conf_set SHORTCUT_GD 1
     fi
+    # Beim ersten Mal die lokale Kopie gleich mitholen (im Vordergrund). Danach startet der Kurzbefehl ohne Download;
+    # die Kopie wird beim Start der Verwaltung im Hintergrund aktualisiert. Gäbe es die Kopie, bleibt es hier beim Nichtstun,
+    # denn gd_main_menu und gd_dispatch rufen diese Funktion bei jedem Start auf.
+    [ -f "$GD_LOCAL_COPY/lib/common.sh" ] || gd_local_copy_update >> "$GD_LOG" 2>&1 || true
     return 0
 }
 
@@ -107,6 +174,9 @@ gd_shortcut_remove() {
         fi
     done
     rm -f "$GD_SHORTCUT"
+    # Lokale Kopie und die Option "nach dem SSH-Login starten" mit entfernen
+    rm -rf "$GD_LOCAL_COPY"
+    rm -f "$GD_AUTOSTART_FILE"
     return 0
 }
 
@@ -282,7 +352,7 @@ gd_collect_status() {
             systemctl is-active --quiet "$svc" || { ok=false; GD_PROBLEMS=$((GD_PROBLEMS + 1)); }
         done
         if $ok && [ -n "$domain" ]; then
-            code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 4 --resolve "${domain}:443:127.0.0.1" "https://${domain}/auth/login")"
+            code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 2 --resolve "${domain}:443:127.0.0.1" "https://${domain}/auth/login")"
             case "$code" in 200|302) ;; *) ok=false; GD_PROBLEMS=$((GD_PROBLEMS + 1)) ;; esac
         fi
         line1+="Panel v$(gd_panel_installed_version) $($ok && echo ✔ || echo ✖)   "
@@ -357,10 +427,9 @@ gd_collect_status() {
 }
 
 gd_update_check() {
-    # Neueste Panel- und Wings-Version höchstens einmal am Tag abfragen (Ergebnis wird zwischengespeichert)
-    local ts latest installed
-    GD_UPDATE_VERSION=""
-    GD_WINGS_UPDATE_VERSION=""
+    # ABFRAGEN (mit Netz, läuft im Hintergrund): Neueste Panel- und Wings-Version höchstens einmal am Tag holen und in
+    # setup.conf speichern. Ausgewertet wird danach in gd_update_evaluate.
+    local ts latest
     if gd_has_panel; then
         ts="$(gd_conf_get PANEL_LATEST_TS)"
         if [ -z "$ts" ] || [ $(( $(date +%s) - ts )) -gt 86400 ]; then
@@ -369,10 +438,6 @@ gd_update_check() {
                 gd_conf_set PANEL_LATEST "$latest"
                 gd_conf_set PANEL_LATEST_TS "$(date +%s)"
             fi
-        fi
-        latest="$(gd_conf_get PANEL_LATEST)"
-        if [ -n "$latest" ] && ! gd_version_ge "$(gd_panel_installed_version)" "$latest"; then
-            GD_UPDATE_VERSION="$latest"
         fi
     fi
     if gd_has_wings; then
@@ -386,6 +451,23 @@ gd_update_check() {
                 gd_conf_set WINGS_LATEST_TS "$(date +%s)"
             fi
         fi
+    fi
+    return 0
+}
+
+gd_update_evaluate() {
+    # AUSWERTEN (ohne Netz, bei jedem Aufbau des Menüs): Vergleicht die in setup.conf gespeicherten neuesten Versionen
+    # mit der installierten Version. Setzt GD_UPDATE_VERSION und GD_WINGS_UPDATE_VERSION (leer = kein Update).
+    local latest installed
+    GD_UPDATE_VERSION=""
+    GD_WINGS_UPDATE_VERSION=""
+    if gd_has_panel; then
+        latest="$(gd_conf_get PANEL_LATEST)"
+        if [ -n "$latest" ] && ! gd_version_ge "$(gd_panel_installed_version)" "$latest"; then
+            GD_UPDATE_VERSION="$latest"
+        fi
+    fi
+    if gd_has_wings; then
         latest="$(gd_conf_get WINGS_LATEST)"
         installed="$(gd_manage_wings_version)"
         if [ -n "$latest" ] && [ -n "$installed" ] && ! gd_version_ge "$installed" "$latest"; then
@@ -399,13 +481,20 @@ gd_update_check() {
 # Hauptmenü
 # ---------------------------------------------------------------------------
 gd_main_menu() {
-    local choice items menu_text
+    local choice items menu_text ts
     gd_shortcut_install >/dev/null 2>&1
     # Das Skript der geplanten Updates mit der aktuellen Vorlage erneuern (Branch, Repository)
     gd_autoupdate_enabled && gd_autoupdate_write_script >/dev/null 2>&1
-    gd_update_check
+    # Netzabfragen laufen im Hintergrund, damit das Menü sofort erscheint (Subshell: Traps des Hauptprozesses bleiben unberührt).
+    # Die lokale Kopie wird höchstens einmal pro Stunde aufgefrischt, die Versionen bei jedem Aufbau aus setup.conf gelesen.
+    ts="$(gd_conf_get LOCAL_COPY_TS)"
+    if ! [[ "$ts" =~ ^[0-9]+$ ]] || [ $(( $(date +%s) - ts )) -gt 3600 ]; then
+        ( gd_local_copy_update >> "$GD_LOG" 2>&1 ) </dev/null &
+    fi
+    ( gd_update_check >> "$GD_LOG" 2>&1 ) </dev/null &
     while true; do
         gd_collect_status
+        gd_update_evaluate
         items=()
         [ "$GD_PROBLEMS" -gt 0 ] && items+=("!" "⚠ $( [ "$GD_PROBLEMS" -eq 1 ] && echo "1 Problem" || echo "$GD_PROBLEMS Probleme") gefunden – jetzt prüfen und beheben")
         [ -n "$GD_UPDATE_VERSION" ] && items+=("U" "↑ Update verfügbar: Panel v$GD_UPDATE_VERSION")
@@ -543,21 +632,37 @@ gd_menu_databases() {
     done
 }
 
+gd_autostart_toggle() {
+    # Schaltet den Start der Verwaltung direkt nach dem SSH-Login ein oder aus (Datei unter /etc/profile.d)
+    if gd_autostart_enabled; then
+        gd_yesno "⏻ Start nach SSH-Login" "Die Verwaltung startet derzeit nach jeder SSH-Anmeldung als root.\n\nSoll das ausgeschaltet werden?" 10 74 || return
+        gd_autostart_disable
+        gd_msg "Ausgeschaltet" "Nach der SSH-Anmeldung startet die Verwaltung nicht mehr automatisch." 8 70
+    else
+        gd_yesno "⏻ Start nach SSH-Login" "Meldest du dich per SSH als root an, startet die Verwaltung dann direkt.\n\nMit Strg+C oder '0 Beenden' kommst du zur Shell. Dateiübertragungen (scp, rsync, sftp) sind nicht betroffen.\n\nEinschalten?" 13 74 || return
+        gd_autostart_enable
+        gd_msg "✔ Eingeschaltet" "Ab der nächsten SSH-Anmeldung startet die Verwaltung automatisch." 8 70
+    fi
+}
+
 gd_menu_server() {
-    local c f2b upd
+    local c f2b upd ast
     while true; do
         f2b="aus"; systemctl is-active --quiet fail2ban 2>/dev/null && f2b="an"
         upd="aus"; gd_autoupdates_enabled && upd="an"
+        ast="aus"; gd_autostart_enabled && ast="an"
         c=$(gd_submenu "⚙ Server & Sicherheit" "Wähle eine Aktion:" \
             "1" "✚ Firewall (Ports öffnen/schließen)" \
             "2" "✱ fail2ban – Schutz vor Angriffen ($f2b)" \
             "3" "↑ Automatische Sicherheitsupdates ($upd)" \
-            "4" "▸ SSH-Loginseite einrichten/entfernen") || return
+            "4" "▸ SSH-Loginseite einrichten/entfernen" \
+            "5" "⏻ Verwaltung nach SSH-Login automatisch starten: $ast") || return
         case "$c" in
             1) gd_firewall_menu ;;
             2) gd_fail2ban_menu ;;
             3) gd_autoupdates_toggle ;;
             4) gd_run custom-ssh-login-config.sh ;;
+            5) gd_autostart_toggle ;;
             *) return ;;
         esac
     done

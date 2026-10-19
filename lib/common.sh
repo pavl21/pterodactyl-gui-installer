@@ -17,6 +17,10 @@ GD_RAW="https://raw.githubusercontent.com/${GD_REPO}/${GD_BRANCH}"
 GD_CONF_DIR="/etc/germandactyl"
 GD_CONF_FILE="${GD_CONF_DIR}/setup.conf"
 GD_LOG_DIR="/var/log/germandactyl-setup"
+# Lokale Kopie von GermanDactyl Setup für den Kurzbefehl (startet sofort, siehe gd_local_copy_update in manage.sh)
+GD_LOCAL_COPY="/usr/local/lib/germandactyl"
+# "Verwaltung nach dem SSH-Login starten" (siehe gd_autostart_enable in security.sh)
+GD_AUTOSTART_FILE="/etc/profile.d/germandactyl-autostart.sh"
 PTERO_DIR="/var/www/pterodactyl"
 GD_PHP_VERSION="8.3"
 GD_TIMEZONE="Europe/Berlin"

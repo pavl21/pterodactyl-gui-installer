@@ -531,6 +531,10 @@ gd_fresh_install() {
     gd_msg "✔ Installation erfolgreich" "$done_text" 22 78
     # Befehl für die Verwaltung, wichtigste Kurzbefehle, Login-Hinweis und Log-Verzeichnis
     gd_shortcut_help_text dialog
+    # Optional: Verwaltung direkt nach dem SSH-Login starten. Im Express-Modus wird nicht gefragt, die Option bleibt aus.
+    if ! $express && gd_whip --defaultno --yesno "Verwaltung nach dem SSH-Login automatisch starten?\n\nMeldest du dich per SSH als root an, öffnet sich dann direkt die Verwaltung. Mit Strg+C oder '0 Beenden' kommst du zur Shell. Die Einstellung lässt sich später unter 'Server & Sicherheit' ändern." 14 74; then
+        gd_autostart_enable
+    fi
     clear
     echo ""
     echo "FERTIG - - - - - - - - - - - - - - -"
