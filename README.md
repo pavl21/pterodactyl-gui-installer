@@ -46,6 +46,8 @@ Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germa
 
 ## Hinweis
 
-Dies ist ein inoffizielles Projekt. Die Nutzung erfolgt auf eigene Verantwortung. Erstelle vor Updates und Änderungen immer ein Backup, zum Beispiel über die Backup-Verwaltung.
+**Testphase:** GermanDactyl Setup befindet sich noch in der Testphase. Es können jederzeit unerwartete Fehler auftreten, auch bei Funktionen, die bereits stabil wirken. Setze es deshalb zuerst auf einem Testserver ein und erstelle vor Updates und Änderungen immer ein Backup, zum Beispiel über die Backup-Verwaltung. Fehler melde bitte als [Issue](https://github.com/pavl21/pterodactyl-gui-installer/issues).
+
+Dies ist ein inoffizielles Projekt. Die Nutzung erfolgt auf eigene Verantwortung.
 
 Pelican (der Nachfolger von Pterodactyl) kann ebenfalls installiert werden – als Panel mit Wings auf demselben Server oder als reiner Wings-Server für ein Pelican-Panel auf einem anderen Server. Pelican ist noch eine Beta-Version; die Verwaltungsfunktionen (Backups, Blueprint, phpMyAdmin usw.) sind nur für Pterodactyl vorgesehen.
