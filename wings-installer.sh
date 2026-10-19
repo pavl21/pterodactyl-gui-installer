@@ -87,8 +87,16 @@ gd_wings_install_local() {
     local domain email
     domain="$(gd_conf_get PANEL_DOMAIN)"
     [ -z "$domain" ] && domain="$(gd_panel_env APP_URL | sed 's#^https\?://##; s#/.*##')"
+    # Schlüssel PANEL_EMAIL vorhanden, aber leer = Panel wurde bewusst anonym installiert (keine Nachfrage)
+    local anon=false
     email="$(gd_conf_get PANEL_EMAIL)"
-    [ -z "$email" ] && email="$(gd_panel_env APP_SERVICE_AUTHOR)"
+    if [ -z "$email" ]; then
+        if gd_conf_has PANEL_EMAIL; then
+            anon=true
+        else
+            email="$(gd_panel_env APP_SERVICE_AUTHOR)"
+        fi
+    fi
 
     # Domain aus Konfiguration/.env nicht ungeprüft übernehmen
     gd_valid_domain "$domain" \
@@ -102,8 +110,8 @@ gd_wings_install_local() {
         gd_msg "⚠ Cloudflare-Proxy erkannt" "Die Domain ${domain} läuft über den Cloudflare-Proxy (orange Wolke). Wings (Port 8080) ist darüber nicht erreichbar.\n\nGib im nächsten Schritt eine eigene Subdomain für Wings an, die in Cloudflare auf 'DNS only' (graue Wolke) steht." 13 76
         GD_WINGS_FQDN="$(gd_ask_wings_domain "$domain" "Gib die Domain für Wings ein, z. B. node1.deinedomain.de:")" || return 1
     fi
-    if ! gd_valid_email "$email"; then
-        email="$(gd_ask_email "✉ E-Mail-Adresse" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein:")" || return 1
+    if ! $anon && ! gd_valid_email "$email"; then
+        email="$(gd_ask_email_optional "✉ E-Mail-Adresse (optional)" "Optional: Gib eine E-Mail-Adresse für das SSL-Zertifikat ein oder lass das Feld leer. Ohne Angabe wird das Zertifikat ohne Kontakt-Adresse ausgestellt (anonym).\n\nMit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu, ohne Eingabe ebenfalls:\nhttps://letsencrypt.org/repository/")" || return 1
     fi
     GD_EMAIL="$email"
 
@@ -137,7 +145,7 @@ gd_wings_install_local() {
 gd_wings_install_remote() {
     # Panel liegt auf einem anderen Server -> Installation + Verbindung per Token-Befehl aus dem Panel
     GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de.\n\nDer DNS-Eintrag muss auf diesen Server zeigen.")" || return 1
-    GD_EMAIL="$(gd_ask_email "✉ E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu. Das Zertifikat wird automatisch erneuert.")" || return 1
+    GD_EMAIL="$(gd_ask_email_optional "✉ E-Mail für Let's Encrypt (optional)" "Optional: Gib eine E-Mail-Adresse für das SSL-Zertifikat ein oder lass das Feld leer (anonym, ohne Kontakt-Adresse). Das Zertifikat wird in beiden Fällen automatisch erneuert.\n\nDu stimmst den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || return 1
 
     gd_gauge_open "⇄ Wings wird installiert" "Installation wird vorbereitet..."
     gd_wings_remote_steps 5

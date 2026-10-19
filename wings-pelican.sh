@@ -70,7 +70,7 @@ fi
 
 # Pelican liegt auf einem anderen Server -> Konfiguration aus dem Panel einfügen
 GD_WINGS_FQDN="$(gd_ask_domain "⇄ Domain für Wings" "Gib die Domain für diesen Wings-Server ein, z. B. node1.deinedomain.de. Der DNS-Eintrag muss auf diesen Server zeigen.")" || exit 0
-GD_EMAIL="$(gd_ask_email "✉ E-Mail für Let's Encrypt" "Gib eine E-Mail-Adresse für das SSL-Zertifikat ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
+GD_EMAIL="$(gd_ask_email_optional "✉ E-Mail für Let's Encrypt (optional)" "Optional: E-Mail-Adresse für das SSL-Zertifikat, oder leer lassen (anonym, ohne Ablaufwarnungen von Let's Encrypt). In beiden Fällen stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
 gd_gauge_open "⇄ Wings wird installiert" "Bitte warten..."
 gd_step 5  "Paketquellen werden aktualisiert..." gd_apt_update
 gd_step 15 "Docker wird installiert..." gd_docker_install

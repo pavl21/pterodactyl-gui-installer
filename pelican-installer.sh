@@ -58,7 +58,7 @@ if [ -d "$PELICAN_DIR" ] && [ "$(gd_conf_get PELICAN_INSTALL_STATE)" = "panel_fe
     if [ -s "$PELICAN_PENDING" ]; then
         # shellcheck disable=SC1090
         . "$PELICAN_PENDING"
-        gd_msg_secret "✱ Deine Zugangsdaten" "Die letzte Einrichtung wurde nach der Installation des Panels abgebrochen. Pelican selbst ist nutzbar.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nWings richtest du im nächsten Menü unter 'Wings installieren/verwalten' ein." 17 78
+        gd_msg_secret "✱ Deine Zugangsdaten" "Die letzte Einrichtung wurde nach der Installation des Panels abgebrochen. Pelican selbst ist nutzbar.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_ADMIN_EMAIL:-$GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nWings richtest du im nächsten Menü unter 'Wings installieren/verwalten' ein." 17 78
         rm -f "$PELICAN_PENDING"
     fi
     gd_conf_set PELICAN_INSTALL_STATE fertig
@@ -97,7 +97,8 @@ fi
 gd_warn_colors_off
 
 GD_DOMAIN="$(gd_ask_domain "⌂ Domain für Pelican" "Gib die Domain (FQDN) ein, unter der Pelican erreichbar sein soll, z. B. panel.deinedomain.de.")" || exit 0
-GD_EMAIL="$(gd_ask_email "✉ E-Mail-Adresse" "Gib deine E-Mail-Adresse für das SSL-Zertifikat und dein Administrator-Konto ein. Mit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu.")" || exit 0
+GD_EMAIL="$(gd_ask_email_optional "✉ E-Mail-Adresse (optional)" "Optional: Gib deine E-Mail-Adresse ein oder lass das Feld leer (anonym).\n\nMit E-Mail: Let's Encrypt kann dich vor Ablauf des Zertifikats warnen, und sie wird als Adresse deines Administrator-Kontos verwendet.\nOhne E-Mail: Das Zertifikat wird ohne Kontakt-Adresse ausgestellt (GermanDactyl Setup überwacht die Erneuerung selbst), dein Administrator-Konto erhält admin@${GD_DOMAIN}. Du kannst die Adresse später im Panel ändern.\n\nIn beiden Fällen stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || exit 0
+GD_ADMIN_EMAIL="$(gd_admin_email "$GD_EMAIL" "$GD_DOMAIN")"
 GD_ADMIN_USER="admin"
 GD_ADMIN_PASSWORD="$(gd_gen_password 24)"
 
@@ -123,13 +124,13 @@ gd_step 40 "Webserver wird für das SSL-Zertifikat vorbereitet..." gd_pelican_ng
 gd_step 43 "SSL-Zertifikat wird bei Let's Encrypt angefordert..." gd_pelican_certbot "$GD_DOMAIN" "$GD_EMAIL"
 gd_step 46 "Webserver wird mit SSL eingerichtet..." gd_pelican_nginx "$GD_DOMAIN" ssl
 gd_step 47 "Automatische Zertifikatserneuerung wird eingerichtet..." gd_certbot_hook
-gd_step 50 "Pelican wird konfiguriert, Administrator wird angelegt..." gd_pelican_configure "$GD_DOMAIN" "$GD_EMAIL" "$GD_ADMIN_USER" "$GD_ADMIN_PASSWORD"
+gd_step 50 "Pelican wird konfiguriert, Administrator wird angelegt..." gd_pelican_configure "$GD_DOMAIN" "$GD_ADMIN_EMAIL" "$GD_ADMIN_USER" "$GD_ADMIN_PASSWORD"
 gd_step 58 "Cronjob und Queue-Dienst werden eingerichtet..." gd_pelican_services
 gd_step 62 "Pelican wird auf Erreichbarkeit geprüft..." gd_pelican_healthcheck "$GD_DOMAIN"
 # Ab hier ist das Panel nutzbar: Zugangsdaten bei einem späteren Abbruch nicht verlieren
 gd_conf_set PELICAN_INSTALL_STATE panel_fertig
-( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
-    "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_PASSWORD" > "$PELICAN_PENDING" )
+( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
+    "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_EMAIL" "$GD_ADMIN_PASSWORD" > "$PELICAN_PENDING" )
 # Das Passwort gehört nicht in den Hinweis: er landet als Argument von whiptail in der Prozessliste
 GD_FAIL_HINT="Pelican selbst ist fertig installiert: https://${GD_DOMAIN}\nDie Zugangsdaten werden beim nächsten Start angezeigt (sie liegen unter ${PELICAN_PENDING}, nur für root lesbar)."
 if $WITH_WINGS; then
@@ -164,7 +165,7 @@ gd_shortcut_install >> "$GD_LOG" 2>&1
 if [ "${GD_SEC_BACKUP:-false}" = "true" ] && [ -s "$GD_AB_PASS" ]; then
     gd_msg_secret "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
 fi
-gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}" 15 78
+gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_ADMIN_EMAIL:-$GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}" 15 78
 
 if $WITH_WINGS; then
     if [ "${WINGS_OK:-false}" = "true" ]; then

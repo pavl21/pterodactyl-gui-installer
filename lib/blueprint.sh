@@ -122,7 +122,7 @@ gd_blueprint_install_step() {
         tag="$(gd_blueprint_tag_for "$GD_PANEL_VERSION")"
     fi
     [ -z "$tag" ] && gd_fail "Die Blueprint-Version konnte nicht ermittelt werden."
-    gd_step "$1" "Blueprint ${tag} wird installiert (Oberfläche wird gebaut, dauert einige Minuten)..." gd_blueprint_apply "$tag"
+    gd_step "$1" "Blueprint ${tag} wird installiert, Oberfläche wird gebaut (einige Minuten)..." gd_blueprint_apply "$tag"
 }
 
 gd_blueprint_menu() {
@@ -177,7 +177,7 @@ gd_blueprint_reapply_dialog() {
     fi
     gd_version="$(gd_conf_get GD_GERMANDACTYL)"
     gd_gauge_open "❖ Blueprint" "Blueprint wird vorbereitet..."
-    gd_step 10 "Blueprint ${tag} wird installiert (Oberfläche wird gebaut, dauert einige Minuten)..." gd_blueprint_apply "$tag"
+    gd_step 10 "Blueprint ${tag} wird installiert, Oberfläche wird gebaut (einige Minuten)..." gd_blueprint_apply "$tag"
     if [ -n "$gd_version" ] && [ "$gd_version" = "$panel_version" ]; then
         GD_PANEL_VERSION="$panel_version"
         gd_germandactyl_steps 60

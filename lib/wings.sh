@@ -199,7 +199,7 @@ gd_wings_certificate() {
     # wenn es noch mindestens 14 Tage gilt, zur Domain passt, nicht aus der Testumgebung stammt und das
     # Erneuerungsverfahren zum Server passt: Läuft nginx, scheitert "standalone" bei der Erneuerung (Port 80 belegt).
     # Dann wird nur die Erneuerung auf Webroot umgestellt (keine Neuausstellung, das zählt gegen das
-    # Let's-Encrypt-Limit von 5 Duplikaten pro Woche). Benötigt lib/panel.sh (Zertifikatshilfen, nginx).
+    # Let's-Encrypt-Limit von 5 Duplikaten pro Woche). <email> darf leer sein (ohne Kontakt-Adresse). Benötigt lib/panel.sh (Zertifikatshilfen, nginx).
     local fqdn="$1" email="$2" cert conf auth method nginx_on=false force=() rc
     cert="/etc/letsencrypt/live/${fqdn}/fullchain.pem"
     conf="/etc/letsencrypt/renewal/${fqdn}.conf"
@@ -235,17 +235,18 @@ gd_wings_certificate() {
         # Reste eines gelöschten Zertifikats würden certbot blockieren
         certbot delete --cert-name "$fqdn" --non-interactive
     fi
+    gd_certbot_mail_args "$email"
     if $nginx_on; then
         gd_acme_webroot_prepare "$fqdn"
         rc=$?
         if [ $rc -eq 0 ]; then
             certbot certonly --webroot -w "$GD_ACME_WEBROOT" -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
-                --email "$email" --agree-tos --no-eff-email --non-interactive
+                "${GD_CERTBOT_MAIL[@]}" --agree-tos --no-eff-email --non-interactive
         elif [ $rc -eq 2 ]; then
             # Fremder Server-Block für den FQDN: Certbot muss ihn selbst finden (nginx-Plugin)
             certbot plugins 2>/dev/null | grep -q '^\* nginx' || gd_apt_install python3-certbot-nginx || return 1
             certbot certonly --nginx -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
-                --email "$email" --agree-tos --no-eff-email --non-interactive
+                "${GD_CERTBOT_MAIL[@]}" --agree-tos --no-eff-email --non-interactive
         else
             echo "Der nginx-Server-Block für die Zertifikatsprüfung konnte nicht angelegt werden."
             return 1
@@ -259,7 +260,7 @@ gd_wings_certificate() {
             return 1
         fi
         certbot certonly --standalone -d "$fqdn" --cert-name "$fqdn" "${force[@]}" \
-            --email "$email" --agree-tos --no-eff-email --non-interactive
+            "${GD_CERTBOT_MAIL[@]}" --agree-tos --no-eff-email --non-interactive
     fi
 }
 

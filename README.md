@@ -62,6 +62,7 @@ Für häufige Aufgaben musst du das Menü nicht öffnen. Alle Befehle funktionie
 
 - Die Datenbank für das Panel wird automatisch mit einem zufälligen Passwort angelegt. Diese Datenbank darf **nicht** als Database-Host verwendet werden – dafür gibt es in der Verwaltung einen eigenen Menüpunkt.
 - **Telemetrie:** Bei der Installation wirst du gefragt, ob das Panel anonyme Nutzungsdaten (z. B. Versionen und Anzahl der Server) an die Pterodactyl-Entwickler senden darf ([Details](https://pterodactyl.io/panel/1.0/additional_configuration.html#telemetry)).
+- **E-Mail-Adresse ist optional:** Ohne Angabe wird das Zertifikat ohne Kontakt-Adresse ausgestellt und das Administrator-Konto heißt `admin@<deine-domain>`.
 - **Log-Dateien:** Alle Schritte werden in `/var/log/germandactyl-setup/` protokolliert.
 
 ## Hinweis

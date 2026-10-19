@@ -127,6 +127,7 @@ EOF
 }
 
 gd_pelican_certbot() {
+    # gd_pelican_certbot <domain> <email> – <email> darf leer sein (ohne Kontakt-Adresse)
     gd_certbot_webroot "$1" "$2" "${PELICAN_DIR}/public"
 }
 
@@ -150,7 +151,7 @@ gd_pelican_permissions() {
 }
 
 gd_pelican_configure() {
-    # gd_pelican_configure <domain> <email> <benutzer> <passwort> – ohne Web-Installer (SQLite-Datenbank)
+    # gd_pelican_configure <domain> <admin-email> <benutzer> <passwort> – ohne Web-Installer (SQLite-Datenbank)
     local domain="$1" email="$2" user="$3" pw="$4"
     cd "$PELICAN_DIR" || return 1
     # .env von Anfang an nicht für alle Benutzer lesbar anlegen (p:environment:setup würde sie sonst mit 644 kopieren)

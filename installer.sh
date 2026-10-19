@@ -206,7 +206,7 @@ gd_check_environment() {
 # ---------------------------------------------------------------------------
 gd_show_credentials() {
     # gd_msg_secret statt whiptail --msgbox: Das Passwort darf nicht als Argument in der Prozessliste stehen
-    gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
+    gd_msg_secret "✱ Deine Zugangsdaten" "Speichere dir diese Zugangsdaten jetzt ab. Dieses Fenster wird nicht noch einmal angezeigt.\n\nPanel:          https://${GD_DOMAIN}\nBenutzername:   ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_ADMIN_EMAIL:-$GD_EMAIL}\nPasswort:       ${GD_ADMIN_PASSWORD}\n\nDu kannst das Passwort nach dem ersten Login in den Kontoeinstellungen ändern." 18 78
 }
 
 GD_PENDING_CREDENTIALS="/etc/germandactyl/zugangsdaten-ausstehend"
@@ -250,8 +250,8 @@ gd_install_opts_clear() {
 gd_pending_credentials_save() {
     # Zugangsdaten zwischenspeichern (nur root), bis sie am Ende angezeigt wurden
     mkdir -p "$(dirname "$GD_PENDING_CREDENTIALS")"
-    ( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
-        "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_PASSWORD" > "$GD_PENDING_CREDENTIALS" )
+    ( umask 077; printf 'GD_DOMAIN=%q\nGD_ADMIN_USER=%q\nGD_EMAIL=%q\nGD_ADMIN_EMAIL=%q\nGD_ADMIN_PASSWORD=%q\n' \
+        "$GD_DOMAIN" "$GD_ADMIN_USER" "$GD_EMAIL" "$GD_ADMIN_EMAIL" "$GD_ADMIN_PASSWORD" > "$GD_PENDING_CREDENTIALS" )
 }
 
 gd_resume_install() {
@@ -319,7 +319,7 @@ gd_save_credentials() {
 GermanDactyl Setup – Zugangsdaten ($(date '+%d.%m.%Y %H:%M'))
 Panel:          https://${GD_DOMAIN}
 Benutzername:   ${GD_ADMIN_USER}
-E-Mail-Adresse: ${GD_EMAIL}
+E-Mail-Adresse: ${GD_ADMIN_EMAIL:-$GD_EMAIL}
 Passwort:       ${GD_ADMIN_PASSWORD}
 $( [ "$GD_SEC_BACKUP" = true ] && [ -s "$GD_AB_PASS" ] && echo "Backup-Passwort: $(cat "$GD_AB_PASS")")
 
@@ -356,7 +356,8 @@ gd_fresh_install() {
     # Läuft die Domain über den Cloudflare-Proxy, gibt es die Wahl: Proxy ausschalten oder DNS-01 per API-Token
     gd_ssl_method_ask "$GD_DOMAIN" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
 
-    GD_EMAIL="$(gd_ask_email "✉ E-Mail-Adresse" "Gib deine E-Mail-Adresse ein. Sie wird für das SSL-Zertifikat (Let's Encrypt) und dein Administrator-Konto verwendet.\n\nMit der Eingabe stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+    GD_EMAIL="$(gd_ask_email_optional "✉ E-Mail-Adresse (optional)" "Optional: Gib deine E-Mail-Adresse ein oder lass das Feld leer (anonym).\n\nMit E-Mail: Let's Encrypt kann dich vor Ablauf des Zertifikats warnen, und sie wird als Adresse deines Administrator-Kontos verwendet.\nOhne E-Mail: Das Zertifikat wird ohne Kontakt-Adresse ausgestellt (GermanDactyl Setup überwacht die Erneuerung selbst), dein Administrator-Konto erhält admin@${GD_DOMAIN}. Du kannst die Adresse später im Panel ändern.\n\nIn beiden Fällen stimmst du den Nutzungsbedingungen von Let's Encrypt zu:\nhttps://letsencrypt.org/repository/")" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
+    GD_ADMIN_EMAIL="$(gd_admin_email "$GD_EMAIL" "$GD_DOMAIN")"
 
     while true; do
         GD_ADMIN_USER="$(gd_input "☺ Benutzername" "Wähle einen Benutzernamen für dein Administrator-Konto (nur Buchstaben, Zahlen, Punkt, Binde- und Unterstrich):" "admin" 11 70)" || { clear; echo "Die Installation wurde abgebrochen."; exit 0; }
@@ -413,7 +414,7 @@ gd_fresh_install() {
 
     # --- Zusammenfassung ------------------------------------------------------
     local summary
-    summary="Panel:         https://${GD_DOMAIN}\nVersion:       v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(Deutsch, GermanDactyl)' || echo '(Englisch)')\nE-Mail:        ${GD_EMAIL}\nBenutzername:  ${GD_ADMIN_USER}\nTelemetrie:    $( $GD_TELEMETRY && echo an || echo aus)\n"
+    summary="Panel:         https://${GD_DOMAIN}\nVersion:       v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(Deutsch, GermanDactyl)' || echo '(Englisch)')\nE-Mail:        $( [ -n "$GD_EMAIL" ] && echo "$GD_EMAIL" || echo "keine (anonym), Konto: ${GD_ADMIN_EMAIL}")\nBenutzername:  ${GD_ADMIN_USER}\nTelemetrie:    $( $GD_TELEMETRY && echo an || echo aus)\n"
     summary+="Zertifikat:    $( [ "$GD_SSL_METHOD" = cloudflare ] && echo "Let's Encrypt über Cloudflare (DNS-01), Proxy bleibt an" || echo "Let's Encrypt (Webroot)")\n"
     if $with_wings; then
         summary+="Wings:         https://${GD_WINGS_FQDN}:8080 (automatisch verbunden)\nGameserver:    Ports ${GD_PORT_RANGE}\n"

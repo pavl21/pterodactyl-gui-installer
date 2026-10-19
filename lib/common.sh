@@ -232,7 +232,10 @@ gd_progress() {
     if [ "$GD_GAUGE_OPEN" = "1" ]; then
         # In einer Subshell schreiben: Ist whiptail beendet, trifft das SIGPIPE nur die Subshell
         # und nicht die laufende Installation. Danach wird ohne Balken weitergearbeitet.
-        if ! ( printf 'XXX\n%d\n%s\nXXX\n' "$1" "$2" >&7 ) 2>/dev/null; then
+        # Lange Texte umbrechen: Der Balken ist 78 Zeichen breit und schneidet sonst einfach ab
+        local text
+        text="$(printf '%s' "$2" | fold -s -w 72)"
+        if ! ( printf 'XXX\n%d\n%s\nXXX\n' "$1" "$text" >&7 ) 2>/dev/null; then
             GD_GAUGE_OPEN=0
             { exec 7>&-; } 2>/dev/null   # nur den Balken schließen, stderr des Skripts unverändert lassen
             echo "[$1%] $2"
@@ -814,6 +817,48 @@ gd_ask_email() {
         fi
         gd_msg "E-Mail-Adresse ungültig" "Bitte prüfe die E-Mail-Adresse und versuche es erneut." 9 60
     done
+}
+
+gd_ask_email_optional() {
+    # gd_ask_email_optional "Titel" "Text" -> gibt eine geprüfte E-Mail ODER einen leeren String aus (Feld leer =
+    # anonym). Rückgabe 1 nur bei Abbruch.
+    local title="$1" text="$2" value=""
+    while true; do
+        value="$(gd_input "$title" "$text" "$value" 22 78)" || return 1
+        value="$(tr -d '[:space:]' <<< "$value")"
+        if [ -z "$value" ]; then
+            return 0
+        fi
+        if gd_valid_email "$value"; then
+            echo "$value"
+            return 0
+        fi
+        gd_msg "E-Mail-Adresse ungültig" "Bitte prüfe die E-Mail-Adresse und versuche es erneut oder lass das Feld leer." 9 60
+    done
+}
+
+gd_certbot_mail_args() {
+    # gd_certbot_mail_args <email> – setzt das Array GD_CERTBOT_MAIL für certbot (leere E-Mail = ohne Kontakt-Adresse).
+    # Verwendung: gd_certbot_mail_args "$email"; certbot ... "${GD_CERTBOT_MAIL[@]}" ...
+    if [ -z "${1:-}" ]; then
+        GD_CERTBOT_MAIL=(--register-unsafely-without-email)
+    else
+        GD_CERTBOT_MAIL=(--email "$1")
+    fi
+}
+
+gd_admin_email() {
+    # gd_admin_email <email> <domain> – Adresse des Administrator-Kontos: die E-Mail oder admin@<domain>
+    if [ -n "${1:-}" ]; then
+        printf '%s' "$1"
+    else
+        printf 'admin@%s' "${2:-}"
+    fi
+}
+
+gd_conf_has() {
+    # gd_conf_has KEY – Rückgabe 0, wenn der Schlüssel in der Konfiguration steht (auch mit leerem Wert)
+    [ -r "$GD_CONF_FILE" ] && grep -q "^$1=" "$GD_CONF_FILE"
 }
 
 # ---------------------------------------------------------------------------
