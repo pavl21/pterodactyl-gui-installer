@@ -238,3 +238,28 @@ gd_security_backup_setup() {
     gd_apt_install jq || return 1
     GD_AB_SETUP_OK=true
 }
+
+gd_autostart_enabled() {
+    # Ist "Verwaltung nach dem SSH-Login starten" eingeschaltet? (Die Datei ist vorhanden.)
+    [ -f "$GD_AUTOSTART_FILE" ]
+}
+
+gd_autostart_enable() {
+    # Legt das Startskript unter /etc/profile.d an. Es startet die Verwaltung nur in interaktiven SSH-Sitzungen als root;
+    # scp, rsync und sftp sind nicht interaktiv und bleiben unberührt. "0 Beenden" führt zurück zur Shell.
+    cat > "$GD_AUTOSTART_FILE" <<'EOF'
+# Angelegt von GermanDactyl Setup: Verwaltung nach dem Login starten (nur interaktive Sitzungen)
+case $- in *i*) ;; *) return 0 2>/dev/null || exit 0 ;; esac
+[ -t 0 ] && [ -t 1 ] || return 0
+[ "$(id -u)" = 0 ] || return 0
+[ -n "${SSH_CONNECTION:-}" ] || return 0
+[ -z "${GD_AUTOSTART_DONE:-}" ] || return 0
+export GD_AUTOSTART_DONE=1
+[ -x /usr/local/bin/germandactyl ] && /usr/local/bin/germandactyl
+EOF
+    chmod 644 "$GD_AUTOSTART_FILE"
+}
+
+gd_autostart_disable() {
+    rm -f "$GD_AUTOSTART_FILE"
+}

@@ -14,7 +14,9 @@ Im Express-Modus brauchst du nur deine Domain, alles andere wird automatisch mit
 
 Ist Pterodactyl bereits installiert, öffnet sich stattdessen die Verwaltung. Dort findest du Hilfe & Analyse, Updates, Backups, Wings und Ports, Blueprint, phpMyAdmin, Database-Host, Firewall, fail2ban, SSH-Loginseite, Swap und die Deinstallation.
 
-Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germandactyl` bzw. kurz `gmd` oder `gd` (`gmd` und `gd` nur, wenn es auf dem Server noch keinen gleichnamigen Befehl gibt).
+Nach der Installation startest du die Verwaltung jederzeit mit dem Befehl `germandactyl` bzw. kurz `gmd` oder `gd` (`gmd` und `gd` nur, wenn es auf dem Server noch keinen gleichnamigen Befehl gibt). Der Befehl startet sofort aus einer lokalen Kopie unter `/usr/local/lib/germandactyl`; Updates prüft er im Hintergrund.
+
+Optional startet die Verwaltung direkt nach jedem SSH-Login als root. Das schaltest du im Menü unter „Server & Sicherheit“ (Punkt 5) ein.
 
 ## Kurzbefehle
 
@@ -34,6 +36,8 @@ Für häufige Aufgaben musst du das Menü nicht öffnen. Alle Befehle funktionie
 | `gmd firewall` | Öffnet die Firewall-Verwaltung |
 | `gmd logs` | Zeigt die Logs |
 | `gmd status` | Zeigt die Statuszeile |
+| `gmd support` | Erstellt ein Support-Paket, optional mit Upload zu mclo.gs |
+| `gmd dbhost-sync` | Gleicht die Firewall des Database-Hosts mit den Nodes ab |
 | `gmd hilfe` | Zeigt alle Kurzbefehle |
 
 ## Voraussetzungen
@@ -58,6 +62,7 @@ Für häufige Aufgaben musst du das Menü nicht öffnen. Alle Befehle funktionie
   - Automatische Sicherheitsupdates
   - Absicherung der MariaDB
 - **Automatische Backups (optional):** täglich, inkrementell und verschlüsselt mit restic – Panel, alle Datenbanken (auch die der Gameserver), Konfigurationen und auf Wunsch die Gameserver-Daten. Das Passwort des Backup-Archivs wird am Ende angezeigt; bewahre es sicher auf, ohne es lassen sich die Backups nicht wiederherstellen.
+- **Database-Host:** Liegt das Panel auf diesem Server, legt das Setup den Database-Host automatisch im Panel an. Die Firewall für Port 3306 wird danach mit den Nodes abgeglichen, auch jede Nacht um 04:30 Uhr.
 - **Blueprint (optional):** Das Framework für Erweiterungen und Themes ([blueprint.zip](https://blueprint.zip)). Es wird bei Panel-Updates automatisch erneut angewendet.
 
 ## Voreinstellungen
@@ -65,6 +70,8 @@ Für häufige Aufgaben musst du das Menü nicht öffnen. Alle Befehle funktionie
 - Die Datenbank für das Panel wird automatisch mit einem zufälligen Passwort angelegt. Diese Datenbank darf **nicht** als Database-Host verwendet werden – dafür gibt es in der Verwaltung einen eigenen Menüpunkt.
 - **Telemetrie:** Bei der Installation wirst du gefragt, ob das Panel anonyme Nutzungsdaten (z. B. Versionen und Anzahl der Server) an die Pterodactyl-Entwickler senden darf ([Details](https://pterodactyl.io/panel/1.0/additional_configuration.html#telemetry)).
 - **E-Mail-Adresse ist optional:** Ohne Angabe wird das Zertifikat ohne Kontakt-Adresse ausgestellt und das Administrator-Konto heißt `admin@<deine-domain>`.
+- **Zugangsdaten als Download:** Die Admin-Zugangsdaten, das Backup-Passwort und die Daten des Database-Hosts kannst du optional als Textdatei herunterladen. Der Link ist nur 90 Sekunden gültig, danach wird die Datei gelöscht.
+- **Support-Paket:** `gmd support` erstellt ein Archiv und eine Textdatei mit den wichtigsten Informationen. Passwörter, Tokens und E-Mail-Adressen werden entfernt. Der Upload zu mclo.gs ist optional, erst nach einer Vorschau möglich und danach öffentlich abrufbar.
 - **Log-Dateien:** Alle Schritte werden in `/var/log/germandactyl-setup/` protokolliert.
 
 ## Hinweis

@@ -42,7 +42,7 @@ _gd_headless_report() {
     printf 'LAST_UPDATE_RESULT=%q\nLAST_UPDATE_TIME=%q\nLAST_UPDATE_NOTE=%q\n' "$1" "$(date '+%F %T')" "$2" >> "$state"
 }
 
-GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup autoupdate uninstall manage)
+GD_LIBS=(common germandactyl security panel wings blueprint backup autobackup autoupdate dbhost uninstall manage)
 GD_BRANCH="${GD_BRANCH:-main}"
 _gd_self="${BASH_SOURCE[0]:-}"
 # Lokaler Checkout nur, wenn neben dem Skript lib/common.sh liegt. Startet der Kurzbefehl installer.sh als Datei aus
@@ -82,16 +82,56 @@ trap 'gd_cleanup; exit 130' INT HUP TERM
 # Vorbereitung
 # ---------------------------------------------------------------------------
 gd_spinner() {
-    # gd_spinner <pid> "Text" – einfache Ladeanimation, solange der Prozess läuft. Wartet apt auf einen anderen
-    # Prozess (gd_wait_for_apt), steht dessen Meldung statt des Standardtexts da.
-    local pid="$1" msg="$2" chars='|/-\' i=0 shown
+    # gd_spinner <pid> "Text" – Ladeanimation (Braille-Punkte, alle 0,1 s) in der letzten Zeile, solange der Prozess läuft.
+    # Nur auf einem Terminal (stdout); sonst wird nur gewartet. Wartet apt auf einen anderen Prozess (gd_wait_for_apt),
+    # steht dessen Meldung statt des Standardtexts da. Der Prozess wird hier nicht eingesammelt (das macht der Aufrufer).
+    local pid="$1" msg="$2" i=0 shown
+    local frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
     while kill -0 "$pid" 2>/dev/null; do
-        shown="$msg"
-        [ -s "$GD_TMP/apt-wait.msg" ] && shown="$(head -n1 "$GD_TMP/apt-wait.msg" 2>/dev/null)"
-        printf '\r\033[K [%c]  %s' "${chars:i++%4:1}" "$shown"
-        sleep 0.3
+        if [ -t 1 ]; then
+            shown="$msg"
+            [ -s "$GD_TMP/apt-wait.msg" ] && shown="$(head -n1 "$GD_TMP/apt-wait.msg" 2>/dev/null)"
+            printf '\r\033[K %s  %s' "${frames[i]}" "$shown"
+        fi
+        i=$(( (i + 1) % ${#frames[@]} ))
+        sleep 0.1
     done
-    printf '\r\033[K'
+    if [ -t 1 ]; then printf '\r\033[K'; fi
+}
+
+gd_prepare_line() {
+    # gd_prepare_line ok|fail "Text" – eine Zeile der Schrittliste. Das ✔ ist dezent grün (tput, nur auf einem Terminal).
+    local g="" r=""
+    if [ "$1" = ok ]; then
+        if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
+            g="$(tput setaf 2 2>/dev/null)"; r="$(tput sgr0 2>/dev/null)"
+        fi
+        printf '  %s✔%s %s\n' "$g" "$r" "$2"
+    else
+        printf '  ✘ %s\n' "$2"
+    fi
+}
+
+gd_prepare_step() {
+    # gd_prepare_step "Schritt" "Schritt fertig" <befehl...> – führt den Befehl im Hintergrund aus (Ausgabe ins Log),
+    # zeigt währenddessen die Animation und danach die Zeile ✔ bzw. ✘. Rückgabe: Rückgabe des Befehls.
+    local running="$1" finished="$2" pid rc
+    shift 2
+    ( "$@" ) >> "$GD_LOG" 2>&1 &
+    pid=$!
+    gd_spinner "$pid" "$running ..."
+    wait "$pid"; rc=$?
+    if [ "$rc" -eq 0 ]; then gd_prepare_line ok "$finished"; else gd_prepare_line fail "$running"; fi
+    return "$rc"
+}
+
+gd_prepare_failed() {
+    echo ""
+    echo "Ein Fehler ist während der Vorbereitung aufgetreten. Mögliche Ursachen:"
+    echo " - Fehlerhafte Paketquellen in apt (prüfe mit 'apt-get update')"
+    echo " - Im Hintergrund läuft bereits ein Installations- oder Updateprozess"
+    echo "Details findest du im Log: $GD_LOG"
+    exit 1
 }
 
 gd_prepare_system() {
@@ -100,20 +140,11 @@ gd_prepare_system() {
     # apt-Zeitgeber werden für die Installation angehalten (nur gestoppt, nicht deaktiviert); gd_cleanup startet sie
     # beim Beenden wieder. Ein bereits laufender Update-Prozess wird in gd_wait_for_apt abgewartet.
     gd_apt_timers_stop
-    (
-        dpkg --configure -a
-        gd_apt_update; gd_apt_install whiptail curl dnsutils ca-certificates gnupg lsb-release jq iproute2 psmisc tar
-    ) >> "$GD_LOG" 2>&1 &
-    local pid=$!
-    gd_spinner "$pid" "Grundpakete werden installiert..."
-    if ! wait "$pid"; then
-        echo ""
-        echo "Ein Fehler ist während der Vorbereitung aufgetreten. Mögliche Ursachen:"
-        echo " - Fehlerhafte Paketquellen in apt (prüfe mit 'apt-get update')"
-        echo " - Im Hintergrund läuft bereits ein Installations- oder Updateprozess"
-        echo "Details findest du im Log: $GD_LOG"
-        exit 1
-    fi
+    # Schrittliste: Jeder Schritt läuft einzeln; fertige Schritte bleiben als ✔ stehen, der laufende hat die Animation
+    gd_prepare_step "Paketstatus prüfen" "Paketstatus geprüft" dpkg --configure -a || gd_prepare_failed
+    gd_prepare_step "Paketquellen aktualisieren" "Paketquellen aktualisiert" gd_apt_update || gd_prepare_failed
+    gd_prepare_step "Grundpakete installieren" "Grundpakete installiert" \
+        gd_apt_install whiptail curl dnsutils ca-certificates gnupg lsb-release jq iproute2 psmisc tar || gd_prepare_failed
 }
 
 gd_check_environment() {
@@ -275,6 +306,8 @@ gd_resume_install() {
         # shellcheck disable=SC1090
         . "$GD_PENDING_CREDENTIALS"
         gd_show_credentials
+        gd_source_lib download
+        gd_download_offer "Admin-Zugangsdaten" "Panel: https://${GD_DOMAIN}\nBenutzername: ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_ADMIN_EMAIL:-$GD_EMAIL}\nPasswort: ${GD_ADMIN_PASSWORD}"
     fi
     if $wings_missing; then
         gd_yesno "⇄ Einrichtung fortsetzen" "$text" 13 76 || return 0
@@ -305,6 +338,8 @@ gd_resume_install() {
     if $have_opts; then
         if [ "${GD_SEC_BACKUP:-false}" = true ] && [ -s "$GD_AB_PASS" ]; then
             gd_msg_secret "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+            gd_source_lib download
+            gd_download_offer "Backup-Passwort" "Passwort der verschlüsselten Backups: $(cat "$GD_AB_PASS")"
         fi
         done_text="Die Einrichtung wurde abgeschlossen."
         [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
@@ -512,8 +547,11 @@ gd_fresh_install() {
 
     # --- Abschluss ------------------------------------------------------------
     gd_show_credentials
+    gd_source_lib download
+    gd_download_offer "Admin-Zugangsdaten" "Panel: https://${GD_DOMAIN}\nBenutzername: ${GD_ADMIN_USER}\nE-Mail-Adresse: ${GD_ADMIN_EMAIL:-$GD_EMAIL}\nPasswort: ${GD_ADMIN_PASSWORD}"
     if [ "$GD_SEC_BACKUP" = true ] && [ -s "$GD_AB_PASS" ]; then
         gd_msg_secret "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+        gd_download_offer "Backup-Passwort" "Passwort der verschlüsselten Backups: $(cat "$GD_AB_PASS")"
     fi
     if gd_yesno "▣ Zugangsdaten speichern?" "Sollen die Zugangsdaten zusätzlich in einer Datei gespeichert werden, die nur root lesen kann?\n\n/root/germandactyl-zugangsdaten.txt" 11 70; then
         gd_save_credentials
@@ -531,6 +569,10 @@ gd_fresh_install() {
     gd_msg "✔ Installation erfolgreich" "$done_text" 22 78
     # Befehl für die Verwaltung, wichtigste Kurzbefehle, Login-Hinweis und Log-Verzeichnis
     gd_shortcut_help_text dialog
+    # Optional: Verwaltung direkt nach dem SSH-Login starten. Im Express-Modus wird nicht gefragt, die Option bleibt aus.
+    if ! $express && gd_whip --defaultno --yesno "Verwaltung nach dem SSH-Login automatisch starten?\n\nMeldest du dich per SSH als root an, öffnet sich dann direkt die Verwaltung. Mit Strg+C oder '0 Beenden' kommst du zur Shell. Die Einstellung lässt sich später unter 'Server & Sicherheit' ändern." 14 74; then
+        gd_autostart_enable
+    fi
     clear
     echo ""
     echo "FERTIG - - - - - - - - - - - - - - -"
