@@ -9,6 +9,14 @@ GD_PANEL_DB_USER="pterodactyl"
 # ---------------------------------------------------------------------------
 # Einzelschritte
 # ---------------------------------------------------------------------------
+gd_php_repo_check() {
+    # gd_apt_update verschluckt Fehler der Paketquellen: Nach dem Einrichten der PHP-Quelle gezielt prüfen, ob die
+    # gewünschte PHP-Version überhaupt installierbar ist (sonst folgt später nur "Unable to locate package")
+    gd_apt_has_candidate "php${GD_PHP_VERSION}-fpm" && return 0
+    echo "Paketquelle für PHP ${GD_PHP_VERSION} (${GD_OS_CODENAME}) liefert keine Pakete – apt-get update prüfen"
+    return 1
+}
+
 gd_php_repo() {
     # PHP über das sury-Repository (Debian und Ubuntu, auch Ubuntu 26.04)
     gd_os_detect
@@ -23,6 +31,7 @@ gd_php_repo() {
         echo "Vorhandene PHP-Paketquelle wird verwendet: $(tr '\n' ' ' <<< "$existing")"
         rm -f /etc/apt/sources.list.d/sury-php.list
         gd_apt_update
+        gd_php_repo_check
         return
     fi
     install -m 0755 -d /etc/apt/keyrings
@@ -30,6 +39,7 @@ gd_php_repo() {
     echo "deb [signed-by=/etc/apt/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${GD_OS_CODENAME} main" \
         > /etc/apt/sources.list.d/sury-php.list
     gd_apt_update
+    gd_php_repo_check
 }
 
 gd_php_packages() {
@@ -90,8 +100,8 @@ gd_panel_packages() {
 gd_composer_install() {
     # Composer mit Prüfung der offiziellen Signatur installieren
     local expected actual
-    expected="$(curl -fsSL https://composer.github.io/installer.sig)" || return 1
-    curl -fsSL https://getcomposer.org/installer -o "$GD_TMP/composer-setup.php" || return 1
+    expected="$(gd_curl https://composer.github.io/installer.sig)" || return 1
+    gd_curl https://getcomposer.org/installer -o "$GD_TMP/composer-setup.php" || return 1
     actual="$(php -r "echo hash_file('sha384', '$GD_TMP/composer-setup.php');")"
     if [ "$expected" != "$actual" ]; then
         echo "Die Signatur des Composer-Installers stimmt nicht überein – Abbruch."
@@ -129,8 +139,7 @@ gd_panel_fetch() {
         return 0
     fi
     rm -f "$file"
-    if ! curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 20 --max-time 600 \
-        "https://github.com/pterodactyl/panel/releases/download/v${version}/panel.tar.gz" -o "$file"; then
+    if ! gd_curl "https://github.com/pterodactyl/panel/releases/download/v${version}/panel.tar.gz" -o "$file"; then
         rm -f "$file"
         echo "Der Download von Panel v${version} ist fehlgeschlagen (github.com erreichbar? Gibt es die Version?)."
         return 1
@@ -1408,7 +1417,7 @@ gd_panel_update() {
         gd_panel_detect_changes "$installed" >> "$GD_LOG" 2>&1
         rc=$?
     fi
-    text="Installiert: v${installed:-unbekannt}\nZiel: v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(mit deutscher Übersetzung)' || echo '(Englisch)')\n\nDas Panel ist während der Aktualisierung einige Minuten nicht erreichbar. Änderungen an Dateien des Panels (Themes/Addons) werden dabei überschrieben.\n\nVor dem Update wird automatisch eine Sicherung (Dateien + Datenbank) erstellt.\n\nMöchtest du fortfahren?"
+    text="Installiert: v${installed:-unbekannt}\nZiel: v${GD_PANEL_VERSION} $( [ "$GD_APPLY_PATCH" = "true" ] && echo '(mit deutscher Übersetzung)' || echo '(Englisch)')\n\nDas Panel ist während der Aktualisierung einige Minuten nicht erreichbar. Änderungen an Dateien des Panels (Themes/Erweiterungen) werden dabei überschrieben.\n\nVor dem Update wird automatisch eine Sicherung (Dateien + Datenbank) erstellt.\n\nMöchtest du fortfahren?"
     case "$rc" in
         1) gd_panel_update_changes_dialog "$installed" || return 1 ;;
         2)

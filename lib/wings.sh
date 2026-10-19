@@ -33,21 +33,28 @@ gd_docker_install() {
             > /etc/apt/sources.list.d/docker.list
     fi
     gd_apt_update
+    # gd_apt_update verschluckt Fehler: Liefert die frisch eingerichtete Docker-Quelle keine Pakete (z. B. weil es für
+    # die Version des Systems noch kein Repository gibt), hier eine klare Meldung statt "Unable to locate package"
+    if ! gd_apt_has_candidate docker-ce; then
+        echo "Paketquelle für Docker (${GD_OS_CODENAME}) liefert keine Pakete – apt-get update prüfen"
+        return 1
+    fi
     gd_apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || return 1
     systemctl enable --now docker
 }
 
 gd_wings_fetch() {
-    # gd_wings_fetch <url> <ziel> – Wings herunterladen, prüfen und installieren.
+    # gd_wings_fetch <url> <ziel> [version] – Wings herunterladen, prüfen und installieren. Mit Angabe einer Version
+    # muss das Programm genau diese Version melden ("wings version").
     # Wings veröffentlicht keine Prüfsummen-Datei; daher wird geprüft, dass ein vollständiges,
     # auf dieser Architektur lauffähiges Programm angekommen ist (statt z. B. einer HTML-Fehlerseite).
     # Download direkt neben das Ziel: /tmp ist auf gehärteten Servern oft "noexec", dann ließe sich
     # das Programm dort nicht testweise starten
-    local url="$1" dest="$2" tmp size
+    local url="$1" dest="$2" want="${3:-}" tmp size
     mkdir -p "$(dirname "$dest")"
     tmp="$(dirname "$dest")/.wings-download.$$"
     rm -f "$tmp"
-    curl -fL --retry 3 --retry-delay 3 --connect-timeout 20 "$url" -o "$tmp" \
+    gd_curl "$url" -o "$tmp" \
         || { rm -f "$tmp"; echo "Download fehlgeschlagen: $url"; return 1; }
     size="$(stat -c %s "$tmp" 2>/dev/null || echo 0)"
     if [ "$size" -lt 5000000 ] || [ "$(head -c 4 "$tmp" | od -An -c | tr -d ' ')" != "177ELF" ]; then
@@ -62,6 +69,12 @@ gd_wings_fetch() {
         echo "Das heruntergeladene Wings-Programm lässt sich auf diesem Server nicht ausführen (Architektur: $(gd_arch))."
         return 1
     fi
+    # Wurde eine bestimmte Version angefordert, muss die Datei sie auch melden (sonst z. B. falsches Release-Asset)
+    if [ -n "$want" ] && ! timeout 20 "$tmp" version 2>/dev/null | grep -qF "$want"; then
+        rm -f "$tmp"
+        echo "Das heruntergeladene Wings-Programm meldet nicht die angeforderte Version v${want}."
+        return 1
+    fi
     # mv auf demselben Dateisystem ersetzt atomar – funktioniert auch, während Wings läuft (Update)
     mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
     echo "Installiert: Wings v$("$dest" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -n1)"
@@ -72,7 +85,7 @@ gd_wings_binary() {
     # gd_wings_binary [version] – lädt Wings (ohne Angabe: die neueste Version) und ersetzt $WINGS_BIN. Setzt
     # GD_WINGS_BINARY_VERSION. WINGS_VERSION in setup.conf wird hier bewusst NICHT geschrieben: erst der Aufrufer
     # speichert sie, nachdem Wings mit der neuen Datei erfolgreich gestartet ist.
-    local arch version="${1:-}"
+    local arch version="${1:-}" requested="${1:-}"
     GD_WINGS_BINARY_VERSION=""
     arch="$(gd_arch)"
     case "$arch" in amd64|arm64) ;; *) echo "Nicht unterstützte Architektur: $arch"; return 1 ;; esac
@@ -80,7 +93,7 @@ gd_wings_binary() {
         version="$(gd_latest_release pterodactyl/wings)" || { echo "Die aktuelle Wings-Version konnte nicht ermittelt werden."; return 1; }
     fi
     mkdir -p /etc/pterodactyl /var/lib/pterodactyl/volumes
-    gd_wings_fetch "https://github.com/pterodactyl/wings/releases/download/v${version}/wings_linux_${arch}" "$WINGS_BIN" || return 1
+    gd_wings_fetch "https://github.com/pterodactyl/wings/releases/download/v${version}/wings_linux_${arch}" "$WINGS_BIN" "$requested" || return 1
     GD_WINGS_BINARY_VERSION="$version"
 }
 
@@ -313,8 +326,30 @@ gd_wings_start() {
     return 1
 }
 
+gd_wings_verify_external() {
+    # gd_wings_verify_external <fqdn> <port> <header-datei> – zweiter Versuch ohne --resolve, also über DNS und die
+    # öffentliche IP – so erreichen Panel-Besucher und das Panel Wings tatsächlich. Immer Rückgabe 0: Scheitert nur dieser
+    # Weg (Firewall des Hosters, Portfreigabe; hinter NAT evtl. fehlendes Hairpin-NAT), steht eine Warnung in GD_WARNINGS.
+    local fqdn="$1" port="$2" hdr="$3" code i warn
+    for i in 1 2 3; do
+        code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 10 \
+            -H "@${hdr}" "https://${fqdn}:${port}/api/system")"
+        echo "Wings-API über DNS/öffentliche IP antwortet mit HTTP $code"
+        [ "$code" = "200" ] && return 0
+        sleep 3
+    done
+    warn="Wings läuft, ist aber von außen auf Port ${port} nicht erreichbar – prüfe die Firewall deines Hosters (Hetzner/OVH/Oracle Cloud) und Portfreigaben für ${port} und 2022."
+    gd_log "WARNUNG: $warn"
+    case "${GD_WARNINGS:-}" in
+        *"$warn"*) ;;
+        *) GD_WARNINGS="${GD_WARNINGS:+$GD_WARNINGS\n}⚠ $warn" ;;
+    esac
+    return 0
+}
+
 gd_wings_verify() {
-    # Fragt die Wings-API mit dem Node-Token ab – entspricht dem "grünen Herz" im Panel
+    # Fragt die Wings-API mit dem Node-Token ab – entspricht dem "grünen Herz" im Panel. Die Prüfung läuft zuerst nur
+    # über 127.0.0.1 (--resolve), danach zusätzlich von außen (gd_wings_verify_external, nicht fatal).
     # gd_wings_verify <fqdn> [config.yml] – Standard: Pterodactyl-Wings
     local fqdn="$1" cfg="${2:-$WINGS_CONFIG}" token port code i hdr="$GD_TMP/wings-auth.hdr"
     token="$(awk '$1=="token:"{print $2; exit}' "$cfg" | tr -d "'\"")"
@@ -327,7 +362,11 @@ gd_wings_verify() {
         code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${fqdn}:${port}:127.0.0.1" \
             -H "@${hdr}" "https://${fqdn}:${port}/api/system")"
         echo "Wings-API antwortet mit HTTP $code"
-        if [ "$code" = "200" ]; then rm -f "$hdr"; return 0; fi
+        if [ "$code" = "200" ]; then
+            gd_wings_verify_external "$fqdn" "$port" "$hdr"
+            rm -f "$hdr"
+            return 0
+        fi
         sleep 3
     done
     rm -f "$hdr"
@@ -443,7 +482,7 @@ gd_allocation_ip() {
 
 gd_allocations_add() {
     # gd_allocations_add <node-id> <ip> <alias oder leer> <port oder bereich> – Ports im Panel anlegen
-    local node="$1" ip="$2" alias_ip="$3" range="$4" a b port values="" alias_php="null"
+    local node="$1" ip="$2" alias_ip="$3" range="$4" a b port values="" alias_php="null" out count
     # ip und alias_ip stammen teils aus Netzwerkabfragen bzw. der Panel-Datenbank und landen unten in PHP-Code
     # und SQL: vorher strikt prüfen (nur IP-Zeichen bzw. Hostname-Zeichen, keine Anführungszeichen o. Ä.)
     [[ "$node" =~ ^[0-9]+$ ]] || return 1
@@ -451,16 +490,26 @@ gd_allocations_add() {
     [[ "$range" =~ ^[0-9]{1,5}(-[0-9]{1,5})?$ ]] || return 1
     [[ -z "$alias_ip" || "$alias_ip" =~ ^[A-Za-z0-9.:_-]{1,191}$ ]] || alias_ip=""
     [ -n "$alias_ip" ] && alias_php="'${alias_ip}'"
-    if gd_artisan_www tinker --execute="app(\\Pterodactyl\\Services\\Allocations\\AssignmentService::class)->handle(\\Pterodactyl\\Models\\Node::findOrFail(${node}), ['allocation_ip' => '${ip}', 'allocation_alias' => ${alias_php}, 'allocation_ports' => ['${range}']]); echo 'OK';" | grep -q 'OK'; then
+    # Ausgabe samt Fehlermeldungen aufnehmen: scheitert dieser Weg, steht der Grund im Log
+    out="$(gd_artisan_www tinker --execute="app(\\Pterodactyl\\Services\\Allocations\\AssignmentService::class)->handle(\\Pterodactyl\\Models\\Node::findOrFail(${node}), ['allocation_ip' => '${ip}', 'allocation_alias' => ${alias_php}, 'allocation_ports' => ['${range}']]); echo 'OK';" 2>&1)"
+    if grep -q 'OK' <<< "$out"; then
         echo "Ports ${range} für ${ip} angelegt (über das Panel)."
     else
+        gd_log "Ports ${range} konnten nicht über das Panel (tinker) angelegt werden – Rückfall auf die Datenbank. Ausgabe von tinker:"
+        printf '%s\n' "$out" | tail -n 20 | cut -c1-300 >> "$GD_LOG"
         # Rückfallebene: direkt in die Datenbank schreiben (doppelte Einträge werden ignoriert)
         a="${range%-*}"; b="${range#*-}"
         for port in $(seq "$a" "$b"); do
             values+="(${node},'${ip}',$( [ -n "$alias_ip" ] && echo "'${alias_ip}'" || echo NULL ),${port},NOW(),NOW()),"
         done
         gd_panel_sql "INSERT IGNORE INTO allocations (node_id, ip, ip_alias, port, created_at, updated_at) VALUES ${values%,};" || return 1
-        echo "Ports ${range} für ${ip} angelegt (direkt in der Datenbank)."
+        # Kontrolle: Es müssen jetzt Ports für die Node existieren (ein stiller Fehler ließe sonst eine Node ohne Ports zurück)
+        count="$(gd_panel_sql "SELECT COUNT(*) FROM allocations WHERE node_id=${node};")"
+        if ! [[ "$count" =~ ^[0-9]+$ ]] || [ "$count" -lt 1 ]; then
+            echo "Die Ports konnten nicht angelegt werden: Für die Node ${node} gibt es keine Allocations."
+            return 1
+        fi
+        echo "Ports ${range} für ${ip} angelegt (direkt in der Datenbank, ${count} Ports für die Node vorhanden)."
     fi
 }
 

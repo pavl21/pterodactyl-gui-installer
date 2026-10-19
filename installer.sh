@@ -138,17 +138,24 @@ trap 'gd_cleanup; exit 130' INT HUP TERM
 # Vorbereitung
 # ---------------------------------------------------------------------------
 gd_spinner() {
-    # gd_spinner <pid> "Text" – einfache Ladeanimation, solange der Prozess läuft
-    local pid="$1" msg="$2" chars='|/-\' i=0
+    # gd_spinner <pid> "Text" – einfache Ladeanimation, solange der Prozess läuft. Wartet apt auf einen anderen
+    # Prozess (gd_wait_for_apt), steht dessen Meldung statt des Standardtexts da.
+    local pid="$1" msg="$2" chars='|/-\' i=0 shown
     while kill -0 "$pid" 2>/dev/null; do
-        printf '\r [%c]  %s' "${chars:i++%4:1}" "$msg"
+        shown="$msg"
+        [ -s "$GD_TMP/apt-wait.msg" ] && shown="$(head -n1 "$GD_TMP/apt-wait.msg" 2>/dev/null)"
+        printf '\r\033[K [%c]  %s' "${chars:i++%4:1}" "$shown"
         sleep 0.3
     done
-    printf '\r%*s\r' $((${#msg} + 8)) ''
+    printf '\r\033[K'
 }
 
 gd_prepare_system() {
     gd_status "Vorbereitung: Benötigte Grundpakete werden installiert..."
+    # Frisch gestartete Server spielen oft sofort Updates ein (unattended-upgrades) und sperren dabei apt. Die täglichen
+    # apt-Zeitgeber werden für die Installation angehalten (nur gestoppt, nicht deaktiviert); gd_cleanup startet sie
+    # beim Beenden wieder. Ein bereits laufender Update-Prozess wird in gd_wait_for_apt abgewartet.
+    gd_apt_timers_stop
     (
         dpkg --configure -a
         gd_apt_update; gd_apt_install whiptail curl dnsutils ca-certificates gnupg lsb-release jq iproute2 psmisc tar
@@ -166,6 +173,12 @@ gd_prepare_system() {
 }
 
 gd_check_environment() {
+    # IPv4: Pterodactyl, GitHub und Let's Encrypt benötigen eine IPv4-Verbindung (reine IPv6-Server scheitern sonst
+    # später an irgendeinem Download). Ohne das Programm "ip" lässt sich das nicht prüfen – dann wird nichts beanstandet.
+    if command -v ip >/dev/null 2>&1 && ! gd_has_ipv4_route; then
+        gd_die "Dieser Server hat keine IPv4-Verbindung. Pterodactyl, GitHub und Let's Encrypt benötigen IPv4 (NAT64/DNS64 einrichten)."
+    fi
+
     # Betriebssystem
     if ! gd_os_supported; then
         gd_warn_colors_on
@@ -174,6 +187,8 @@ gd_check_environment() {
             clear; echo "Die Installation wurde abgebrochen."; exit 0
         fi
         gd_warn_colors_off
+    elif [ "${GD_OS_UNTESTED:-false}" = true ]; then
+        gd_msg "Neueres Betriebssystem – nicht getestet" "Dein System ($GD_OS_NAME) ist neuer als die getesteten Versionen (Debian 12, 13 und Ubuntu 22.04, 24.04, 26.04) und wurde mit diesem Skript nicht getestet.\n\nDie Installation wird fortgesetzt. Fehlt für dein System eine Paketquelle (z. B. für PHP oder Docker), bricht sie mit einer entsprechenden Meldung ab." 13 72
     fi
 
     # CPU-Architektur: Pterodactyl unterstützt amd64 und arm64
@@ -185,6 +200,32 @@ gd_check_environment() {
             gd_msg "Nicht unterstützte CPU-Architektur" "Die CPU-Architektur '$(uname -m)' wird von Pterodactyl nicht unterstützt (nur amd64 und arm64). Die Installation wird abgebrochen." 10 70
             clear; exit 1 ;;
     esac
+
+    # Systemzeit: Ohne synchronisierte Uhr scheitern Zertifikate (Let's Encrypt) und die Signaturprüfung von apt.
+    # Nur bei einer eindeutigen Antwort ("no") eingreifen; in Containern ohne systemd liefert timedatectl nichts.
+    if command -v timedatectl >/dev/null 2>&1 && [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "no" ]; then
+        gd_log "Systemzeit nicht per NTP synchronisiert – systemd-timesyncd wird aktiviert"
+        systemctl enable --now systemd-timesyncd >> "$GD_LOG" 2>&1
+        for _ in 1 2 3 4 5; do
+            [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "yes" ] && break
+            sleep 2
+        done
+        if [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" != "yes" ]; then
+            gd_msg "Systemzeit nicht synchronisiert" "Die Uhr dieses Servers ist nicht per NTP synchronisiert (aktuelle Zeit: $(date '+%d.%m.%Y %H:%M:%S %Z')). Ich habe versucht, die Zeitsynchronisierung (systemd-timesyncd) zu aktivieren.\n\nGeht die Uhr falsch, scheitern das SSL-Zertifikat (Let's Encrypt) und Paket-Downloads. Prüfe nach der Installation mit 'timedatectl', ob die Zeit stimmt." 14 76
+        fi
+    fi
+
+    # Freier Speicherplatz auf /: Panel, Docker-Images und Gameserver brauchen Platz
+    local free_mb
+    free_mb="$(df -Pm / 2>/dev/null | awk 'NR==2{print $4}')"
+    if [[ "$free_mb" =~ ^[0-9]+$ ]] && [ "$free_mb" -lt 8000 ]; then
+        gd_warn_colors_on
+        if ! gd_yesno "⚠ Wenig freier Speicherplatz" "Auf '/' sind nur noch ${free_mb} MB frei. Für Panel, Docker-Images und Gameserver werden mindestens 8000 MB (8 GB) empfohlen – die Installation kann sonst mittendrin an Speichermangel scheitern.\n\nMöchtest du trotzdem fortfahren?" 13 74; then
+            gd_warn_colors_off
+            clear; echo "Die Installation wurde abgebrochen (zu wenig freier Speicherplatz: ${free_mb} MB)."; exit 0
+        fi
+        gd_warn_colors_off
+    fi
 
     # Heimnetz / NAT
     local local_ip
@@ -209,6 +250,11 @@ gd_check_environment() {
             clear; echo "Die Installation wurde abgebrochen (Port 80/443 belegt: ${blocker})."; exit 1
         fi
     fi
+
+    # Hinweis (kein Abbruch): Eine abreißende SSH-Verbindung unterbricht die Installation. In tmux/screen läuft sie weiter.
+    if [ -z "${TMUX:-}" ] && [ -z "${STY:-}" ] && [ -n "${SSH_CONNECTION:-}" ]; then
+        gd_msg "Tipp: Stabile Verbindung" "Tipp: Die Installation dauert 5 bis 20 Minuten. Bricht die SSH-Verbindung ab, wird sie unterbrochen. Starte das Skript bei instabiler Verbindung in 'tmux' oder 'screen'." 11 72
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -221,6 +267,42 @@ gd_show_credentials() {
 
 GD_PENDING_CREDENTIALS="/etc/germandactyl/zugangsdaten-ausstehend"
 
+gd_install_opts_save() {
+    # Die gewählten Optionen der Installation in setup.conf (INSTALL_OPTS) sichern, damit gd_resume_install nach einem
+    # Abbruch dieselben Schritte (Absicherung, Portbereich ...) ohne neue Rückfragen ausführen kann. Alle Werte sind
+    # einfache Wörter (true/false, Domain, Portbereich, Verfahren) ohne Leerzeichen.
+    gd_conf_set INSTALL_OPTS "GD_SEC_UFW=${GD_SEC_UFW:-false} GD_SEC_FAIL2BAN=${GD_SEC_FAIL2BAN:-false} GD_SEC_UPDATES=${GD_SEC_UPDATES:-false} GD_SEC_BACKUP=${GD_SEC_BACKUP:-false} GD_PORT_RANGE=${GD_PORT_RANGE:-} GD_WINGS_FQDN=${GD_WINGS_FQDN:-} GD_SSL_METHOD=${GD_SSL_METHOD:-webroot}"
+}
+
+# shellcheck disable=SC2034  # die Optionen werden von gd_security_steps und gd_resume_install gelesen
+gd_install_opts_load() {
+    # Liest INSTALL_OPTS und setzt die Variablen wieder. Nur bekannte Namen und unkritische Zeichen werden übernommen
+    # (kein eval). Rückgabe 1, wenn nichts gespeichert ist.
+    local opts kv val
+    opts="$(gd_conf_get INSTALL_OPTS)"
+    [ -n "$opts" ] || return 1
+    for kv in $opts; do
+        val="${kv#*=}"
+        [[ "$val" =~ ^[A-Za-z0-9._:-]*$ ]] || continue
+        case "${kv%%=*}" in
+            GD_SEC_UFW) GD_SEC_UFW="$val" ;;
+            GD_SEC_FAIL2BAN) GD_SEC_FAIL2BAN="$val" ;;
+            GD_SEC_UPDATES) GD_SEC_UPDATES="$val" ;;
+            GD_SEC_BACKUP) GD_SEC_BACKUP="$val" ;;
+            GD_PORT_RANGE) GD_PORT_RANGE="$val" ;;
+            GD_WINGS_FQDN) GD_WINGS_FQDN="$val" ;;
+            GD_SSL_METHOD) GD_SSL_METHOD="$val" ;;
+        esac
+    done
+    return 0
+}
+
+gd_install_opts_clear() {
+    # Nach abgeschlossener Installation werden die gesicherten Optionen nicht mehr gebraucht
+    [ -f "$GD_CONF_FILE" ] && sed -i '/^INSTALL_OPTS=/d' "$GD_CONF_FILE"
+    return 0
+}
+
 gd_pending_credentials_save() {
     # Zugangsdaten zwischenspeichern (nur root), bis sie am Ende angezeigt wurden
     mkdir -p "$(dirname "$GD_PENDING_CREDENTIALS")"
@@ -229,30 +311,61 @@ gd_pending_credentials_save() {
 }
 
 gd_resume_install() {
-    # Panel ist fertig, ein späterer Schritt (Wings oder Absicherung) wurde nicht abgeschlossen
-    local mode text
+    # Panel ist fertig, ein späterer Schritt (Wings oder Absicherung) wurde nicht abgeschlossen.
+    # Die Absicherung (Firewall, fail2ban, Updates, Backups) wird mit den gesicherten Optionen (INSTALL_OPTS) nachgeholt;
+    # die Schritte sind wiederholbar. Fehlt die Sicherung der Optionen (ältere Installation), bleibt es beim Hinweis.
+    local mode text with_wings=false wings_missing=false have_opts=false v done_text
     mode="$(gd_conf_get INSTALL_MODE)"
-    if [ "$mode" = "panel_wings" ] && [ ! -f /etc/pterodactyl/config.yml ]; then
+    gd_install_opts_load && have_opts=true
+    [ "$mode" = "panel_wings" ] && with_wings=true
+    if $with_wings && [ ! -f "$WINGS_CONFIG" ]; then
+        wings_missing=true
         text="Dein Panel ist installiert, aber die Einrichtung von Wings wurde nicht abgeschlossen.\n\nSoll Wings jetzt fertig eingerichtet werden? Das Panel bleibt dabei unverändert."
+    elif $have_opts; then
+        text="Dein Panel ist installiert, aber die letzten Schritte (Absicherung: Firewall, fail2ban, automatische Updates, Backups) wurden nicht abgeschlossen.\n\nSie werden jetzt mit den Einstellungen deiner Installation nachgeholt."
     else
         text="Dein Panel ist installiert, aber die letzten Schritte (z. B. Absicherung) wurden nicht abgeschlossen.\n\nFirewall, fail2ban, automatische Updates und Backups kannst du in der Verwaltung unter 'Server & Sicherheit' bzw. 'Backups' einrichten."
-        mode="panel"
+        with_wings=false
     fi
     if [ -s "$GD_PENDING_CREDENTIALS" ]; then
         # shellcheck disable=SC1090
         . "$GD_PENDING_CREDENTIALS"
         gd_show_credentials
     fi
-    if [ "$mode" = "panel_wings" ]; then
+    if $wings_missing; then
         gd_yesno "⇄ Einrichtung fortsetzen" "$text" 13 76 || return 0
-        gd_run wings-installer.sh
-        [ -f /etc/pterodactyl/config.yml ] || return 0
+        # Erfolg gilt nur, wenn das Skript sauber endet UND Wings läuft: erst dann wird die Installation als fertig markiert
+        if ! gd_run wings-installer.sh || [ ! -f "$WINGS_CONFIG" ] || ! systemctl is-active --quiet wings; then
+            gd_msg "✖ Wings ist nicht eingerichtet" "Die Einrichtung von Wings wurde nicht abgeschlossen oder Wings läuft nicht (Details im Log: $GD_LOG).\n\nDie Installation bleibt unvollständig. Starte das Skript erneut, um sie fortzusetzen." 12 76
+            return 0
+        fi
+        # Domain und Portbereich so übernehmen, wie sie im Wings-Skript gewählt wurden
+        v="$(gd_conf_get WINGS_PORT_RANGE)"; [ -n "$v" ] && GD_PORT_RANGE="$v"
+        v="$(gd_conf_get WINGS_FQDN)"; [ -n "$v" ] && GD_WINGS_FQDN="$v"
     else
         gd_msg "⇄ Einrichtung fortsetzen" "$text" 13 76
     fi
+    if $have_opts; then
+        # Wie in gd_fresh_install: GD_FAIL_HINT erinnert daran, dass das Panel selbst fertig ist
+        GD_FAIL_HINT="Das Panel selbst ist fertig installiert.\nStarte das Skript erneut, um die Einrichtung fortzusetzen."
+        gd_gauge_open "✚ Einrichtung wird fortgesetzt" "Absicherung wird vorbereitet..."
+        gd_security_steps 20 "$with_wings" "${GD_PORT_RANGE:-}"
+        gd_progress 100 "Einrichtung abgeschlossen."
+        gd_gauge_close
+        GD_FAIL_HINT=""
+    fi
     gd_conf_set INSTALL_STATE fertig
+    gd_install_opts_clear
     rm -f "$GD_PENDING_CREDENTIALS"
     gd_shortcut_install >> "$GD_LOG" 2>&1
+    if $have_opts; then
+        if [ "${GD_SEC_BACKUP:-false}" = true ] && [ -s "$GD_AB_PASS" ]; then
+            gd_msg_secret "✱ Passwort der Backups" "Deine täglichen Backups sind verschlüsselt. Ohne dieses Passwort können sie nicht wiederhergestellt werden, falls der Server ausfällt:\n\n$(cat "$GD_AB_PASS")\n\nSpeichere es zusammen mit deinen Zugangsdaten." 15 78
+        fi
+        done_text="Die Einrichtung wurde abgeschlossen."
+        [ -n "${GD_WARNINGS:-}" ] && done_text+="\n\n${GD_WARNINGS}\nDu kannst das später in der Verwaltung unter 'Server & Sicherheit' erneut versuchen."
+        gd_msg "✔ Einrichtung abgeschlossen" "$done_text" 14 78
+    fi
 }
 
 gd_save_credentials() {
@@ -373,6 +486,9 @@ gd_fresh_install() {
     GD_DB_PASSWORD="$(gd_gen_password 48)"
     gd_log "Installation gestartet: mode=$mode domain=$GD_DOMAIN version=$GD_PANEL_VERSION patch=$GD_APPLY_PATCH ssl=$GD_SSL_METHOD"
     gd_conf_set SSL_METHOD "$GD_SSL_METHOD"
+    # Optionen sichern, bevor etwas installiert wird: Bricht ein späterer Schritt ab, holt gd_resume_install die
+    # Absicherung beim nächsten Start mit denselben Einstellungen nach
+    gd_install_opts_save
 
     gd_gauge_open "➜ Pterodactyl wird installiert" "Installation wird vorbereitet..."
     gd_panel_install_steps
@@ -392,6 +508,7 @@ gd_fresh_install() {
     gd_gauge_close
     GD_FAIL_HINT=""
     gd_conf_set INSTALL_STATE fertig
+    gd_install_opts_clear
     rm -f "$GD_PENDING_CREDENTIALS"
     gd_shortcut_install >> "$GD_LOG" 2>&1
 
@@ -488,6 +605,10 @@ if [ -d "$PTERO_DIR" ] && [ "$(gd_conf_get INSTALL_STATE)" = "laeuft" ]; then
     if gd_yesno "Unvollständige Installation" "Die letzte Installation wurde nicht abgeschlossen (Details im Log unter $GD_LOG_DIR).\n\nSoll die unvollständige Installation entfernt und neu gestartet werden?\n\nBereits installierte Pakete bleiben erhalten, der Neustart geht deshalb schneller." 14 76; then
         rm -rf "$PTERO_DIR"
         gd_conf_set INSTALL_STATE neu
+    else
+        # Das halbfertige Panel nicht in der Verwaltung öffnen: dort würde es wie eine fertige Installation wirken
+        gd_warn_colors_off
+        clear; echo "Die unvollständige Installation bleibt unverändert. Starte das Skript erneut, um neu zu installieren."; exit 0
     fi
     gd_warn_colors_off
 fi

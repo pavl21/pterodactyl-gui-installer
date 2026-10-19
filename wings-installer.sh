@@ -145,7 +145,7 @@ gd_wings_install_remote() {
     gd_gauge_close
 
     if gd_wings_configure_remote; then
-        if gd_yesno "✚ Firewall" "Soll die Firewall (UFW) aktiviert werden? Freigegeben werden dein SSH-Port sowie 80, 443, 8080 und 2022.\n\nDie Ports deiner Gameserver gibst du danach mit 'ufw allow <port>' frei." 12 74; then
+        if gd_yesno "✚ Firewall" "Soll die Firewall (UFW) aktiviert werden? Freigegeben werden dein SSH-Port sowie 80, 443, 8080 und 2022.\n\nDie Ports deiner Gameserver gibst du danach in der Verwaltung unter 'Gameserver & Wings → Ports für Gameserver freigeben' frei." 13 74; then
             gd_firewall_setup true "" >> "$GD_LOG" 2>&1
         fi
         gd_msg "✔ Wings ist verbunden" "Wings läuft und ist mit deinem Panel verbunden. In der Node-Übersicht sollte nun ein grünes Herz zu sehen sein.\n\nLege im Panel unter der Node im Reiter 'Allocation' noch die Ports für deine Gameserver an." 13 78

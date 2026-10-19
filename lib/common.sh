@@ -49,6 +49,15 @@ gd_cleanup() {
     if [ "${GD_OWN_POLICY:-}" = true ] || grep -qs 'germandactyl-setup' /usr/sbin/policy-rc.d 2>/dev/null; then
         rm -f /usr/sbin/policy-rc.d
     fi
+    # Die apt-Zeitgeber, die gd_apt_timers_stop für die Installation angehalten hat, laufen danach wieder.
+    # Die Variable enthält nur die Zeitgeber, die wirklich aktiv waren und von uns gestoppt wurden.
+    if [ -n "${GD_APT_TIMERS_STOPPED:-}" ]; then
+        local t
+        for t in $GD_APT_TIMERS_STOPPED; do
+            systemctl start "$t" >/dev/null 2>&1
+        done
+        GD_APT_TIMERS_STOPPED=""
+    fi
     declare -F gd_build_swap_off >/dev/null && gd_build_swap_off
     [ -n "${GD_TMP:-}" ] && rm -rf "$GD_TMP"
     [ -z "${GD_LOCAL_DIR:-}" ] && [ -n "${GD_LIB_DIR:-}" ] && rm -rf "$GD_LIB_DIR"
@@ -222,6 +231,7 @@ gd_gauge_open() {
 
 gd_progress() {
     # gd_progress <prozent> "Text"
+    GD_PROGRESS_LAST="$1"   # gd_wait_for_apt zeigt seine Wartemeldung auf dem aktuellen Stand des Balkens
     gd_log "== [$1%] $2"
     # Headless: Das Log ist das Ziel (kein Balken); die Konsole bekommt die Zeile für "Jetzt ausführen" mit
     [ "${GD_HEADLESS:-}" = 1 ] && { echo "[$1%] $2"; return 0; }
@@ -289,8 +299,18 @@ gd_fail() {
     local tail_text
     tail_text="$(tail -n "$( [ -n "${GD_FAIL_HINT:-}" ] && echo 8 || echo 12)" "$GD_LOG" 2>/dev/null | tr -d '\r' | cut -c1-110)"
     gd_log "FEHLGESCHLAGEN: $1"
+    # Titel: GD_FAIL_TITLE, sonst nach Ablauf – läuft eine Panel-Aktualisierung (GD_UPDATE_PHASE gesetzt, aber nicht
+    # "fertig"), heißt es Aktualisierung, sonst Installation
+    local title="${GD_FAIL_TITLE:-}"
+    if [ -z "$title" ]; then
+        if [ -n "${GD_UPDATE_PHASE:-}" ] && [ "$GD_UPDATE_PHASE" != "fertig" ]; then
+            title="✖ Fehler bei der Aktualisierung"
+        else
+            title="✖ Fehler bei der Installation"
+        fi
+    fi
     # GD_FAIL_HINT: zusätzlicher Hinweis, z. B. wenn das Panel bereits fertig ist und nur ein späterer Schritt scheitert
-    gd_whip --title "✖ Fehler bei der Installation" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1${GD_FAIL_HINT:+\n\n$GD_FAIL_HINT}\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 30 118
+    gd_whip --title "$title" --msgbox "Dieser Schritt ist fehlgeschlagen:\n$1${GD_FAIL_HINT:+\n\n$GD_FAIL_HINT}\n\nLetzte Log-Einträge:\n${tail_text}\n\nDas vollständige Log findest du hier:\n$GD_LOG" 30 118
     clear
     gd_die "Schritt fehlgeschlagen: $1"
 }
@@ -321,15 +341,42 @@ gd_ensure_base_tools() {
     return 0
 }
 
-gd_wait_for_apt() {
-    # Wartet (max. 5 Minuten), bis kein anderer apt/dpkg-Prozess mehr läuft
-    local i=0
-    while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
-        [ $i -eq 0 ] && gd_log "Warte auf laufenden apt/dpkg-Prozess..."
-        i=$((i + 1))
-        [ $i -gt 150 ] && return 1
-        sleep 2
+gd_apt_timers_stop() {
+    # Hält die täglichen apt-Zeitgeber (apt-daily, apt-daily-upgrade) an, damit unattended-upgrades nicht mitten in der
+    # Installation startet und die Paketverwaltung blockiert. Es wird nur gestoppt, nicht deaktiviert; gd_cleanup startet
+    # die Zeitgeber beim Beenden wieder. GD_APT_TIMERS_STOPPED enthält die Namen der von uns gestoppten Zeitgeber.
+    local t
+    command -v systemctl >/dev/null 2>&1 || return 0
+    for t in apt-daily.timer apt-daily-upgrade.timer; do
+        if systemctl is-active --quiet "$t" 2>/dev/null && systemctl stop "$t" >/dev/null 2>&1; then
+            GD_APT_TIMERS_STOPPED="${GD_APT_TIMERS_STOPPED:+$GD_APT_TIMERS_STOPPED }$t"
+            gd_log "apt-Zeitgeber $t für die Dauer der Installation angehalten"
+        fi
     done
+    return 0
+}
+
+gd_wait_for_apt() {
+    # Wartet (max. 20 Minuten), bis kein anderer apt/dpkg-Prozess mehr läuft – auf frischen Servern ist das meist
+    # unattended-upgrades, das nach dem ersten Start Updates einspielt. Geprüft wird alle 2 Sekunden, eine Statusmeldung
+    # gibt es alle 10 Sekunden (Fortschrittsbalken bzw. Headless-Ausgabe; sonst eine Datei, die gd_spinner anzeigt).
+    local i=0 msg
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        if [ $((i % 5)) -eq 0 ]; then
+            msg="Warte auf laufenden Systemupdate-Prozess (unattended-upgrades) ... ($((i * 2)) s)"
+            if [ "${GD_HEADLESS:-}" = 1 ] || [ "$GD_GAUGE_OPEN" = "1" ]; then
+                gd_progress "${GD_PROGRESS_LAST:-0}" "$msg"
+            else
+                gd_log "$msg"
+                [ -n "${GD_TMP:-}" ] && printf '%s\n' "$msg" > "$GD_TMP/apt-wait.msg" 2>/dev/null
+                [ $i -eq 0 ] && echo "Warte auf laufenden Systemupdate-Prozess (unattended-upgrades) ..." >&2
+            fi
+        fi
+        [ $i -ge 600 ] && { [ -n "${GD_TMP:-}" ] && rm -f "$GD_TMP/apt-wait.msg"; return 1; }
+        sleep 2
+        i=$((i + 1))
+    done
+    [ -n "${GD_TMP:-}" ] && rm -f "$GD_TMP/apt-wait.msg"
     return 0
 }
 
@@ -343,6 +390,12 @@ gd_apt_update() {
     # Paketlisten aktualisieren. Ein kaputtes Fremd-Repository (abgelaufener Schlüssel, toter PPA) soll die
     # Einrichtung nicht abbrechen – erst eine fehlgeschlagene Paketinstallation ist ein echter Fehler.
     gd_apt update || { echo "Warnung: 'apt-get update' meldete Fehler (siehe oben) – es wird trotzdem fortgefahren."; return 0; }
+}
+
+gd_apt_has_candidate() {
+    # gd_apt_has_candidate <paket> – gibt es für das Paket einen installierbaren Kandidaten? Prüft gezielt eine frisch
+    # eingerichtete Paketquelle, deren Fehler gd_apt_update bewusst verschluckt. LC_ALL=C: apt übersetzt "Candidate".
+    LC_ALL=C apt-cache policy "$1" 2>/dev/null | grep -q 'Candidate: [0-9]'
 }
 
 gd_apt_install() {
@@ -363,11 +416,22 @@ gd_os_detect() {
     fi
 }
 
+# shellcheck disable=SC2034  # GD_OS_UNTESTED wird von installer.sh gelesen
 gd_os_supported() {
+    # Rückgabe 0 = getestet oder neuer als die getesteten Versionen, 1 = unbekanntes System.
+    # Neuere Versionen (Debian > 13, Ubuntu > 26.04, auch künftige LTS wie 28.04) werden angenommen, aber mit
+    # GD_OS_UNTESTED=true markiert: der Aufrufer weist darauf hin, dass sie nicht getestet sind.
     gd_os_detect
+    GD_OS_UNTESTED=false
     case "$GD_OS_ID:$GD_OS_VERSION" in
-        debian:12|debian:13|debian:1[3-9]|debian:[2-9][0-9]) return 0 ;;
-        ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) return 0 ;;
+        debian:12|debian:13|ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) return 0 ;;
+    esac
+    case "$GD_OS_ID" in
+        debian)
+            [[ "$GD_OS_VERSION" =~ ^[0-9]+$ ]] && [ "$GD_OS_VERSION" -gt 13 ] && { GD_OS_UNTESTED=true; return 0; } ;;
+        ubuntu)
+            [[ "$GD_OS_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] && gd_version_ge "$GD_OS_VERSION" 26.04 \
+                && { GD_OS_UNTESTED=true; return 0; } ;;
     esac
     return 1
 }
@@ -425,6 +489,16 @@ gd_mysqldump() {
     else
         mysqldump "$@"
     fi
+}
+
+gd_curl() {
+    # Einheitlicher Download-Helfer: folgt Weiterleitungen, bricht bei HTTP-Fehlern ab, wiederholt bei Netzwerkfehlern
+    # (5 Versuche, 3 s Pause) und begrenzt Verbindungsaufbau (20 s) und Gesamtdauer (600 s). Weitere Optionen des
+    # Aufrufers stehen danach und haben Vorrang (z. B. --max-time 15 oder -o <datei>).
+    # --retry-all-errors gibt es erst ab curl 7.71; ohne die Option wird nur bei vorübergehenden Fehlern wiederholt.
+    local retry_all=()
+    curl --help all 2>/dev/null | grep -q -- '--retry-all-errors' && retry_all=(--retry-all-errors)
+    curl -fsSL --retry 5 --retry-delay 3 "${retry_all[@]}" --connect-timeout 20 --max-time 600 "$@"
 }
 
 gd_latest_tag() {
@@ -575,6 +649,11 @@ gd_local_ip() {
     ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
 }
 
+gd_has_ipv4_route() {
+    # Gibt es eine IPv4-Route ins Internet? (Pterodactyl, GitHub und Let's Encrypt brauchen IPv4)
+    ip -4 route get 1.1.1.1 >/dev/null 2>&1
+}
+
 gd_local_ips() {
     # Alle globalen IPv4-Adressen dieses Servers (auch Zusatz- und Failover-IPs)
     ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}'
@@ -669,7 +748,7 @@ gd_dns_check_dialog() {
     dns_ips="$(gd_resolve_a "$domain")"
 
     if [ -z "$dns_ips" ]; then
-        gd_msg "✖ Domain-Überprüfung" "Für die Domain $domain wurde kein A-Eintrag (IPv4) gefunden.\n\nLege bei deinem Domain-Anbieter einen A-Eintrag an, der auf die IP-Adresse dieses Servers zeigt:\n\n$server_ip\n\nDNS-Änderungen können einige Minuten dauern." 16 78
+        gd_msg "✖ Domain-Überprüfung" "Für die Domain $domain wurde kein A-Eintrag (IPv4) gefunden.\n\nLege bei deinem Domain-Anbieter einen A-Eintrag an, der auf die IP-Adresse dieses Servers zeigt:\n\n${server_ip:-unbekannt}\n\nDNS-Änderungen können einige Minuten dauern." 16 78
         return 1
     fi
 
@@ -699,7 +778,7 @@ gd_dns_check_dialog() {
     if gd_is_cloudflare_ip "$first_ip"; then
         hint="\n\nDie Domain zeigt auf Cloudflare. Deaktiviere in Cloudflare den Proxy (graue Wolke, 'DNS only'), sonst können weder das SSL-Zertifikat noch Wings funktionieren."
     fi
-    gd_msg "✖ Domain-Überprüfung" "Die Domain $domain zeigt auf eine andere IP-Adresse.\n\nDNS-Eintrag: $(tr '\n' ' ' <<< "$dns_ips")\nDieser Server: $server_ip\n\nPrüfe die DNS-Einträge auf Schreibfehler.${hint}" 18 78
+    gd_msg "✖ Domain-Überprüfung" "Die Domain $domain zeigt auf eine andere IP-Adresse.\n\nDNS-Eintrag: $(tr '\n' ' ' <<< "$dns_ips")\nDieser Server: ${server_ip:-unbekannt}\n\nPrüfe die DNS-Einträge auf Schreibfehler.${hint}" 18 78
     return 1
 }
 

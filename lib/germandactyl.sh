@@ -27,7 +27,7 @@ gd_patch_exists() {
 gd_patch_latest() {
     # Neueste Version, für die ein Patch existiert (aus dem GermanDactyl-Repository ermittelt)
     local list
-    list="$(curl -fsS --max-time 15 "https://api.github.com/repos/$GD_PATCH_REPO/contents/patches" 2>/dev/null \
+    list="$(gd_curl --max-time 15 --retry 2 "https://api.github.com/repos/$GD_PATCH_REPO/contents/patches" 2>/dev/null \
         | grep -oE '"name": *"v[0-9]+\.[0-9]+\.[0-9]+\.patch"' \
         | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1)"
     if [ -n "$list" ]; then
@@ -53,7 +53,7 @@ gd_choose_panel_version() {
     fi
 
     patch_version="$(gd_patch_latest)"
-    choice=$(whiptail --title "DE GermanDactyl – Versionsauswahl" --menu "Die neueste Pterodactyl-Version ist v$latest. Für diese Version gibt es noch keine deutsche Übersetzung (GermanDactyl).\n\nDie neueste übersetzte Version ist v$patch_version. Welche Version möchtest du installieren?" 18 78 2 \
+    choice=$(whiptail --title "✎ GermanDactyl – Versionsauswahl" --menu "Die neueste Pterodactyl-Version ist v$latest. Für diese Version gibt es noch keine deutsche Übersetzung (GermanDactyl).\n\nDie neueste übersetzte Version ist v$patch_version. Welche Version möchtest du installieren?" 18 78 2 \
         "1" "v$latest – aktuellste Version, Oberfläche auf Englisch" \
         "2" "v$patch_version – ältere Version, Oberfläche auf Deutsch" 3>&1 1>&2 2>&3) || return 1
 
@@ -142,8 +142,8 @@ gd_patch_verify() {
     fi
     rm -rf "$dir"
     mkdir -p "$dir/gnupg" && chmod 700 "$dir" "$dir/gnupg" || return 1
-    if ! curl -fsSL --proto '=https' --proto-redir '=https' --max-time 30 -o "$dir/SHA256SUMS" "$GD_PATCH_SIGNATURE_BASE/SHA256SUMS" \
-        || ! curl -fsSL --proto '=https' --proto-redir '=https' --max-time 30 -o "$dir/SHA256SUMS.asc" "$GD_PATCH_SIGNATURE_BASE/SHA256SUMS.asc"; then
+    if ! gd_curl --proto '=https' --proto-redir '=https' --max-time 30 -o "$dir/SHA256SUMS" "$GD_PATCH_SIGNATURE_BASE/SHA256SUMS" \
+        || ! gd_curl --proto '=https' --proto-redir '=https' --max-time 30 -o "$dir/SHA256SUMS.asc" "$GD_PATCH_SIGNATURE_BASE/SHA256SUMS.asc"; then
         echo "Die signierte Prüfsummenliste konnte nicht geladen werden."
         return 1
     fi
@@ -181,7 +181,7 @@ gd_patch_apply() {
     local stamp created f old_dir rej_dir out rc rejected n list saved=false
     local opts=(--ignore-whitespace --ignore-space-change)
     cd "$dir" || return 1
-    curl -fsSL --proto '=https' --proto-redir '=https' "$GD_PATCH_SERVER/$version" -o "$patch" || return 1
+    gd_curl --proto '=https' --proto-redir '=https' "$GD_PATCH_SERVER/$version" -o "$patch" || return 1
     # Ungeprüfte Patches werden nie angewendet, eine Option zum Überspringen gibt es bewusst nicht
     if ! gd_patch_verify "$version" "$patch"; then
         echo "Signatur/Prüfsumme des Patches ungültig – wird aus Sicherheitsgründen nicht angewendet"

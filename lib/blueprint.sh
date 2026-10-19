@@ -58,7 +58,7 @@ gd_blueprint_apply() {
     cd "$PTERO_DIR" || return 1
     gd_install_node || return 1
     gd_apt_install zip unzip git curl || return 1
-    curl -fL "https://github.com/${GD_BLUEPRINT_REPO}/releases/download/${tag}/release.zip" -o "$GD_TMP/blueprint.zip" || return 1
+    gd_curl "https://github.com/${GD_BLUEPRINT_REPO}/releases/download/${tag}/release.zip" -o "$GD_TMP/blueprint.zip" || return 1
     unzip -o -q "$GD_TMP/blueprint.zip" -d "$PTERO_DIR" || return 1
     gd_blueprint_rc
     rm -f "$PTERO_DIR/$GD_BLUEPRINT_MARKER"
@@ -101,7 +101,7 @@ gd_blueprint_ask() {
     # Setzt GD_BLUEPRINT (true/false)
     GD_BLUEPRINT=false
     gd_blueprint_supported || return 0
-    local text="Blueprint ist ein Framework, mit dem du Erweiterungen und Themes für Pterodactyl bequem installieren kannst (https://blueprint.zip).\n\nMöchtest du Blueprint gleich mit installieren? (optional)"
+    local text="Blueprint ist ein Framework, mit dem du Erweiterungen und Themes für Pterodactyl bequem installieren kannst (https://blueprint.zip).\n\nMöchtest du Blueprint gleich mitinstallieren? (optional)"
     if [ "${GD_APPLY_PATCH:-false}" = "true" ]; then
         text+="\n\nHinweis: Blueprint ersetzt einige Dateien der Oberfläche. Die deutsche Übersetzung wird danach angewendet, einzelne Bereiche können aber englisch bleiben."
     fi

@@ -66,7 +66,7 @@ fi
 
 # Abgebrochene Installation: nicht als "installiert" behandeln, sondern Neuinstallation anbieten
 if [ -d "$PELICAN_DIR" ] && [ "$(gd_conf_get PELICAN_INSTALL_STATE)" = "laeuft" ]; then
-    if gd_yesno "⚠ Abgebrochene Installation" "Eine frühere Installation von Pelican wurde nicht abgeschlossen.\n\nSoll sie entfernt und die Installation neu gestartet werden? Die Pelican-Datenbank im Panel-Ordner wird dabei mit gelöscht." 12 76; then
+    if gd_yesno "⚠ Abgebrochene Installation" "Eine frühere Installation von Pelican wurde nicht abgeschlossen.\n\nSoll sie entfernt und die Installation neu gestartet werden? Die Pelican-Datenbank im Panel-Ordner wird dabei mitgelöscht." 12 76; then
         systemctl disable --now pelican-queue >/dev/null 2>&1
         rm -rf "$PELICAN_DIR"
     else
@@ -102,7 +102,7 @@ GD_ADMIN_USER="admin"
 GD_ADMIN_PASSWORD="$(gd_gen_password 24)"
 
 WITH_WINGS=false
-if gd_yesno "⇄ Wings mitinstallieren?" "Soll Wings auf diesem Server gleich mit installiert und automatisch mit Pelican verbunden werden?" 10 70; then
+if gd_yesno "⇄ Wings mitinstallieren?" "Soll Wings auf diesem Server gleich mitinstalliert und automatisch mit Pelican verbunden werden?" 10 70; then
     WITH_WINGS=true
     while true; do
         GD_PORT_RANGE="$(gd_input "⚑ Ports für Gameserver" "Welche Ports sollen für Gameserver freigegeben werden? (z. B. 25565-25600)" "$GD_DEFAULT_PORT_RANGE" 10 70)" || exit 0
