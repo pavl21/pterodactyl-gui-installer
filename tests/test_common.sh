@@ -218,3 +218,15 @@ done
 t_eq "30 Passwörter: nur Buchstaben/Zahlen, je Klasse mindestens ein Zeichen" 0 "$_pw_bad"
 t_no "zwei Aufrufe liefern verschiedene Passwörter" test "$(gd_gen_password)" = "$(gd_gen_password)"
 unset _pw _pw_bad _i
+
+t_group "gd_gauge_text"
+_g="$(gd_gauge_text "Datenbank wird eingerichtet...")"
+t_eq "immer 6 Zeilen"                         6 "$(printf '%s\n' "$_g" | wc -l)"
+t_ok "einzeiliger Text bleibt erhalten"       grep -q "Datenbank wird eingerichtet..." <<< "$_g"
+t_eq "einzeiliger Text steht in Zeile 3"      "Datenbank wird eingerichtet..." "$(sed -n 3p <<< "$_g" | sed 's/^ *//')"
+t_eq "einzeiliger Text ist mittig"            22 "$(sed -n 3p <<< "$_g" | sed 's/[^ ].*//' | wc -c | xargs -I{} expr {} - 1)"
+_g="$(gd_gauge_text "Blueprint beta-2026-08 wird installiert, Oberfläche wird gebaut (einige Minuten)...")"
+t_eq "langer Text: 6 Zeilen"                  6 "$(printf '%s\n' "$_g" | wc -l)"
+t_ok "langer Text: zweite Hälfte vorhanden"   grep -q "(einige Minuten)..." <<< "$_g"
+t_no "langer Text: kein Leerzeichen am Ende"  grep -q "gebaut $" <<< "$_g"
+t_eq "Leerzeile ist ein Leerzeichen"          " " "$(sed -n 1p <<< "$_g")"
